@@ -424,12 +424,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.study_positions_list = QtWidgets.QListWidget()
         self.study_positions_list.itemDoubleClicked.connect(self._on_study_position_double_clicked)
         self.study_positions_list.currentItemChanged.connect(self._on_study_position_selected)
+        self.study_comment_target_label = QtWidgets.QLabel("Comentando: selecione uma posicao de estudo")
+        self.study_comment_target_label.setWordWrap(True)
+        self.study_comment_target_label.setStyleSheet(self._CONTEXT_STYLE)
         self.study_comment_before_edit = QtWidgets.QPlainTextEdit()
-        self.study_comment_before_edit.setPlaceholderText("Comentario antes da linha")
+        self.study_comment_before_edit.setPlaceholderText("Texto antes do lance selecionado")
         self.study_comment_before_edit.setMaximumHeight(78)
         self.study_comment_before_edit.textChanged.connect(self._on_study_comment_changed)
         self.study_comment_after_edit = QtWidgets.QPlainTextEdit()
-        self.study_comment_after_edit.setPlaceholderText("Comentario depois da linha")
+        self.study_comment_after_edit.setPlaceholderText("Texto depois do lance selecionado")
         self.study_comment_after_edit.setMaximumHeight(78)
         self.study_comment_after_edit.textChanged.connect(self._on_study_comment_changed)
 
@@ -627,9 +630,10 @@ class MainWindow(QtWidgets.QMainWindow):
         study_positions_layout = QtWidgets.QVBoxLayout(study_positions_panel)
         study_positions_layout.addWidget(self._section_label("Posições deste PDF"))
         study_positions_layout.addWidget(self.study_positions_list, 1)
-        study_positions_layout.addWidget(self._section_label("Comentário antes"))
+        study_positions_layout.addWidget(self.study_comment_target_label)
+        study_positions_layout.addWidget(self._section_label("Antes do lance selecionado"))
         study_positions_layout.addWidget(self.study_comment_before_edit)
-        study_positions_layout.addWidget(self._section_label("Comentário depois"))
+        study_positions_layout.addWidget(self._section_label("Depois do lance selecionado"))
         study_positions_layout.addWidget(self.study_comment_after_edit)
         study_actions = QtWidgets.QHBoxLayout()
         study_actions.addWidget(self.btn_study_selection)
@@ -1405,12 +1409,44 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self.study_comment_before_edit.clear()
                 self.study_comment_after_edit.clear()
+                self._update_study_comment_target_label()
         finally:
             self._syncing_study_positions = False
 
     @staticmethod
     def _study_comment_key(ply: int) -> str:
         return str(max(0, int(ply)))
+
+    @staticmethod
+    def _study_move_reference(
+        ply: int,
+        san_line: list[str],
+        start_turn: str,
+        start_fullmove_number: int,
+    ) -> str:
+        if ply <= 0:
+            return "posicao inicial"
+        rows = StudyPanel._format_san_rows(san_line, start_turn, start_fullmove_number)
+        for move_label, white_san, white_ply, black_san, black_ply in rows:
+            move_no = move_label.rstrip(".")
+            if white_ply == ply and white_san:
+                return f"{move_no}. {white_san}"
+            if black_ply == ply and black_san:
+                return f"{move_no}... {black_san}"
+        return f"lance {ply}"
+
+    def _update_study_comment_target_label(self) -> None:
+        idx = self._selected_study_position_index()
+        if idx is None:
+            self.study_comment_target_label.setText("Comentando: selecione uma posicao de estudo")
+            return
+        reference = self._study_move_reference(
+            self.study_panel.study_board.current_ply(),
+            self.study_panel.study_board.san_line(),
+            self.study_panel.study_board.start_turn(),
+            self.study_panel.study_board.start_fullmove_number(),
+        )
+        self.study_comment_target_label.setText(f"Comentando: {reference}")
 
     @staticmethod
     def _study_comments_for_pgn(pos: StudyPosition) -> dict[int, dict[str, str]]:
@@ -1511,6 +1547,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _refresh_study_comment_fields_for_current_ply(self) -> None:
         idx = self._selected_study_position_index()
         if idx is None:
+            self._update_study_comment_target_label()
             return
         pos = self.study_positions[idx]
         before, after = self._current_study_comments(pos)
@@ -1518,6 +1555,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self.study_comment_before_edit.setPlainText(before)
             self.study_comment_after_edit.setPlainText(after)
+            self._update_study_comment_target_label()
         finally:
             self._syncing_study_positions = False
 
@@ -1640,6 +1678,7 @@ class MainWindow(QtWidgets.QMainWindow):
             before, after = self._current_study_comments(pos)
             self.study_comment_before_edit.setPlainText(before)
             self.study_comment_after_edit.setPlainText(after)
+            self._update_study_comment_target_label()
         finally:
             self._syncing_study_positions = False
 

@@ -4,7 +4,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6 import QtWidgets
 
-from chess_pdf_editor.app import StudyPanel
+from chess_pdf_editor.app import MainWindow, StudyPanel
 
 
 def test_format_san_rows_starting_from_white_pairs_moves():
@@ -76,3 +76,14 @@ def test_study_panel_signals_before_move_navigation():
     finally:
         panel.deleteLater()
         app.processEvents()
+
+
+def test_study_move_reference_names_selected_ply():
+    assert MainWindow._study_move_reference(0, ["e4", "e5"], "w", 1) == "posicao inicial"
+    assert MainWindow._study_move_reference(1, ["e4", "e5"], "w", 1) == "1. e4"
+    assert MainWindow._study_move_reference(2, ["e4", "e5"], "w", 1) == "1... e5"
+
+
+def test_study_move_reference_handles_black_to_move_start():
+    assert MainWindow._study_move_reference(1, ["g3", "Rf1"], "b", 12) == "12... g3"
+    assert MainWindow._study_move_reference(2, ["g3", "Rf1"], "b", 12) == "13. Rf1"
