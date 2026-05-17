@@ -529,8 +529,17 @@ class StudyBoardWidget(QtWidgets.QWidget):
         except Exception:
             return 1
 
-    def current_pgn(self, comment_before: str = "", comment_after: str = "") -> str:
-        return self._game.to_pgn(comment_before=comment_before, comment_after=comment_after)
+    def current_pgn(
+        self,
+        comment_before: str = "",
+        comment_after: str = "",
+        comment_ply: Optional[int] = None,
+    ) -> str:
+        return self._game.to_pgn(
+            comment_before=comment_before,
+            comment_after=comment_after,
+            comment_ply=comment_ply,
+        )
 
     def current_ply(self) -> int:
         return self._game.cursor

@@ -137,6 +137,7 @@ class StudyGame:
         date: Optional[datetime] = None,
         comment_before: str = "",
         comment_after: str = "",
+        comment_ply: Optional[int] = None,
     ) -> str:
         game = chess.pgn.Game()
         now = date or datetime.now()
@@ -153,14 +154,21 @@ class StudyGame:
             game.headers["SetUp"] = "1"
             game.headers["FEN"] = self._start_fen
 
-        if comment_before.strip():
-            game.comment = comment_before.strip()
-
         node = game
-        for move in self._history[: self._cursor]:
+        target_ply = self._cursor if comment_ply is None else max(0, min(int(comment_ply), self._cursor))
+        before_text = comment_before.strip()
+        after_text = comment_after.strip()
+        if before_text and target_ply == 0:
+            game.comment = before_text
+
+        for ply_idx, move in enumerate(self._history[: self._cursor], start=1):
+            if before_text and ply_idx == target_ply:
+                node.comment = before_text
             node = node.add_variation(move)
-        if comment_after.strip():
-            node.comment = comment_after.strip()
+            if after_text and ply_idx == target_ply:
+                node.comment = after_text
+        if after_text and target_ply == 0:
+            game.comment = after_text if not game.comment else f"{game.comment} {after_text}"
         return str(game)
 
     def load_moves(self, moves: Iterable[chess.Move]) -> None:

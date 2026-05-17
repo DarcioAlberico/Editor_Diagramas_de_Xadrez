@@ -90,3 +90,17 @@ def test_study_pgn_comments_before_and_after():
 
     assert "{ Plano inicial }" in pgn
     assert "e4 { Depois de e4 }" in pgn
+
+
+def test_study_pgn_comments_can_target_current_ply():
+    game = StudyGame()
+    game.push_move(chess.Move.from_uci("e2e4"))
+    game.push_move(chess.Move.from_uci("e7e5"))
+    pgn = game.to_pgn(
+        comment_before="Antes de e5",
+        comment_after="Depois de e5",
+        comment_ply=2,
+    )
+
+    assert "e4 { Antes de e5 }" in pgn
+    assert "e5 { Depois de e5 }" in pgn

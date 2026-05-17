@@ -80,7 +80,7 @@ python -m chess_pdf_editor
 No toolbar, use `Estudo` para abrir um painel lateral com:
 - movimentos legais (click na peca e depois na casa destino);
 - seta do ultimo lance;
-- lista SAN lateral (clique para navegar pelos lances);
+- lista SAN lateral em colunas (clique em um lance branco ou preto para navegar ate ele);
 - `Desfazer` / `Refazer`;
 - `Resetar Linha`;
 - `Importar PGN`, `Copiar FEN`, `Copiar PGN` e `Salvar PGN`.
@@ -90,7 +90,8 @@ Para estudar uma posicao do PDF:
 2. Reconheca ou monte/corrija a FEN no editor.
 3. Ajuste `Vez de jogar` na aba `FEN` quando a posicao começar com as pretas.
 4. Clique em `Estudar selecao`.
-5. Use `Atualizar linha` para salvar o PGN estudado naquela posicao.
+5. Clique no lance desejado na lista SAN e use `Atualizar linha` para salvar o PGN estudado naquela posicao.
+   Os comentarios `antes` e `depois` sao gravados no lance atualmente selecionado.
 
 As posicoes de estudo ficam em `Posicoes deste PDF` e sao salvas no projeto.
 

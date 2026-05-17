@@ -50,8 +50,17 @@ class StudyPanel(QtWidgets.QWidget):
         self.btn_import_pgn = QtWidgets.QPushButton("Importar PGN")
         self.btn_import_pgn.clicked.connect(self._import_pgn)
 
-        self.moves_list = QtWidgets.QListWidget()
-        self.moves_list.currentRowChanged.connect(self._on_san_row_changed)
+        self.moves_table = QtWidgets.QTableWidget(0, 3)
+        self.moves_table.setHorizontalHeaderLabels(["Lance", "Brancas", "Pretas"])
+        self.moves_table.horizontalHeader().setStretchLastSection(True)
+        self.moves_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        self.moves_table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        self.moves_table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+        self.moves_table.verticalHeader().setVisible(False)
+        self.moves_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.moves_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectItems)
+        self.moves_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.moves_table.cellClicked.connect(self._on_san_cell_clicked)
 
         self.status_label = QtWidgets.QLabel("Clique nas pecas para estudar linhas legais.")
         self.status_label.setWordWrap(True)
@@ -76,7 +85,7 @@ class StudyPanel(QtWidgets.QWidget):
 
         side_panel = QtWidgets.QVBoxLayout()
         side_panel.addWidget(QtWidgets.QLabel("Lista SAN"))
-        side_panel.addWidget(self.moves_list, 1)
+        side_panel.addWidget(self.moves_table, 1)
 
         center_layout = QtWidgets.QHBoxLayout()
         center_layout.addWidget(self.study_board, 1, QtCore.Qt.AlignCenter)
@@ -161,15 +170,15 @@ class StudyPanel(QtWidgets.QWidget):
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Erro ao importar PGN", str(exc))
 
-    def _on_san_row_changed(self, row: int) -> None:
+    def _on_san_cell_clicked(self, row: int, col: int) -> None:
         if self._syncing_move_list:
             return
-        item = self.moves_list.item(row) if row >= 0 else None
+        item = self.moves_table.item(row, col) if row >= 0 and col >= 0 else None
         data = item.data(QtCore.Qt.UserRole) if item is not None else None
-        if isinstance(data, tuple) and len(data) == 2:
-            ply = int(data[1])
+        if data is not None:
+            ply = int(data)
         else:
-            ply = 0
+            return
         self.study_board.goto_ply(ply)
 
     @staticmethod
@@ -177,53 +186,67 @@ class StudyPanel(QtWidgets.QWidget):
         moves: list[str],
         start_turn: str,
         start_fullmove_number: int,
-    ) -> list[tuple[str, int, int]]:
-        rows: list[tuple[str, int, int]] = []
+    ) -> list[tuple[str, Optional[str], Optional[int], Optional[str], Optional[int]]]:
+        rows: list[tuple[str, Optional[str], Optional[int], Optional[str], Optional[int]]] = []
         side = "b" if start_turn == "b" else "w"
         move_no = max(1, int(start_fullmove_number))
         ply_idx = 0
         while ply_idx < len(moves):
             if side == "b":
-                start_ply = ply_idx + 1
-                rows.append((f"{move_no}... {moves[ply_idx]}", start_ply, start_ply))
+                rows.append((f"{move_no}...", None, None, moves[ply_idx], ply_idx + 1))
                 ply_idx += 1
                 move_no += 1
                 side = "w"
                 continue
 
-            start_ply = ply_idx + 1
             white_san = moves[ply_idx]
+            white_ply = ply_idx + 1
             ply_idx += 1
             if ply_idx < len(moves):
                 black_san = moves[ply_idx]
-                end_ply = ply_idx + 1
-                rows.append((f"{move_no}. {white_san} {black_san}", start_ply, end_ply))
+                black_ply = ply_idx + 1
+                rows.append((f"{move_no}.", white_san, white_ply, black_san, black_ply))
                 ply_idx += 1
                 move_no += 1
                 side = "w"
             else:
-                rows.append((f"{move_no}. {white_san}", start_ply, start_ply))
+                rows.append((f"{move_no}.", white_san, white_ply, None, None))
                 side = "b"
         return rows
+
+    @staticmethod
+    def _make_move_item(text: str, ply: Optional[int] = None) -> QtWidgets.QTableWidgetItem:
+        item = QtWidgets.QTableWidgetItem(text)
+        if ply is not None:
+            item.setData(QtCore.Qt.UserRole, int(ply))
+        else:
+            item.setFlags(item.flags() & ~QtCore.Qt.ItemIsSelectable)
+        return item
 
     def _on_line_changed(self, san_line: object, cursor: int) -> None:
         moves = list(san_line) if isinstance(san_line, list) else list(san_line or [])
         self._syncing_move_list = True
         try:
-            self.moves_list.clear()
-            selected_row = -1
+            self.moves_table.setRowCount(0)
+            selected_cell: Optional[tuple[int, int]] = None
             rows = self._format_san_rows(
                 moves,
                 self.study_board.start_turn(),
                 self.study_board.start_fullmove_number(),
             )
-            for row_idx, (label, start_ply, end_ply) in enumerate(rows):
-                item = QtWidgets.QListWidgetItem(label)
-                item.setData(QtCore.Qt.UserRole, (start_ply, end_ply))
-                self.moves_list.addItem(item)
-                if start_ply <= cursor <= end_ply:
-                    selected_row = row_idx
-            self.moves_list.setCurrentRow(selected_row)
+            self.moves_table.setRowCount(len(rows))
+            for row_idx, (move_label, white_san, white_ply, black_san, black_ply) in enumerate(rows):
+                self.moves_table.setItem(row_idx, 0, self._make_move_item(move_label))
+                self.moves_table.setItem(row_idx, 1, self._make_move_item(white_san or "", white_ply))
+                self.moves_table.setItem(row_idx, 2, self._make_move_item(black_san or "", black_ply))
+                if white_ply == cursor:
+                    selected_cell = (row_idx, 1)
+                if black_ply == cursor:
+                    selected_cell = (row_idx, 2)
+            if selected_cell is not None:
+                self.moves_table.setCurrentCell(selected_cell[0], selected_cell[1])
+            else:
+                self.moves_table.clearSelection()
         finally:
             self._syncing_move_list = False
 
@@ -1421,6 +1444,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.study_positions[idx].pgn = self.study_panel.study_board.current_pgn(
             comment_before=before,
             comment_after=after,
+            comment_ply=self.study_panel.study_board.current_ply(),
         )
         self.statusBar().showMessage("Linha de estudo atualizada.")
         self._refresh_study_positions_list()
