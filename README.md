@@ -75,6 +75,8 @@ python -m chess_pdf_editor
    Opcional: na aba `Aparência`, abra `Ajustes avançados` e marque/desmarque `Incluir link Lichess no PDF exportado`.
    Quando habilitado, o PDF exportado inclui um link `Lichess` em azul abaixo de cada diagrama substituido.
 
+Ao iniciar, o app tenta restaurar o ultimo projeto salvo. Se nao houver projeto valido, ele reabre o ultimo PDF usado e usa essa pasta como ponto inicial ao abrir outro PDF.
+
 ## Modo Estudo (offline)
 
 No toolbar, use `Estudo` para abrir um painel lateral com:

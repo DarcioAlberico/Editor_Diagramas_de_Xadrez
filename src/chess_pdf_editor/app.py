@@ -693,7 +693,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._load_merida_font_setting()
         self.statusBar().showMessage("Abra um PDF para iniciar.")
         self._on_board_changed(self.board_editor.piece_placement())
-        self._try_restore_last_project()
+        self._try_restore_last_session()
         self._update_lichess_link()
         self._refresh_study_positions_list()
         self._refresh_changes_list()
@@ -1019,7 +1019,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"Fonte Merida configurada: {resolved}")
 
     def _open_pdf_dialog(self) -> None:
-        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Abrir PDF", "", "PDF (*.pdf)")
+        start_dir = self._last_pdf_dialog_dir()
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Abrir PDF", start_dir, "PDF (*.pdf)")
         if not file_path:
             return
         self._open_pdf(file_path, clear_ops=True)
@@ -1027,23 +1028,61 @@ class MainWindow(QtWidgets.QMainWindow):
     def _remember_last_project_path(self, project_path: str) -> None:
         self.settings.setValue("last_project_path", project_path)
 
-    def _try_restore_last_project(self) -> None:
+    def _remember_last_pdf_path(self, pdf_path: str) -> None:
+        resolved = str(Path(pdf_path).resolve())
+        self.settings.setValue("last_pdf_path", resolved)
+        self.settings.setValue("last_pdf_dir", str(Path(resolved).parent))
+
+    def _last_pdf_dialog_dir(self) -> str:
+        last_dir = (self.settings.value("last_pdf_dir", "", str) or "").strip()
+        if last_dir and Path(last_dir).exists():
+            return last_dir
+        last_pdf = (self.settings.value("last_pdf_path", "", str) or "").strip()
+        if last_pdf:
+            parent = Path(last_pdf).parent
+            if parent.exists():
+                return str(parent)
+        return ""
+
+    def _try_restore_last_session(self) -> None:
+        if self._try_restore_last_project():
+            return
+        self._try_restore_last_pdf()
+
+    def _try_restore_last_project(self) -> bool:
         last_project = (self.settings.value("last_project_path", "", str) or "").strip()
         if not last_project:
-            return
+            return False
         if not Path(last_project).exists():
             self.settings.remove("last_project_path")
-            return
+            return False
         self.project_path = last_project
         loaded = self._load_project_from_path(last_project, show_dialogs=False)
         if loaded:
             self.statusBar().showMessage(f"Projeto restaurado: {last_project}")
+        return loaded
+
+    def _try_restore_last_pdf(self) -> bool:
+        last_pdf = (self.settings.value("last_pdf_path", "", str) or "").strip()
+        if not last_pdf:
+            return False
+        if not Path(last_pdf).exists():
+            self.settings.remove("last_pdf_path")
+            return False
+        try:
+            self._open_pdf(last_pdf, clear_ops=True)
+        except Exception:
+            self.settings.remove("last_pdf_path")
+            return False
+        self.statusBar().showMessage(f"PDF restaurado: {last_pdf}")
+        return True
 
     def _open_pdf(self, file_path: str, clear_ops: bool) -> None:
         if self.pdf_service:
             self.pdf_service.close()
         self.pdf_service = PdfService(file_path)
         self.current_pdf_path = file_path
+        self._remember_last_pdf_path(file_path)
         self.current_page = 0
         self.page_spin.blockSignals(True)
         self.page_spin.setMaximum(max(1, self.pdf_service.page_count))
