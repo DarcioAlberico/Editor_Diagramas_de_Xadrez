@@ -38,8 +38,9 @@ Com fonte Merida configurada, o exportador gera overlay vetorial (PDF) com a fon
 Sem Merida, `cairosvg` habilita fallback vetorial usando `python-chess`.
 
 Opcional para usar imagens de pecas no editor/tabuleiro de estudo:
-- O app detecta automaticamente `Python-Easy-Chess-GUI-master/Images/60`.
-- Alternativa: defina `CHESS_PIECE_IMAGE_DIR` apontando para uma pasta com `wP.png`, `wK.png`, `bP.png`, etc.
+- O app detecta automaticamente `assets/piece_images` com arquivos como `wp.png`, `wk.png`, `bp.png`, etc.
+- Tambem detecta `Python-Easy-Chess-GUI-master/Images/60`.
+- Alternativa: defina `CHESS_PIECE_IMAGE_DIR` apontando para uma pasta com `wp.png`/`wk.png` ou `wP.png`/`wK.png`.
 
 ## Executar App
 

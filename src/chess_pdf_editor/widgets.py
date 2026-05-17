@@ -27,18 +27,18 @@ PIECE_LABELS = {
     "k": "♚",
 }
 PIECE_IMAGE_FILES = {
-    "P": "wP.png",
-    "N": "wN.png",
-    "B": "wB.png",
-    "R": "wR.png",
-    "Q": "wQ.png",
-    "K": "wK.png",
-    "p": "bP.png",
-    "n": "bN.png",
-    "b": "bB.png",
-    "r": "bR.png",
-    "q": "bQ.png",
-    "k": "bK.png",
+    "P": ("wp.png", "wP.png"),
+    "N": ("wn.png", "wN.png"),
+    "B": ("wb.png", "wB.png"),
+    "R": ("wr.png", "wR.png"),
+    "Q": ("wq.png", "wQ.png"),
+    "K": ("wk.png", "wK.png"),
+    "p": ("bp.png", "bP.png"),
+    "n": ("bn.png", "bN.png"),
+    "b": ("bb.png", "bB.png"),
+    "r": ("br.png", "bR.png"),
+    "q": ("bq.png", "bQ.png"),
+    "k": ("bk.png", "bK.png"),
 }
 _PIECE_PIXMAPS: Optional[dict[str, QtGui.QPixmap]] = None
 
@@ -52,8 +52,10 @@ def _find_piece_image_dir() -> Optional[Path]:
     root = Path(__file__).resolve().parents[2]
     candidates.extend(
         [
+            root / "assets" / "piece_images",
             root / "Python-Easy-Chess-GUI-master" / "Images" / "60",
             root / "Images" / "60",
+            Path.cwd() / "assets" / "piece_images",
             Path.cwd() / "Python-Easy-Chess-GUI-master" / "Images" / "60",
             Path.cwd() / "Images" / "60",
         ]
@@ -62,8 +64,10 @@ def _find_piece_image_dir() -> Optional[Path]:
     for folder in candidates:
         if not folder.exists() or not folder.is_dir():
             continue
-        # Precisa ter ao menos as duas peças básicas para considerar válido.
-        if (folder / "wK.png").exists() and (folder / "bK.png").exists():
+        # Precisa ter ao menos os dois reis para considerar válido.
+        has_white_king = any((folder / filename).exists() for filename in PIECE_IMAGE_FILES["K"])
+        has_black_king = any((folder / filename).exists() for filename in PIECE_IMAGE_FILES["k"])
+        if has_white_king and has_black_king:
             return folder
     return None
 
@@ -78,8 +82,10 @@ def _get_piece_pixmaps() -> dict[str, QtGui.QPixmap]:
     if folder is None:
         return _PIECE_PIXMAPS
 
-    for piece, filename in PIECE_IMAGE_FILES.items():
-        fp = folder / filename
+    for piece, filenames in PIECE_IMAGE_FILES.items():
+        fp = next((folder / filename for filename in filenames if (folder / filename).exists()), None)
+        if fp is None:
+            continue
         if not fp.exists():
             continue
         pix = QtGui.QPixmap(str(fp))
