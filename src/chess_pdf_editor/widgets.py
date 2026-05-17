@@ -517,6 +517,18 @@ class StudyBoardWidget(QtWidgets.QWidget):
     def current_fen(self) -> str:
         return self._game.board.fen()
 
+    def start_fen(self) -> str:
+        return self._game.start_fen
+
+    def start_turn(self) -> str:
+        return "b" if self._game.start_fen.split()[1] == "b" else "w"
+
+    def start_fullmove_number(self) -> int:
+        try:
+            return max(1, int(self._game.start_fen.split()[5]))
+        except Exception:
+            return 1
+
     def current_pgn(self, comment_before: str = "", comment_after: str = "") -> str:
         return self._game.to_pgn(comment_before=comment_before, comment_after=comment_after)
 

@@ -7,7 +7,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .fen import extract_piece_placement, normalize_piece_placement, to_full_fen, validate_piece_placement
+from .fen import extract_piece_placement, normalize_piece_placement, validate_piece_placement
 from .ocr_api import OcrApiClient, OcrApiError
 from .pdf_service import PdfService, apply_operations_to_pdf, crop_from_rendered_page
 from .project_state import ProjectState, fingerprint_file, load_project_state, save_project_state
@@ -93,14 +93,20 @@ class StudyPanel(QtWidgets.QWidget):
         root.addWidget(self.status_label)
         self._on_line_changed([], 0)
 
-    def load_piece_placement(self, piece_placement: str, side_to_move: Optional[str] = None) -> None:
+    def load_piece_placement(
+        self,
+        piece_placement: str,
+        side_to_move: Optional[str] = None,
+        fullmove_number: int = 1,
+    ) -> None:
         side = str(side_to_move or self.side_combo.currentData() or "w")
         if side not in {"w", "b"}:
             side = "w"
+        fullmove = max(1, int(fullmove_number))
         self.side_combo.setCurrentIndex(1 if side == "b" else 0)
         try:
             normalized = normalize_piece_placement(extract_piece_placement(piece_placement))
-            self.study_board.set_start_fen(to_full_fen(normalized, side_to_move=side))
+            self.study_board.set_start_fen(f"{normalized} {side} - - 0 {fullmove}")
             self.status_label.setText("Posicao carregada do editor.")
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
@@ -158,24 +164,66 @@ class StudyPanel(QtWidgets.QWidget):
     def _on_san_row_changed(self, row: int) -> None:
         if self._syncing_move_list:
             return
-        ply = 0 if row < 0 else row + 1
+        item = self.moves_list.item(row) if row >= 0 else None
+        data = item.data(QtCore.Qt.UserRole) if item is not None else None
+        if isinstance(data, tuple) and len(data) == 2:
+            ply = int(data[1])
+        else:
+            ply = 0
         self.study_board.goto_ply(ply)
+
+    @staticmethod
+    def _format_san_rows(
+        moves: list[str],
+        start_turn: str,
+        start_fullmove_number: int,
+    ) -> list[tuple[str, int, int]]:
+        rows: list[tuple[str, int, int]] = []
+        side = "b" if start_turn == "b" else "w"
+        move_no = max(1, int(start_fullmove_number))
+        ply_idx = 0
+        while ply_idx < len(moves):
+            if side == "b":
+                start_ply = ply_idx + 1
+                rows.append((f"{move_no}... {moves[ply_idx]}", start_ply, start_ply))
+                ply_idx += 1
+                move_no += 1
+                side = "w"
+                continue
+
+            start_ply = ply_idx + 1
+            white_san = moves[ply_idx]
+            ply_idx += 1
+            if ply_idx < len(moves):
+                black_san = moves[ply_idx]
+                end_ply = ply_idx + 1
+                rows.append((f"{move_no}. {white_san} {black_san}", start_ply, end_ply))
+                ply_idx += 1
+                move_no += 1
+                side = "w"
+            else:
+                rows.append((f"{move_no}. {white_san}", start_ply, start_ply))
+                side = "b"
+        return rows
 
     def _on_line_changed(self, san_line: object, cursor: int) -> None:
         moves = list(san_line) if isinstance(san_line, list) else list(san_line or [])
         self._syncing_move_list = True
         try:
             self.moves_list.clear()
-            for ply_idx, san in enumerate(moves, start=1):
-                if ply_idx % 2 == 1:
-                    label = f"{(ply_idx + 1) // 2}. {san}"
-                else:
-                    label = f"{ply_idx // 2}... {san}"
-                self.moves_list.addItem(label)
-            if cursor > 0 and cursor <= self.moves_list.count():
-                self.moves_list.setCurrentRow(cursor - 1)
-            else:
-                self.moves_list.setCurrentRow(-1)
+            selected_row = -1
+            rows = self._format_san_rows(
+                moves,
+                self.study_board.start_turn(),
+                self.study_board.start_fullmove_number(),
+            )
+            for row_idx, (label, start_ply, end_ply) in enumerate(rows):
+                item = QtWidgets.QListWidgetItem(label)
+                item.setData(QtCore.Qt.UserRole, (start_ply, end_ply))
+                self.moves_list.addItem(item)
+                if start_ply <= cursor <= end_ply:
+                    selected_row = row_idx
+            self.moves_list.setCurrentRow(selected_row)
         finally:
             self._syncing_move_list = False
 
@@ -192,8 +240,17 @@ class StudyDialog(QtWidgets.QDialog):
         root = QtWidgets.QVBoxLayout(self)
         root.addWidget(self.panel)
 
-    def load_piece_placement(self, piece_placement: str, side_to_move: Optional[str] = None) -> None:
-        self.panel.load_piece_placement(piece_placement, side_to_move=side_to_move)
+    def load_piece_placement(
+        self,
+        piece_placement: str,
+        side_to_move: Optional[str] = None,
+        fullmove_number: int = 1,
+    ) -> None:
+        self.panel.load_piece_placement(
+            piece_placement,
+            side_to_move=side_to_move,
+            fullmove_number=fullmove_number,
+        )
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -813,8 +870,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_study_dialog(self) -> None:
         if self.study_dialog is None:
             self.study_dialog = StudyDialog(self)
-        side_to_move, _ = self._current_fen_defaults()
-        self.study_dialog.load_piece_placement(self.board_editor.piece_placement(), side_to_move=side_to_move)
+        side_to_move, fullmove_number = self._current_fen_defaults()
+        self.study_dialog.load_piece_placement(
+            self.board_editor.piece_placement(),
+            side_to_move=side_to_move,
+            fullmove_number=fullmove_number,
+        )
         self.study_dialog.show()
         self.study_dialog.raise_()
         self.study_dialog.activateWindow()
@@ -1203,7 +1264,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not (0 <= idx < len(self.operations)):
             return
         op = self.operations[idx]
-        self.study_panel.load_piece_placement(op.fen, side_to_move=op.side_to_move)
+        self.study_panel.load_piece_placement(
+            op.fen,
+            side_to_move=op.side_to_move,
+            fullmove_number=op.fullmove_number,
+        )
         self.ops_list.setCurrentRow(idx)
         self._set_mode("study")
         self.statusBar().showMessage(f"Diagrama da pagina {op.page_num + 1} carregado no estudo.")
@@ -1270,12 +1335,20 @@ class MainWindow(QtWidgets.QMainWindow):
             self._syncing_study_positions = False
 
     def _load_study_position(self, pos: StudyPosition) -> None:
-        self.study_panel.load_piece_placement(pos.fen, side_to_move=pos.side_to_move)
+        self.study_panel.load_piece_placement(
+            pos.fen,
+            side_to_move=pos.side_to_move,
+            fullmove_number=pos.fullmove_number,
+        )
         if pos.pgn.strip():
             try:
                 self.study_panel.study_board.load_pgn_text(pos.pgn)
             except Exception:
-                self.study_panel.load_piece_placement(pos.fen, side_to_move=pos.side_to_move)
+                self.study_panel.load_piece_placement(
+                    pos.fen,
+                    side_to_move=pos.side_to_move,
+                    fullmove_number=pos.fullmove_number,
+                )
 
     def _focus_study_position(self, idx: int) -> None:
         if not (0 <= idx < len(self.study_positions)):
@@ -1369,8 +1442,12 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
             return
-        side_to_move, _ = self._current_fen_defaults()
-        self.study_panel.load_piece_placement(piece_placement, side_to_move=side_to_move)
+        side_to_move, fullmove_number = self._current_fen_defaults()
+        self.study_panel.load_piece_placement(
+            piece_placement,
+            side_to_move=side_to_move,
+            fullmove_number=fullmove_number,
+        )
         self._set_mode("study")
 
     def _text_from_current_selection(self) -> str:
