@@ -204,6 +204,7 @@ class MainWindow(QtWidgets.QMainWindow):
         "QLabel { background-color: #f3f6fa; color: #223042; border: 1px solid #d8e0ea; "
         "border-radius: 5px; padding: 8px; }"
     )
+    _SECTION_STYLE = "QLabel { color: #223042; font-weight: 600; margin-top: 6px; }"
 
     def __init__(self) -> None:
         super().__init__()
@@ -402,18 +403,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.edit_context_label.setWordWrap(True)
         self.edit_context_label.setStyleSheet(self._CONTEXT_STYLE)
         ocr_tab_layout.addWidget(self.edit_context_label)
-        ocr_tab_layout.addWidget(QtWidgets.QLabel("Reconhecimento"))
+        ocr_tab_layout.addWidget(self._section_label("Reconhecimento"))
         ocr_tab_layout.addWidget(self.btn_ocr)
         ocr_actions = QtWidgets.QHBoxLayout()
         ocr_actions.addWidget(self.btn_ocr_page)
         ocr_actions.addWidget(self.btn_ocr_full)
         ocr_tab_layout.addLayout(ocr_actions)
 
-        ocr_tab_layout.addWidget(QtWidgets.QLabel("Aplicar"))
+        ocr_tab_layout.addWidget(self._section_label("Aplicar"))
         ocr_tab_layout.addWidget(self.btn_add)
         ocr_tab_layout.addWidget(self.btn_add_eraser)
 
-        ocr_tab_layout.addWidget(QtWidgets.QLabel("Alterações"))
+        self.changes_label = self._section_label("Alterações")
+        ocr_tab_layout.addWidget(self.changes_label)
         ocr_tab_layout.addWidget(self.changes_list, 3)
         right_actions = QtWidgets.QHBoxLayout()
         right_actions.addWidget(self.btn_remove)
@@ -435,10 +437,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         fens_tab = QtWidgets.QWidget()
         fens_tab_layout = QtWidgets.QVBoxLayout(fens_tab)
-        fens_tab_layout.addWidget(QtWidgets.QLabel("FEN (piece placement)"))
+        fens_tab_layout.addWidget(self._section_label("FEN"))
         fens_tab_layout.addWidget(self.fen_edit)
         fens_tab_layout.addWidget(self.warnings)
-        fens_tab_layout.addWidget(QtWidgets.QLabel("Lista de FENs das substituicoes"))
+        fens_tab_layout.addWidget(self._section_label("FENs das substituições"))
         fen_meta = QtWidgets.QGridLayout()
         fen_meta.addWidget(QtWidgets.QLabel("Vez de jogar"), 0, 0)
         fen_meta.addWidget(self.fen_side_combo, 0, 1)
@@ -489,11 +491,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.study_panel = StudyPanel(self)
         study_positions_panel = QtWidgets.QWidget()
         study_positions_layout = QtWidgets.QVBoxLayout(study_positions_panel)
-        study_positions_layout.addWidget(QtWidgets.QLabel("Posicoes deste PDF"))
+        study_positions_layout.addWidget(self._section_label("Posições deste PDF"))
         study_positions_layout.addWidget(self.study_positions_list, 1)
-        study_positions_layout.addWidget(QtWidgets.QLabel("Comentario antes"))
+        study_positions_layout.addWidget(self._section_label("Comentário antes"))
         study_positions_layout.addWidget(self.study_comment_before_edit)
-        study_positions_layout.addWidget(QtWidgets.QLabel("Comentario depois"))
+        study_positions_layout.addWidget(self._section_label("Comentário depois"))
         study_positions_layout.addWidget(self.study_comment_after_edit)
         study_actions = QtWidgets.QHBoxLayout()
         study_actions.addWidget(self.btn_study_selection)
@@ -541,6 +543,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._try_restore_last_project()
         self._update_lichess_link()
         self._refresh_study_positions_list()
+        self._refresh_changes_list()
         self._update_edit_context_state()
 
     def _make_collapsible_group(
@@ -556,6 +559,11 @@ class MainWindow(QtWidgets.QMainWindow):
         group.toggled.connect(lambda visible, target_layout=layout: self._set_layout_visible(target_layout, visible))
         self._set_layout_visible(layout, checked)
         return group
+
+    def _section_label(self, text: str) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(text)
+        label.setStyleSheet(self._SECTION_STYLE)
+        return label
 
     @classmethod
     def _set_layout_visible(cls, layout: QtWidgets.QLayout, visible: bool) -> None:
@@ -603,7 +611,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_ocr_full.setEnabled(has_pdf)
         self.btn_add.setEnabled(has_selection and has_position)
         self.btn_add_eraser.setEnabled(has_selection)
-        self.btn_remove.setEnabled(self.changes_list.currentItem() is not None)
+        self.btn_remove.setEnabled(self._selected_change() is not None)
         self.btn_clear.setEnabled(bool(self.operations or self.erase_operations))
         self.btn_remove_eraser.setEnabled(self.erasers_list.currentItem() is not None)
         self.btn_clear_erasers.setEnabled(bool(self.erase_operations))
@@ -2020,6 +2028,19 @@ class MainWindow(QtWidgets.QMainWindow):
             selected = self._selected_change()
 
         self.changes_list.clear()
+        total_changes = len(self.operations) + len(self.erase_operations)
+        if hasattr(self, "changes_label"):
+            self.changes_label.setText(f"Alterações ({total_changes})")
+
+        if total_changes == 0:
+            item = QtWidgets.QListWidgetItem("Nenhuma alteração adicionada.")
+            item.setData(QtCore.Qt.UserRole, None)
+            item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
+            item.setForeground(QtGui.QColor("#667085"))
+            self.changes_list.addItem(item)
+            self._update_edit_context_state()
+            return
+
         for idx, op in enumerate(self.operations):
             text = (
                 f"{idx + 1:03d} | Diagrama | pag {op.page_num + 1} | "
@@ -2078,7 +2099,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._select_change("eraser", len(self.erase_operations) - 1)
         self._refresh_page_overlays()
         self._update_edit_context_state()
-        self.statusBar().showMessage(f"Borracha adicionada. Total: {len(self.erase_operations)}")
+        self.statusBar().showMessage(f"Apagamento adicionado. Total: {len(self.erase_operations)}")
 
     def _refresh_erasers_list(self) -> None:
         self.erasers_list.clear()
@@ -2103,15 +2124,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_erasers_list()
             self._refresh_page_overlays()
             self._update_edit_context_state()
-            self.statusBar().showMessage(f"Borracha removida. Total: {len(self.erase_operations)}")
+            self.statusBar().showMessage(f"Apagamento removido. Total: {len(self.erase_operations)}")
 
     def _clear_erasers(self) -> None:
         if not self.erase_operations:
             return
         answer = QtWidgets.QMessageBox.question(
             self,
-            "Limpar borrachas",
-            "Remover todas as borrachas pendentes?",
+            "Limpar apagamentos",
+            "Remover todos os apagamentos pendentes?",
         )
         if answer == QtWidgets.QMessageBox.Yes:
             self.erase_operations.clear()
@@ -2233,8 +2254,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.operations and not self.erase_operations:
             QtWidgets.QMessageBox.warning(
                 self,
-                "Sem operacoes",
-                "Nenhuma substituicao ou borracha foi adicionada.",
+                "Sem alterações",
+                "Nenhuma substituição ou apagamento foi adicionado.",
             )
             return
 

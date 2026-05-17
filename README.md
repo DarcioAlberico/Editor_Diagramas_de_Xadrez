@@ -141,5 +141,5 @@ src/chess_pdf_editor/
 - O OCR e usado para acelerar reconhecimento, mas o fluxo principal de substituicao e local.
 - O fallback de renderizacao funciona sem `cairosvg`.
 - `Padding whiteout` por lado (esq/topo/dir/base) e `Borda` sao salvos por substituicao no projeto.
-- `Borrachas` sao salvas separadamente e aplicadas antes dos overlays.
+- `Apagamentos` sao salvos separadamente e aplicados antes dos overlays.
 - Plano tecnico detalhado: `plano_editor_diagramas_xadrez_pdf.md`.
