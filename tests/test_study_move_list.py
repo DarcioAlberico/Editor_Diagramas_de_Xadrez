@@ -60,3 +60,19 @@ def test_study_panel_marks_commented_moves():
     finally:
         panel.deleteLater()
         app.processEvents()
+
+
+def test_study_panel_signals_before_move_navigation():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    panel = StudyPanel()
+    calls: list[bool] = []
+    panel.about_to_change_line.connect(lambda: calls.append(True))
+
+    try:
+        panel._on_line_changed(["e4", "e5"], 2)
+        panel._on_san_cell_clicked(0, 1)
+
+        assert calls == [True]
+    finally:
+        panel.deleteLater()
+        app.processEvents()

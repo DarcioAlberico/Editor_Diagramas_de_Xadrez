@@ -16,6 +16,7 @@ from .widgets import BoardEditorWidget, SelectablePageWidget, StudyBoardWidget
 
 
 class StudyPanel(QtWidgets.QWidget):
+    about_to_change_line = QtCore.Signal()
     pgn_imported = QtCore.Signal(object)
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
@@ -142,14 +143,17 @@ class StudyPanel(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
 
     def _undo(self) -> None:
+        self.about_to_change_line.emit()
         if not self.study_board.undo_move():
             self.status_label.setText("Nada para desfazer.")
 
     def _redo(self) -> None:
+        self.about_to_change_line.emit()
         if not self.study_board.redo_move():
             self.status_label.setText("Nada para refazer.")
 
     def _reset(self) -> None:
+        self.about_to_change_line.emit()
         self.study_board.clear_moves()
 
     def _copy_fen(self) -> None:
@@ -185,6 +189,7 @@ class StudyPanel(QtWidgets.QWidget):
         if not file_path:
             return
         try:
+            self.about_to_change_line.emit()
             text = Path(file_path).read_text(encoding="utf-8", errors="replace")
             move_comments = self.study_board.load_pgn_text(text)
             self.pgn_imported.emit(move_comments)
@@ -201,6 +206,7 @@ class StudyPanel(QtWidgets.QWidget):
             ply = int(data)
         else:
             return
+        self.about_to_change_line.emit()
         self.study_board.goto_ply(ply)
 
     @staticmethod
@@ -615,6 +621,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.study_panel = StudyPanel(self)
         self.study_panel.set_pgn_provider(self._study_export_pgn)
         self.study_panel.study_board.line_changed.connect(lambda san_line, cursor: self._on_study_ply_changed())
+        self.study_panel.about_to_change_line.connect(self._flush_current_study_comment)
         self.study_panel.pgn_imported.connect(self._on_study_pgn_imported)
         study_positions_panel = QtWidgets.QWidget()
         study_positions_layout = QtWidgets.QVBoxLayout(study_positions_panel)
@@ -1450,6 +1457,41 @@ class MainWindow(QtWidgets.QMainWindow):
             pos.comment_after = str(first.get("after", ""))
             pos.note = pos.comment_before or pos.comment_after
 
+    def _flush_current_study_comment(self) -> None:
+        if self._syncing_study_positions:
+            return
+        idx = self._selected_study_position_index()
+        if idx is None:
+            return
+        self._flush_study_comment_for_index(idx)
+
+    def _flush_study_comment_for_index(self, idx: int) -> None:
+        if not (0 <= idx < len(self.study_positions)):
+            return
+        pos = self.study_positions[idx]
+        self._set_current_study_comments(
+            pos,
+            self.study_comment_before_edit.toPlainText(),
+            self.study_comment_after_edit.toPlainText(),
+        )
+        self._update_study_position_pgn(pos)
+        self._refresh_study_move_comment_markers(pos)
+
+    def _sync_study_position_line(self, pos: StudyPosition) -> None:
+        max_ply = len(self.study_panel.study_board.san_line())
+        kept_comments: dict[str, dict[str, str]] = {}
+        for key, values in pos.move_comments.items():
+            try:
+                ply = int(key)
+            except Exception:
+                continue
+            if ply == 0 or ply <= max_ply:
+                kept_comments[key] = values
+        pos.move_comments = kept_comments
+        self._set_study_comment_summary(pos)
+        self._update_study_position_pgn(pos)
+        self._refresh_study_move_comment_markers(pos)
+
     @staticmethod
     def _set_study_comment_summary(pos: StudyPosition) -> None:
         pos.comment_before = ""
@@ -1489,16 +1531,9 @@ class MainWindow(QtWidgets.QMainWindow):
         idx = self._selected_study_position_index()
         if idx is None:
             return self.study_panel.study_board.current_pgn()
-        pos = self.study_positions[idx]
-        self._set_current_study_comments(
-            pos,
-            self.study_comment_before_edit.toPlainText(),
-            self.study_comment_after_edit.toPlainText(),
-        )
-        self._update_study_position_pgn(pos)
-        self._refresh_study_move_comment_markers(pos)
+        self._flush_study_comment_for_index(idx)
         self._refresh_study_positions_list()
-        return pos.pgn
+        return self.study_positions[idx].pgn
 
     def _on_study_pgn_imported(self, move_comments: object) -> None:
         idx = self._selected_study_position_index()
@@ -1536,6 +1571,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_study_ply_changed(self) -> None:
         if self._syncing_study_positions:
             return
+        idx = self._selected_study_position_index()
+        if idx is not None:
+            self._sync_study_position_line(self.study_positions[idx])
         self._refresh_study_comment_fields_for_current_ply()
 
     def _load_study_position(self, pos: StudyPosition) -> None:
@@ -1557,6 +1595,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _focus_study_position(self, idx: int) -> None:
         if not (0 <= idx < len(self.study_positions)):
             return
+        self._flush_current_study_comment()
         pos = self.study_positions[idx]
         if self.pdf_service:
             self.current_page = min(max(0, pos.page_num), self.pdf_service.page_count - 1)
@@ -1571,9 +1610,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._syncing_study_positions = True
         try:
             self.study_positions_list.setCurrentRow(idx)
+            self._load_study_position(pos)
         finally:
             self._syncing_study_positions = False
-        self._load_study_position(pos)
         self._refresh_study_move_comment_markers(pos)
         self._refresh_study_comment_fields_for_current_ply()
         self._set_mode("study")
@@ -1587,9 +1626,11 @@ class MainWindow(QtWidgets.QMainWindow):
         current: Optional[QtWidgets.QListWidgetItem],
         previous: Optional[QtWidgets.QListWidgetItem],
     ) -> None:
-        del previous
         if self._syncing_study_positions or current is None:
             return
+        if previous is not None:
+            previous_idx = int(previous.data(QtCore.Qt.UserRole))
+            self._flush_study_comment_for_index(previous_idx)
         idx = int(current.data(QtCore.Qt.UserRole))
         if not (0 <= idx < len(self.study_positions)):
             return
@@ -1608,14 +1649,7 @@ class MainWindow(QtWidgets.QMainWindow):
         idx = self._selected_study_position_index()
         if idx is None:
             return
-        pos = self.study_positions[idx]
-        self._set_current_study_comments(
-            pos,
-            self.study_comment_before_edit.toPlainText(),
-            self.study_comment_after_edit.toPlainText(),
-        )
-        self._update_study_position_pgn(pos)
-        self._refresh_study_move_comment_markers(pos)
+        self._flush_study_comment_for_index(idx)
         self._refresh_study_positions_list()
 
     def _save_current_study_line(self) -> None:
@@ -1623,12 +1657,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if idx is None:
             QtWidgets.QMessageBox.information(self, "Estudo", "Selecione uma posicao de estudo primeiro.")
             return
-        before = self.study_comment_before_edit.toPlainText()
-        after = self.study_comment_after_edit.toPlainText()
-        pos = self.study_positions[idx]
-        self._set_current_study_comments(pos, before, after)
-        self._update_study_position_pgn(pos)
-        self._refresh_study_move_comment_markers(pos)
+        self._flush_study_comment_for_index(idx)
         self.statusBar().showMessage("Linha de estudo atualizada.")
         self._refresh_study_positions_list()
 
