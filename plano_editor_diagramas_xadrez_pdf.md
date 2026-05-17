@@ -1,9 +1,9 @@
 # Plano de Implementação (Skill): Editor de Diagramas de Xadrez em PDF
 
-**Versão:** 1.2 (revisada)  
+**Versão:** 1.3 (backlog de melhorias)  
 **Status:** Planejamento / Especificação técnica (MVP → Beta)  
 **Stack alvo:** Python 3.9+ (recomendado 3.11+)  
-**Última revisão:** 2026-02-23  
+**Última revisão:** 2026-05-17  
 
 ---
 
@@ -515,3 +515,88 @@ cairosvg>=2.7.0
 - [ ] Salvar PDF de saída sem quebrar layout
 - [ ] Reabrir projeto e continuar (checkpoint)
 - [ ] Rodar em pelo menos 3 PDFs reais diferentes
+
+---
+
+## 19) Backlog de melhorias futuras
+
+Esta seção registra melhorias identificadas na revisão do projeto em 2026-05-17. Elas não fazem parte de uma implementação imediata, mas servem como guia para as próximas etapas.
+
+### 19.1 Prioridade alta
+
+- [ ] **Mover OCR e exportação para workers em segundo plano**
+  - Hoje o reconhecimento por OCR e a exportação do PDF rodam na thread principal da interface.
+  - Para PDFs grandes ou endpoints lentos, a janela pode parecer travada.
+  - Implementar com `QThread`, `QRunnable`/`QThreadPool` ou uma camada equivalente de worker.
+  - Manter progresso, cancelamento e propagação clara de erros para a UI.
+
+- [ ] **Dividir `app.py` em módulos menores**
+  - O arquivo principal concentra UI, OCR, estado do projeto, estudo, overlays e exportação.
+  - Separação sugerida:
+    - `main_window.py`: janela principal e composição de telas.
+    - `study_panel.py`: painel/modo de estudo.
+    - `ocr_workflow.py`: reconhecimento de seleção, página atual e lote.
+    - `operations.py`: criação, atualização e validação de operações.
+    - `settings.py`: preferências persistidas via `QSettings`.
+  - Objetivo: reduzir acoplamento, facilitar testes e tornar futuras mudanças menos arriscadas.
+
+- [ ] **Adicionar GitHub Actions para testes**
+  - Rodar `pytest` automaticamente em push e pull request.
+  - Começar com matriz simples em Windows e Python estável.
+  - Validar pelo menos testes unitários sem dependência de interface gráfica real.
+
+### 19.2 Prioridade média
+
+- [ ] **Melhorar configuração do OCR**
+  - Evitar endpoint duplicado/hardcoded em múltiplos lugares.
+  - Centralizar endpoint padrão, fallback e timeout.
+  - Persistir endpoint escolhido pelo usuário em `QSettings`.
+  - Permitir configuração por variável de ambiente para uso em scripts e ambientes automatizados.
+
+- [ ] **Adicionar logs estruturados**
+  - Registrar falhas de OCR, renderização, exportação e carregamento de projetos.
+  - Evitar `except Exception` silencioso em pontos críticos.
+  - Usar `logging` com arquivo local opcional, por exemplo `logs/chess_pdf_editor.log`.
+  - Exibir mensagens amigáveis na UI, mantendo detalhes técnicos no log.
+
+- [ ] **Criar migrações explícitas para `project_state.json`**
+  - O projeto já tem `schema_version`.
+  - Adicionar funções de migração entre versões para preservar compatibilidade com projetos antigos.
+  - Testar carregamento de arquivos de estado salvos por versões anteriores.
+
+- [ ] **Ampliar testes de integração**
+  - Testar aplicação de overlay em PDF real de amostra.
+  - Testar inserção de link Lichess.
+  - Testar salvar/carregar projeto com operações, apagamentos e posições de estudo.
+  - Testar OCR com mock HTTP, sem depender da internet.
+  - Testar renderização com Merida, sem Merida e com fallback raster.
+
+### 19.3 Prioridade baixa / empacotamento
+
+- [ ] **Gerar executável Windows**
+  - Avaliar PyInstaller ou Nuitka.
+  - Incluir assets necessários, como fonte Merida e sons.
+  - Criar script de build reproduzível.
+  - Validar execução em máquina limpa sem ambiente de desenvolvimento.
+
+- [ ] **Melhorar relatório de processamento**
+  - Exportar CSV/JSON com página, bbox, FEN, origem da operação, confiança e avisos.
+  - Útil para auditoria e comparação entre versões do OCR.
+
+- [ ] **Documentar fluxo de desenvolvimento**
+  - Adicionar seção no README com:
+    - instalação para desenvolvimento;
+    - execução de testes;
+    - execução do app;
+    - padrão para commits/releases.
+
+### 19.4 Ordem sugerida de implementação
+
+1. Adicionar GitHub Actions com `pytest`.
+2. Criar workers para OCR/exportação sem travar a interface.
+3. Separar `app.py` em módulos menores.
+4. Centralizar configuração do OCR.
+5. Adicionar logs estruturados.
+6. Implementar migrações de projeto.
+7. Expandir testes de integração.
+8. Preparar empacotamento Windows.
