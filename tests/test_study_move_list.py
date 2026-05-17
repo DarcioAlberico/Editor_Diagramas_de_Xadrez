@@ -1,3 +1,9 @@
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6 import QtWidgets
+
 from chess_pdf_editor.app import StudyPanel
 
 
@@ -26,3 +32,15 @@ def test_format_san_rows_respects_fullmove_number():
         ("12...", None, None, "g3", 1),
         ("13.", "Rf1", 2, None, None),
     ]
+
+
+def test_study_panel_export_uses_pgn_provider():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    panel = StudyPanel()
+    panel.set_pgn_provider(lambda: "PGN com comentarios")
+
+    try:
+        assert panel._export_pgn_text() == "PGN com comentarios"
+    finally:
+        panel.deleteLater()
+        app.processEvents()

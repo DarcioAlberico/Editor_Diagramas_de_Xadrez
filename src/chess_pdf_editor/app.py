@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -21,6 +21,7 @@ class StudyPanel(QtWidgets.QWidget):
         self.setWindowTitle("Tabuleiro de Estudo")
         self.resize(980, 760)
         self._syncing_move_list = False
+        self._pgn_provider: Optional[Callable[[], str]] = None
 
         self.study_board = StudyBoardWidget(cell_size=58)
         self.study_board.state_changed.connect(self._on_state_changed)
@@ -102,6 +103,14 @@ class StudyPanel(QtWidgets.QWidget):
         root.addWidget(self.status_label)
         self._on_line_changed([], 0)
 
+    def set_pgn_provider(self, provider: Optional[Callable[[], str]]) -> None:
+        self._pgn_provider = provider
+
+    def _export_pgn_text(self) -> str:
+        if self._pgn_provider is not None:
+            return self._pgn_provider()
+        return self.study_board.current_pgn()
+
     def load_piece_placement(
         self,
         piece_placement: str,
@@ -136,7 +145,7 @@ class StudyPanel(QtWidgets.QWidget):
         self.status_label.setText("FEN copiado.")
 
     def _copy_pgn(self) -> None:
-        QtWidgets.QApplication.clipboard().setText(self.study_board.current_pgn())
+        QtWidgets.QApplication.clipboard().setText(self._export_pgn_text())
         self.status_label.setText("PGN copiado.")
 
     def _save_pgn(self) -> None:
@@ -149,7 +158,7 @@ class StudyPanel(QtWidgets.QWidget):
         if not out_path:
             return
         try:
-            Path(out_path).write_text(self.study_board.current_pgn(), encoding="utf-8")
+            Path(out_path).write_text(self._export_pgn_text(), encoding="utf-8")
             self.status_label.setText(f"PGN salvo em: {out_path}")
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Erro ao salvar PGN", str(exc))
@@ -572,6 +581,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_vertical_splitter.setSizes([360, 560])
 
         self.study_panel = StudyPanel(self)
+        self.study_panel.set_pgn_provider(self._study_export_pgn)
         self.study_panel.study_board.line_changed.connect(lambda san_line, cursor: self._on_study_ply_changed())
         study_positions_panel = QtWidgets.QWidget()
         study_positions_layout = QtWidgets.QVBoxLayout(study_positions_panel)
@@ -1418,6 +1428,20 @@ class MainWindow(QtWidgets.QMainWindow):
             move_comments=self._study_comments_for_pgn(pos),
             include_all=True,
         )
+
+    def _study_export_pgn(self) -> str:
+        idx = self._selected_study_position_index()
+        if idx is None:
+            return self.study_panel.study_board.current_pgn()
+        pos = self.study_positions[idx]
+        self._set_current_study_comments(
+            pos,
+            self.study_comment_before_edit.toPlainText(),
+            self.study_comment_after_edit.toPlainText(),
+        )
+        self._update_study_position_pgn(pos)
+        self._refresh_study_positions_list()
+        return pos.pgn
 
     def _on_study_ply_changed(self) -> None:
         if self._syncing_study_positions:
