@@ -63,7 +63,7 @@ python -m chess_pdf_editor
 6. Opcional: clique em `Reconhecer página` ou `Detectar no PDF` para varrer automaticamente.
    O modo em lote descarta deteccoes que ocupam mais de 50% da pagina (heuristica anti-falso-positivo).
    Se cancelar no meio, o proximo clique retoma da pagina pendente.
-7. Corrija a posicao no `Editor de Tabuleiro` se necessario.
+7. Corrija a posicao no `Editor de Tabuleiro` se necessario: selecione uma peça na paleta e clique na casa; clique direito limpa a casa.
 8. Se necessário, abra `Aparência` > `Ajustes avançados` para ajustar `Padding whiteout` por lado e `Borda`.
    A opcao `Aplicar em todas as substituicoes` (ligada por padrao) replica a configuracao para toda a lista.
 9. Clique em `Adicionar substituição`.

@@ -262,12 +262,11 @@ class BoardEditorWidget(QtWidgets.QWidget):
         super().__init__()
         self._matrix = [["."] * 8 for _ in range(8)]
         self._cell_size = 42
+        self._active_piece = "P"
 
-        self.piece_combo = QtWidgets.QComboBox()
-        for piece in PIECE_VALUES:
-            label = "vazio" if piece == "." else piece
-            self.piece_combo.addItem(label, piece)
-        self.piece_combo.setCurrentIndex(1)
+        self._palette_group = QtWidgets.QButtonGroup(self)
+        self._palette_group.setExclusive(True)
+        self._palette_buttons: dict[str, QtWidgets.QPushButton] = {}
 
         self._board_container = QtWidgets.QWidget()
         self._board_container.setFixedSize(self._cell_size * 8, self._cell_size * 8)
@@ -289,12 +288,30 @@ class BoardEditorWidget(QtWidgets.QWidget):
                 row.append(b)
             self._buttons.append(row)
 
-        top = QtWidgets.QHBoxLayout()
-        top.addWidget(QtWidgets.QLabel("Peca ativa:"))
-        top.addWidget(self.piece_combo, 1)
+        palette = QtWidgets.QGridLayout()
+        palette.setContentsMargins(0, 0, 0, 0)
+        palette.setHorizontalSpacing(4)
+        palette.setVerticalSpacing(4)
+        for idx, piece in enumerate(PIECE_VALUES):
+            button = QtWidgets.QPushButton()
+            button.setCheckable(True)
+            button.setFixedSize(30, 30)
+            button.setCursor(QtCore.Qt.PointingHandCursor)
+            button.setToolTip("Casa vazia" if piece == "." else f"Peça {piece}")
+            if piece == ".":
+                button.setText("×")
+            else:
+                _set_button_piece_visual(button, piece, icon_size=24)
+            button.clicked.connect(lambda checked=False, value=piece: self._select_palette_piece(value))
+            self._palette_group.addButton(button)
+            self._palette_buttons[piece] = button
+            palette.addWidget(button, idx // 7, idx % 7)
+
+        self._palette_buttons[self._active_piece].setChecked(True)
+        self._refresh_palette_styles()
 
         root = QtWidgets.QVBoxLayout(self)
-        root.addLayout(top)
+        root.addLayout(palette)
         root.addWidget(self._board_container, 0, QtCore.Qt.AlignLeft)
         root.addStretch(1)
 
@@ -330,11 +347,23 @@ class BoardEditorWidget(QtWidgets.QWidget):
                 piece = self._matrix[r][c]
                 _set_button_piece_visual(self._buttons[r][c], piece, icon_size=34)
 
+    def _select_palette_piece(self, piece: str) -> None:
+        self._active_piece = piece if piece in PIECE_VALUES else "."
+        self._refresh_palette_styles()
+
+    def _refresh_palette_styles(self) -> None:
+        for piece, button in self._palette_buttons.items():
+            selected = piece == self._active_piece
+            bg = "#e8f1ff" if selected else "#ffffff"
+            border = "#1f6feb" if selected else "#c8d0da"
+            button.setStyleSheet(
+                f"QPushButton {{ background-color: {bg}; border: 2px solid {border}; "
+                "border-radius: 4px; font-size: 18px; font-weight: bold; }} "
+                "QPushButton:hover { border-color: #1f6feb; }"
+            )
+
     def _set_cell_from_palette(self, row: int, col: int) -> None:
-        piece = self.piece_combo.currentData()
-        if piece is None:
-            piece = "."
-        self._matrix[row][col] = str(piece)
+        self._matrix[row][col] = self._active_piece
         self.refresh_ui()
         self.board_changed.emit(self.piece_placement())
 
