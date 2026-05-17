@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.tmp_pytest/
+.venv/
+project_state.json
+output*.pdf
+pecg_log.txt
+tmp*.png
