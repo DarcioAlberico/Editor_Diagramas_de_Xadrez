@@ -264,6 +264,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ops_list.currentItemChanged.connect(self._on_operation_selected)
         self.ops_list_delete_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Delete), self.ops_list)
         self.ops_list_delete_shortcut.activated.connect(self._remove_selected_operation)
+        self.changes_list = QtWidgets.QListWidget()
+        self.changes_list.currentItemChanged.connect(self._on_change_selected)
+        self.changes_list.itemDoubleClicked.connect(self._on_change_double_clicked)
+        self.changes_list_delete_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Delete), self.changes_list)
+        self.changes_list_delete_shortcut.activated.connect(self._remove_selected_change)
         self.fen_ops_list = QtWidgets.QListWidget()
         self.fen_ops_list.itemClicked.connect(self._on_fen_operation_clicked)
         self.fen_ops_list_delete_shortcut = QtGui.QShortcut(
@@ -350,11 +355,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_add_eraser = QtWidgets.QPushButton("Adicionar apagamento")
         self.btn_add_eraser.clicked.connect(self._add_eraser_from_selection)
         self.btn_remove = QtWidgets.QPushButton("Remover")
-        self.btn_remove.clicked.connect(self._remove_selected_operation)
+        self.btn_remove.clicked.connect(self._remove_selected_change)
         self.btn_remove_fen = QtWidgets.QPushButton("Remover posicao")
         self.btn_remove_fen.clicked.connect(self._remove_selected_fen_operation)
         self.btn_clear = QtWidgets.QPushButton("Limpar")
-        self.btn_clear.clicked.connect(self._clear_operations)
+        self.btn_clear.clicked.connect(self._clear_changes)
         self.btn_remove_eraser = QtWidgets.QPushButton("Remover")
         self.btn_remove_eraser.clicked.connect(self._remove_selected_eraser)
         self.btn_clear_erasers = QtWidgets.QPushButton("Limpar")
@@ -408,21 +413,13 @@ class MainWindow(QtWidgets.QMainWindow):
         ocr_tab_layout.addWidget(self.btn_add)
         ocr_tab_layout.addWidget(self.btn_add_eraser)
 
-        ocr_tab_layout.addWidget(QtWidgets.QLabel("Substituições"))
-        ocr_tab_layout.addWidget(self.ops_list, 2)
+        ocr_tab_layout.addWidget(QtWidgets.QLabel("Alterações"))
+        ocr_tab_layout.addWidget(self.changes_list, 3)
         right_actions = QtWidgets.QHBoxLayout()
         right_actions.addWidget(self.btn_remove)
         right_actions.addWidget(self.btn_clear)
         right_actions.addStretch(1)
         ocr_tab_layout.addLayout(right_actions)
-
-        ocr_tab_layout.addWidget(QtWidgets.QLabel("Apagamentos"))
-        ocr_tab_layout.addWidget(self.erasers_list, 2)
-        eraser_actions = QtWidgets.QHBoxLayout()
-        eraser_actions.addWidget(self.btn_remove_eraser)
-        eraser_actions.addWidget(self.btn_clear_erasers)
-        eraser_actions.addStretch(1)
-        ocr_tab_layout.addLayout(eraser_actions)
 
         ocr_advanced_layout = QtWidgets.QVBoxLayout()
         ocr_advanced_layout.addWidget(self.whiteout_check)
@@ -606,8 +603,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_ocr_full.setEnabled(has_pdf)
         self.btn_add.setEnabled(has_selection and has_position)
         self.btn_add_eraser.setEnabled(has_selection)
-        self.btn_remove.setEnabled(self.ops_list.currentItem() is not None)
-        self.btn_clear.setEnabled(bool(self.operations))
+        self.btn_remove.setEnabled(self.changes_list.currentItem() is not None)
+        self.btn_clear.setEnabled(bool(self.operations or self.erase_operations))
         self.btn_remove_eraser.setEnabled(self.erasers_list.currentItem() is not None)
         self.btn_clear_erasers.setEnabled(bool(self.erase_operations))
         self.act_save_pdf.setEnabled(has_changes)
@@ -959,6 +956,24 @@ class MainWindow(QtWidgets.QMainWindow):
             return idx
         return None
 
+    def _selected_change(self) -> Optional[tuple[str, int]]:
+        item = self.changes_list.currentItem()
+        if not item:
+            return None
+        data = item.data(QtCore.Qt.UserRole)
+        if not isinstance(data, tuple) or len(data) != 2:
+            return None
+        kind = str(data[0])
+        try:
+            idx = int(data[1])
+        except Exception:
+            return None
+        if kind == "operation" and 0 <= idx < len(self.operations):
+            return (kind, idx)
+        if kind == "eraser" and 0 <= idx < len(self.erase_operations):
+            return (kind, idx)
+        return None
+
     def _current_fen_defaults(self) -> tuple[str, int]:
         side_to_move = str(self.fen_side_combo.currentData() or "w")
         if side_to_move not in {"w", "b"}:
@@ -1050,6 +1065,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._loading_ui = False
         self._update_warnings(op.fen)
         self._update_lichess_link()
+        self._select_change("operation", idx)
 
     def _current_whiteout_padding(self) -> tuple[float, float, float, float]:
         left = float(self.pad_left_spin.value())
@@ -1440,6 +1456,44 @@ class MainWindow(QtWidgets.QMainWindow):
         self._loading_ui = False
         self._update_edit_context_state()
 
+    def _on_change_selected(
+        self,
+        current: Optional[QtWidgets.QListWidgetItem],
+        previous: Optional[QtWidgets.QListWidgetItem],
+    ) -> None:
+        del previous
+        self._update_edit_context_state()
+        if self._loading_ui or current is None:
+            return
+        data = current.data(QtCore.Qt.UserRole)
+        if not isinstance(data, tuple) or len(data) != 2:
+            return
+        kind = str(data[0])
+        idx = int(data[1])
+        if kind == "operation" and 0 <= idx < len(self.operations):
+            self.ops_list.setCurrentRow(idx)
+            self._select_operation_in_fen_tab(idx)
+            self._update_lichess_link()
+            return
+        if kind == "eraser":
+            self.erasers_list.setCurrentRow(idx if 0 <= idx < len(self.erase_operations) else -1)
+            self.ops_list.setCurrentRow(-1)
+            self.fen_ops_list.setCurrentRow(-1)
+            self._update_lichess_link()
+
+    def _on_change_double_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
+        data = item.data(QtCore.Qt.UserRole)
+        if not isinstance(data, tuple) or len(data) != 2:
+            return
+        kind = str(data[0])
+        idx = int(data[1])
+        if kind == "operation":
+            if 0 <= idx < len(self.operations):
+                self._focus_operation(idx)
+            return
+        if kind == "eraser":
+            self._focus_eraser(idx)
+
     def _on_operation_style_changed(self, value: float) -> None:
         del value
         if self._loading_ui:
@@ -1680,6 +1734,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if first_rect is not None:
             self.page_widget.set_selection_rect(first_rect)
             self.ops_list.setCurrentRow(len(self.operations) - added_count)
+            self._select_change("operation", len(self.operations) - added_count)
         self._update_edit_context_state()
         self.statusBar().showMessage(
             f"Pagina reconhecida. adicionadas={added_count}, ignoradas={skipped_count}"
@@ -1915,6 +1970,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.operations.append(op)
         self._refresh_operations_list()
         self.ops_list.setCurrentRow(len(self.operations) - 1)
+        self._select_change("operation", len(self.operations) - 1)
         self._refresh_page_overlays()
         self._update_edit_context_state()
         self.statusBar().showMessage(f"Substituicao adicionada. Total: {len(self.operations)}")
@@ -1956,7 +2012,53 @@ class MainWindow(QtWidgets.QMainWindow):
             self._loading_ui = False
             self._select_operation_in_fen_tab(selected_idx)
         self._update_lichess_link()
+        self._refresh_changes_list()
         self._update_edit_context_state()
+
+    def _refresh_changes_list(self, selected: Optional[tuple[str, int]] = None) -> None:
+        if selected is None:
+            selected = self._selected_change()
+
+        self.changes_list.clear()
+        for idx, op in enumerate(self.operations):
+            text = (
+                f"{idx + 1:03d} | Diagrama | pag {op.page_num + 1} | "
+                f"{op.fen[:28]}{'...' if len(op.fen) > 28 else ''}"
+            )
+            item = QtWidgets.QListWidgetItem(text)
+            item.setData(QtCore.Qt.UserRole, ("operation", idx))
+            self.changes_list.addItem(item)
+
+        offset = len(self.operations)
+        for idx, op in enumerate(self.erase_operations):
+            x0, y0, x1, y1 = op.rect_pdf
+            w = max(0.0, x1 - x0)
+            h = max(0.0, y1 - y0)
+            item = QtWidgets.QListWidgetItem(
+                f"{offset + idx + 1:03d} | Apagamento | pag {op.page_num + 1} | {w:.1f}x{h:.1f} pt"
+            )
+            item.setData(QtCore.Qt.UserRole, ("eraser", idx))
+            self.changes_list.addItem(item)
+
+        if selected is None:
+            self._update_edit_context_state()
+            return
+
+        for row in range(self.changes_list.count()):
+            item = self.changes_list.item(row)
+            if item and item.data(QtCore.Qt.UserRole) == selected:
+                self._loading_ui = True
+                self.changes_list.setCurrentRow(row)
+                self._loading_ui = False
+                break
+        self._update_edit_context_state()
+
+    def _select_change(self, kind: str, idx: int) -> None:
+        for row in range(self.changes_list.count()):
+            item = self.changes_list.item(row)
+            if item and item.data(QtCore.Qt.UserRole) == (kind, idx):
+                self.changes_list.setCurrentRow(row)
+                return
 
     def _add_eraser_from_selection(self) -> None:
         if not self.current_render or not self.pdf_service:
@@ -1973,6 +2075,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.erase_operations.append(EraseOperation(page_num=self.current_page, rect_pdf=rect_pdf))
         self._refresh_erasers_list()
+        self._select_change("eraser", len(self.erase_operations) - 1)
         self._refresh_page_overlays()
         self._update_edit_context_state()
         self.statusBar().showMessage(f"Borracha adicionada. Total: {len(self.erase_operations)}")
@@ -1987,6 +2090,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item = QtWidgets.QListWidgetItem(text)
             item.setData(QtCore.Qt.UserRole, idx)
             self.erasers_list.addItem(item)
+        self._refresh_changes_list()
         self._update_edit_context_state()
 
     def _remove_selected_eraser(self) -> None:
@@ -2017,6 +2121,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_eraser_double_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
         idx = int(item.data(QtCore.Qt.UserRole))
+        self._focus_eraser(idx)
+
+    def _focus_eraser(self, idx: int) -> None:
         if not (0 <= idx < len(self.erase_operations)) or not self.pdf_service:
             return
         op = self.erase_operations[idx]
@@ -2029,6 +2136,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.current_render.matrix,
             )
             self.page_widget.set_selection_rect(rect_img)
+        self._select_change("eraser", idx)
 
     def _remove_operation_at_index(self, idx: int) -> None:
         if not (0 <= idx < len(self.operations)):
@@ -2043,6 +2151,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ops_list.setCurrentRow(next_idx)
             self._loading_ui = False
             self._focus_operation(next_idx)
+            self._select_change("operation", next_idx)
         else:
             self.page_widget.clear_selection()
             self._update_lichess_link()
@@ -2056,6 +2165,22 @@ class MainWindow(QtWidgets.QMainWindow):
         if idx is None:
             return
         self._remove_operation_at_index(idx)
+
+    def _remove_selected_change(self) -> None:
+        selected = self._selected_change()
+        if selected is None:
+            return
+        kind, idx = selected
+        if kind == "operation":
+            self._remove_operation_at_index(idx)
+            return
+        if kind == "eraser" and 0 <= idx < len(self.erase_operations):
+            del self.erase_operations[idx]
+            self._refresh_erasers_list()
+            self._refresh_page_overlays()
+            if self.erase_operations:
+                self._select_change("eraser", min(idx, len(self.erase_operations) - 1))
+            self.statusBar().showMessage(f"Apagamento removido. Total: {len(self.erase_operations)}")
 
     def _remove_selected_fen_operation(self) -> None:
         idx = self._selected_fen_operation_index()
@@ -2076,6 +2201,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_operations_list()
             self._refresh_page_overlays()
             self._update_edit_context_state()
+
+    def _clear_changes(self) -> None:
+        if not self.operations and not self.erase_operations:
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Limpar alterações",
+            "Remover todas as substituições e apagamentos pendentes?",
+        )
+        if answer != QtWidgets.QMessageBox.Yes:
+            return
+        self.operations.clear()
+        self.erase_operations.clear()
+        self._refresh_operations_list()
+        self._refresh_erasers_list()
+        self._refresh_page_overlays()
+        self.page_widget.clear_selection()
+        self._update_edit_context_state()
 
     def _on_operation_double_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
         idx = int(item.data(QtCore.Qt.UserRole))

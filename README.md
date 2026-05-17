@@ -68,6 +68,7 @@ python -m chess_pdf_editor
    A opcao `Aplicar em todas as substituicoes` (ligada por padrao) replica a configuracao para toda a lista.
 9. Clique em `Adicionar substituição`.
 10. Para apagar coordenadas/letras residuais, selecione a area e clique em `Adicionar apagamento`.
+    Substituições e apagamentos aparecem juntos na lista `Alterações`.
 11. Repita para outros diagramas.
 12. Clique em `Exportar PDF`.
    Opcional: na aba `Aparência`, abra `Ajustes avançados` e marque/desmarque `Incluir link Lichess no PDF exportado`.
