@@ -44,3 +44,19 @@ def test_study_panel_export_uses_pgn_provider():
     finally:
         panel.deleteLater()
         app.processEvents()
+
+
+def test_study_panel_marks_commented_moves():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    panel = StudyPanel()
+
+    try:
+        panel.set_commented_plies({2})
+        panel._on_line_changed(["e4", "e5"], 2)
+
+        assert panel.moves_table.item(0, 1).text() == "e4"
+        assert panel.moves_table.item(0, 2).text() == "e5 *"
+        assert panel.moves_table.item(0, 2).toolTip() == "Este lance tem comentario."
+    finally:
+        panel.deleteLater()
+        app.processEvents()

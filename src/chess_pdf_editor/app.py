@@ -22,6 +22,7 @@ class StudyPanel(QtWidgets.QWidget):
         self.resize(980, 760)
         self._syncing_move_list = False
         self._pgn_provider: Optional[Callable[[], str]] = None
+        self._commented_plies: set[int] = set()
 
         self.study_board = StudyBoardWidget(cell_size=58)
         self.study_board.state_changed.connect(self._on_state_changed)
@@ -106,6 +107,14 @@ class StudyPanel(QtWidgets.QWidget):
     def set_pgn_provider(self, provider: Optional[Callable[[], str]]) -> None:
         self._pgn_provider = provider
 
+    def set_commented_plies(self, plies: object) -> None:
+        self._commented_plies = {
+            int(ply)
+            for ply in (plies or [])
+            if isinstance(ply, int) or str(ply).isdigit()
+        }
+        self._on_line_changed(self.study_board.san_line(), self.study_board.current_ply())
+
     def _export_pgn_text(self) -> str:
         if self._pgn_provider is not None:
             return self._pgn_provider()
@@ -125,6 +134,7 @@ class StudyPanel(QtWidgets.QWidget):
         try:
             normalized = normalize_piece_placement(extract_piece_placement(piece_placement))
             self.study_board.set_start_fen(f"{normalized} {side} - - 0 {fullmove}")
+            self.set_commented_plies(set())
             self.status_label.setText("Posicao carregada do editor.")
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
@@ -223,11 +233,22 @@ class StudyPanel(QtWidgets.QWidget):
                 side = "b"
         return rows
 
-    @staticmethod
-    def _make_move_item(text: str, ply: Optional[int] = None) -> QtWidgets.QTableWidgetItem:
-        item = QtWidgets.QTableWidgetItem(text)
+    def _make_move_item(
+        self,
+        text: str,
+        ply: Optional[int] = None,
+        has_comment: bool = False,
+    ) -> QtWidgets.QTableWidgetItem:
+        item = QtWidgets.QTableWidgetItem(f"{text} *" if text and has_comment else text)
         if ply is not None:
             item.setData(QtCore.Qt.UserRole, int(ply))
+            if has_comment:
+                font = item.font()
+                font.setBold(True)
+                item.setFont(font)
+                item.setBackground(QtGui.QColor("#fff7d6"))
+                item.setForeground(QtGui.QColor("#5f3b00"))
+                item.setToolTip("Este lance tem comentario.")
         else:
             item.setFlags(item.flags() & ~QtCore.Qt.ItemIsSelectable)
         return item
@@ -246,8 +267,16 @@ class StudyPanel(QtWidgets.QWidget):
             self.moves_table.setRowCount(len(rows))
             for row_idx, (move_label, white_san, white_ply, black_san, black_ply) in enumerate(rows):
                 self.moves_table.setItem(row_idx, 0, self._make_move_item(move_label))
-                self.moves_table.setItem(row_idx, 1, self._make_move_item(white_san or "", white_ply))
-                self.moves_table.setItem(row_idx, 2, self._make_move_item(black_san or "", black_ply))
+                self.moves_table.setItem(
+                    row_idx,
+                    1,
+                    self._make_move_item(white_san or "", white_ply, white_ply in self._commented_plies),
+                )
+                self.moves_table.setItem(
+                    row_idx,
+                    2,
+                    self._make_move_item(black_san or "", black_ply, black_ply in self._commented_plies),
+                )
                 if white_ply == cursor:
                     selected_cell = (row_idx, 1)
                 if black_ply == cursor:
@@ -1386,6 +1415,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 out[ply] = {"before": before, "after": after}
         return out
 
+    def _refresh_study_move_comment_markers(self, pos: Optional[StudyPosition] = None) -> None:
+        if pos is None:
+            idx = self._selected_study_position_index()
+            pos = self.study_positions[idx] if idx is not None else None
+        commented_plies = self._study_comments_for_pgn(pos).keys() if pos is not None else set()
+        self.study_panel.set_commented_plies(ply for ply in commented_plies if ply > 0)
+
     def _current_study_comments(self, pos: StudyPosition) -> tuple[str, str]:
         key = self._study_comment_key(self.study_panel.study_board.current_ply())
         if not pos.move_comments and key == "0":
@@ -1440,6 +1476,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.study_comment_after_edit.toPlainText(),
         )
         self._update_study_position_pgn(pos)
+        self._refresh_study_move_comment_markers(pos)
         self._refresh_study_positions_list()
         return pos.pgn
 
@@ -1484,6 +1521,7 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             self._syncing_study_positions = False
         self._load_study_position(pos)
+        self._refresh_study_move_comment_markers(pos)
         self._refresh_study_comment_fields_for_current_ply()
         self._set_mode("study")
 
@@ -1524,6 +1562,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.study_comment_after_edit.toPlainText(),
         )
         self._update_study_position_pgn(pos)
+        self._refresh_study_move_comment_markers(pos)
         self._refresh_study_positions_list()
 
     def _save_current_study_line(self) -> None:
@@ -1536,6 +1575,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pos = self.study_positions[idx]
         self._set_current_study_comments(pos, before, after)
         self._update_study_position_pgn(pos)
+        self._refresh_study_move_comment_markers(pos)
         self.statusBar().showMessage("Linha de estudo atualizada.")
         self._refresh_study_positions_list()
 
