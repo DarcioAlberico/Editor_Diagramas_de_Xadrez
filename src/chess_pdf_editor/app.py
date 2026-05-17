@@ -194,6 +194,17 @@ class StudyDialog(QtWidgets.QDialog):
 
 
 class MainWindow(QtWidgets.QMainWindow):
+    _PRIMARY_BUTTON_STYLE = (
+        "QPushButton { background-color: #1f6feb; color: white; font-weight: 600; "
+        "padding: 6px 10px; border-radius: 4px; } "
+        "QPushButton:disabled { background-color: #9bbce8; color: #f4f7fb; }"
+    )
+    _SECONDARY_BUTTON_STYLE = ""
+    _CONTEXT_STYLE = (
+        "QLabel { background-color: #f3f6fa; color: #223042; border: 1px solid #d8e0ea; "
+        "border-radius: 5px; padding: 8px; }"
+    )
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Chess PDF Editor")
@@ -273,6 +284,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fen_move_spin.valueChanged.connect(self._on_fen_meta_changed)
         self.erasers_list = QtWidgets.QListWidget()
         self.erasers_list.itemDoubleClicked.connect(self._on_eraser_double_clicked)
+        self.erasers_list.currentItemChanged.connect(lambda current, previous: self._update_edit_context_state())
         self.study_positions_list = QtWidgets.QListWidget()
         self.study_positions_list.itemDoubleClicked.connect(self._on_study_position_double_clicked)
         self.study_positions_list.currentItemChanged.connect(self._on_study_position_selected)
@@ -381,6 +393,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.edit_tabs = QtWidgets.QTabWidget()
         ocr_tab = QtWidgets.QWidget()
         ocr_tab_layout = QtWidgets.QVBoxLayout(ocr_tab)
+        self.edit_context_label = QtWidgets.QLabel("")
+        self.edit_context_label.setWordWrap(True)
+        self.edit_context_label.setStyleSheet(self._CONTEXT_STYLE)
+        ocr_tab_layout.addWidget(self.edit_context_label)
         ocr_tab_layout.addWidget(QtWidgets.QLabel("Reconhecimento"))
         ocr_tab_layout.addWidget(self.btn_ocr)
         ocr_actions = QtWidgets.QHBoxLayout()
@@ -528,6 +544,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._try_restore_last_project()
         self._update_lichess_link()
         self._refresh_study_positions_list()
+        self._update_edit_context_state()
 
     def _make_collapsible_group(
         self,
@@ -553,6 +570,78 @@ class MainWindow(QtWidgets.QMainWindow):
                 widget.setVisible(visible)
             if child_layout is not None:
                 cls._set_layout_visible(child_layout, visible)
+
+    def _current_piece_placement_or_none(self) -> Optional[str]:
+        text = self.fen_edit.text().strip()
+        if not text:
+            return None
+        try:
+            return normalize_piece_placement(extract_piece_placement(text))
+        except Exception:
+            return None
+
+    def _current_fen_has_pieces(self) -> bool:
+        piece_placement = self._current_piece_placement_or_none()
+        if not piece_placement:
+            return False
+        return any(ch in "PNBRQKpnbrqk" for ch in piece_placement)
+
+    def _set_primary_button(self, target: Optional[QtWidgets.QPushButton]) -> None:
+        for button in (self.btn_ocr, self.btn_ocr_page, self.btn_ocr_full, self.btn_add, self.btn_add_eraser):
+            button.setStyleSheet(self._SECONDARY_BUTTON_STYLE)
+        if target is not None:
+            target.setStyleSheet(self._PRIMARY_BUTTON_STYLE)
+
+    def _update_edit_context_state(self) -> None:
+        if not hasattr(self, "edit_context_label"):
+            return
+
+        has_pdf = bool(self.pdf_service and self.current_render)
+        has_selection = bool(self.page_widget.selection_rect()) if has_pdf else False
+        has_position = self._current_fen_has_pieces()
+        has_changes = bool(self.operations or self.erase_operations)
+
+        self.btn_ocr.setEnabled(has_selection)
+        self.btn_ocr_page.setEnabled(has_pdf)
+        self.btn_ocr_full.setEnabled(has_pdf)
+        self.btn_add.setEnabled(has_selection and has_position)
+        self.btn_add_eraser.setEnabled(has_selection)
+        self.btn_remove.setEnabled(self.ops_list.currentItem() is not None)
+        self.btn_clear.setEnabled(bool(self.operations))
+        self.btn_remove_eraser.setEnabled(self.erasers_list.currentItem() is not None)
+        self.btn_clear_erasers.setEnabled(bool(self.erase_operations))
+        self.act_save_pdf.setEnabled(has_changes)
+        self.act_recognize_selection.setEnabled(has_selection)
+        self.act_recognize_page.setEnabled(has_pdf)
+        self.act_recognize_full.setEnabled(has_pdf)
+        self.act_add_operation.setEnabled(has_selection and has_position)
+
+        if not has_pdf:
+            self.edit_context_label.setText("Abra um PDF para iniciar o fluxo de edição.")
+            self._set_primary_button(None)
+            return
+
+        if has_selection and has_position:
+            self.edit_context_label.setText(
+                "Seleção e posição prontas. Adicione a substituição ou reconheça novamente se quiser revisar o OCR."
+            )
+            self._set_primary_button(self.btn_add)
+            return
+
+        if has_selection:
+            self.edit_context_label.setText("Seleção pronta. Reconheça o diagrama ou adicione um apagamento.")
+            self._set_primary_button(self.btn_ocr)
+            return
+
+        if has_changes:
+            self.edit_context_label.setText(
+                "Alterações pendentes. Revise a lista ou exporte o PDF quando terminar."
+            )
+            self._set_primary_button(None)
+            return
+
+        self.edit_context_label.setText("Selecione um diagrama na página para começar.")
+        self._set_primary_button(None)
 
     def _build_toolbar(self) -> None:
         toolbar = self.addToolBar("Main")
@@ -806,6 +895,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_erasers_list()
             self._refresh_study_positions_list()
         self._render_current_page()
+        self._update_edit_context_state()
         self.statusBar().showMessage(f"PDF aberto: {file_path}")
 
     def _render_current_page(self) -> None:
@@ -824,6 +914,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(
             f"Chess PDF Editor - {Path(self.current_pdf_path or '').name} - Pagina {self.current_page + 1}/{self.pdf_service.page_count}"
         )
+        self._update_edit_context_state()
 
     def _prev_page(self) -> None:
         if not self.pdf_service:
@@ -1013,11 +1104,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_selection_changed(self, rect: object) -> None:
         if rect is None:
             self.statusBar().showMessage("Selecao limpa.")
+            self._update_edit_context_state()
             return
         x0, y0, x1, y1 = rect
         self.statusBar().showMessage(
             f"Selecao imagem: x0={x0:.1f}, y0={y0:.1f}, x1={x1:.1f}, y1={y1:.1f}"
         )
+        self._update_edit_context_state()
 
     def _operation_index_at_image_point(self, x: float, y: float) -> Optional[int]:
         if not self.pdf_service or not self.current_render:
@@ -1325,6 +1418,7 @@ class MainWindow(QtWidgets.QMainWindow):
         previous: Optional[QtWidgets.QListWidgetItem],
     ) -> None:
         del previous
+        self._update_edit_context_state()
         if self._loading_ui:
             return
         if current is None:
@@ -1344,6 +1438,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pad_bottom_spin.setValue(float(op.whiteout_padding_bottom_pt))
         self.op_border_spin.setValue(float(op.border_width_pt))
         self._loading_ui = False
+        self._update_edit_context_state()
 
     def _on_operation_style_changed(self, value: float) -> None:
         del value
@@ -1408,6 +1503,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._loading_ui = False
         self._update_warnings(piece_placement)
         self._update_lichess_link()
+        self._update_edit_context_state()
 
     def _on_fen_edited(self) -> None:
         if self._loading_ui:
@@ -1421,9 +1517,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._loading_ui = False
             self._update_warnings(piece_placement)
             self._update_lichess_link()
+            self._update_edit_context_state()
         except Exception as exc:
             self._loading_ui = False
             self._update_lichess_link()
+            self._update_edit_context_state()
             QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
 
     def _update_warnings(self, piece_placement: str) -> None:
@@ -1473,6 +1571,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fen_edit.setText(best.fen)
         self._loading_ui = False
         self._update_warnings(best.fen)
+        self._update_edit_context_state()
 
         sx0, sy0, sx1, sy1 = selection
         sw = max(1.0, sx1 - sx0)
@@ -1490,6 +1589,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if prediction.message:
             info += f" msg={prediction.message}"
         self.statusBar().showMessage(info)
+        self._update_edit_context_state()
 
     def _recognize_current_page(self) -> None:
         if not self.current_render or not self.pdf_service:
@@ -1580,6 +1680,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if first_rect is not None:
             self.page_widget.set_selection_rect(first_rect)
             self.ops_list.setCurrentRow(len(self.operations) - added_count)
+        self._update_edit_context_state()
         self.statusBar().showMessage(
             f"Pagina reconhecida. adicionadas={added_count}, ignoradas={skipped_count}"
         )
@@ -1752,6 +1853,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._refresh_operations_list()
         self._refresh_page_overlays()
+        self._update_edit_context_state()
 
         status = (
             f"OCR em lote concluido. adicionadas={added_count}, ignoradas={skipped_count}, "
@@ -1814,6 +1916,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_operations_list()
         self.ops_list.setCurrentRow(len(self.operations) - 1)
         self._refresh_page_overlays()
+        self._update_edit_context_state()
         self.statusBar().showMessage(f"Substituicao adicionada. Total: {len(self.operations)}")
 
     def _refresh_operations_list(self) -> None:
@@ -1853,6 +1956,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._loading_ui = False
             self._select_operation_in_fen_tab(selected_idx)
         self._update_lichess_link()
+        self._update_edit_context_state()
 
     def _add_eraser_from_selection(self) -> None:
         if not self.current_render or not self.pdf_service:
@@ -1870,6 +1974,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.erase_operations.append(EraseOperation(page_num=self.current_page, rect_pdf=rect_pdf))
         self._refresh_erasers_list()
         self._refresh_page_overlays()
+        self._update_edit_context_state()
         self.statusBar().showMessage(f"Borracha adicionada. Total: {len(self.erase_operations)}")
 
     def _refresh_erasers_list(self) -> None:
@@ -1882,6 +1987,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item = QtWidgets.QListWidgetItem(text)
             item.setData(QtCore.Qt.UserRole, idx)
             self.erasers_list.addItem(item)
+        self._update_edit_context_state()
 
     def _remove_selected_eraser(self) -> None:
         item = self.erasers_list.currentItem()
@@ -1892,6 +1998,7 @@ class MainWindow(QtWidgets.QMainWindow):
             del self.erase_operations[idx]
             self._refresh_erasers_list()
             self._refresh_page_overlays()
+            self._update_edit_context_state()
             self.statusBar().showMessage(f"Borracha removida. Total: {len(self.erase_operations)}")
 
     def _clear_erasers(self) -> None:
@@ -1906,6 +2013,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.erase_operations.clear()
             self._refresh_erasers_list()
             self._refresh_page_overlays()
+            self._update_edit_context_state()
 
     def _on_eraser_double_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
         idx = int(item.data(QtCore.Qt.UserRole))
@@ -1940,6 +2048,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_lichess_link()
 
         self._refresh_page_overlays()
+        self._update_edit_context_state()
         self.statusBar().showMessage(f"Substituicao removida. Total: {len(self.operations)}")
 
     def _remove_selected_operation(self) -> None:
@@ -1966,6 +2075,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.operations.clear()
             self._refresh_operations_list()
             self._refresh_page_overlays()
+            self._update_edit_context_state()
 
     def _on_operation_double_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
         idx = int(item.data(QtCore.Qt.UserRole))
