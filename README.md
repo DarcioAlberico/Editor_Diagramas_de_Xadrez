@@ -91,7 +91,7 @@ Para estudar uma posicao do PDF:
 3. Ajuste `Vez de jogar` na aba `FEN` quando a posicao começar com as pretas.
 4. Clique em `Estudar selecao`.
 5. Clique no lance desejado na lista SAN e use `Atualizar linha` para salvar o PGN estudado naquela posicao.
-   Os comentarios `antes` e `depois` sao gravados no lance atualmente selecionado.
+   Os comentarios `antes` e `depois` ficam gravados por lance selecionado e sao preservados ao navegar pela linha.
 
 As posicoes de estudo ficam em `Posicoes deste PDF` e sao salvas no projeto.
 

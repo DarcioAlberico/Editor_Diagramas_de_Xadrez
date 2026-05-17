@@ -53,6 +53,26 @@ def save_project_state(path: str, state: ProjectState) -> None:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
 
 
+def _load_study_move_comments(item: dict[str, object]) -> dict[str, dict[str, str]]:
+    raw_comments = item.get("move_comments", {})
+    if not isinstance(raw_comments, dict):
+        raw_comments = {}
+    comments = {
+        str(ply): {
+            "before": str(values.get("before", "")),
+            "after": str(values.get("after", "")),
+        }
+        for ply, values in raw_comments.items()
+        if isinstance(values, dict)
+    }
+    if not comments:
+        before = str(item.get("comment_before", item.get("note", "")))
+        after = str(item.get("comment_after", ""))
+        if before.strip() or after.strip():
+            comments["0"] = {"before": before, "after": after}
+    return comments
+
+
 def load_project_state(path: str) -> ProjectState:
     with open(path, "r", encoding="utf-8") as fh:
         payload = json.load(fh)
@@ -92,6 +112,7 @@ def load_project_state(path: str) -> ProjectState:
             pgn=str(item.get("pgn", "")),
             comment_before=str(item.get("comment_before", item.get("note", ""))),
             comment_after=str(item.get("comment_after", "")),
+            move_comments=_load_study_move_comments(item),
             note=str(item.get("note", "")),
         )
         for item in payload.get("study_positions", [])

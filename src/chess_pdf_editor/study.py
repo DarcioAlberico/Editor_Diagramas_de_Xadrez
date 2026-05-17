@@ -138,6 +138,8 @@ class StudyGame:
         comment_before: str = "",
         comment_after: str = "",
         comment_ply: Optional[int] = None,
+        move_comments: Optional[dict[int, dict[str, str]]] = None,
+        include_all: bool = False,
     ) -> str:
         game = chess.pgn.Game()
         now = date or datetime.now()
@@ -154,21 +156,40 @@ class StudyGame:
             game.headers["SetUp"] = "1"
             game.headers["FEN"] = self._start_fen
 
-        node = game
-        target_ply = self._cursor if comment_ply is None else max(0, min(int(comment_ply), self._cursor))
-        before_text = comment_before.strip()
-        after_text = comment_after.strip()
-        if before_text and target_ply == 0:
-            game.comment = before_text
+        comments: dict[int, dict[str, str]] = {}
+        if move_comments:
+            for ply, values in move_comments.items():
+                comments[int(ply)] = {
+                    "before": str(values.get("before", "")).strip(),
+                    "after": str(values.get("after", "")).strip(),
+                }
 
-        for ply_idx, move in enumerate(self._history[: self._cursor], start=1):
-            if before_text and ply_idx == target_ply:
-                node.comment = before_text
+        moves_to_export = self._history if include_all else self._history[: self._cursor]
+        max_ply = len(moves_to_export)
+
+        if comment_before.strip() or comment_after.strip():
+            target_ply = self._cursor if comment_ply is None else max(0, min(int(comment_ply), max_ply))
+            comments[target_ply] = {
+                "before": comment_before.strip(),
+                "after": comment_after.strip(),
+            }
+
+        def append_comment(target: chess.pgn.ChildNode | chess.pgn.Game, text: str) -> None:
+            text = text.strip()
+            if not text:
+                return
+            target.comment = text if not target.comment else f"{target.comment} {text}"
+
+        node = game
+        root_comments = comments.get(0, {})
+        append_comment(game, root_comments.get("before", ""))
+
+        for ply_idx, move in enumerate(moves_to_export, start=1):
+            ply_comments = comments.get(ply_idx, {})
+            append_comment(node, ply_comments.get("before", ""))
             node = node.add_variation(move)
-            if after_text and ply_idx == target_ply:
-                node.comment = after_text
-        if after_text and target_ply == 0:
-            game.comment = after_text if not game.comment else f"{game.comment} {after_text}"
+            append_comment(node, ply_comments.get("after", ""))
+        append_comment(game, root_comments.get("after", ""))
         return str(game)
 
     def load_moves(self, moves: Iterable[chess.Move]) -> None:

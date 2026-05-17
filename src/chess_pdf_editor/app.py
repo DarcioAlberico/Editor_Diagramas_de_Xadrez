@@ -572,6 +572,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_vertical_splitter.setSizes([360, 560])
 
         self.study_panel = StudyPanel(self)
+        self.study_panel.study_board.line_changed.connect(lambda san_line, cursor: self._on_study_ply_changed())
         study_positions_panel = QtWidgets.QWidget()
         study_positions_layout = QtWidgets.QVBoxLayout(study_positions_panel)
         study_positions_layout.addWidget(self._section_label("Posições deste PDF"))
@@ -1357,6 +1358,72 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             self._syncing_study_positions = False
 
+    @staticmethod
+    def _study_comment_key(ply: int) -> str:
+        return str(max(0, int(ply)))
+
+    @staticmethod
+    def _study_comments_for_pgn(pos: StudyPosition) -> dict[int, dict[str, str]]:
+        out: dict[int, dict[str, str]] = {}
+        for key, values in pos.move_comments.items():
+            try:
+                ply = max(0, int(key))
+            except Exception:
+                continue
+            before = str(values.get("before", ""))
+            after = str(values.get("after", ""))
+            if before.strip() or after.strip():
+                out[ply] = {"before": before, "after": after}
+        return out
+
+    def _current_study_comments(self, pos: StudyPosition) -> tuple[str, str]:
+        key = self._study_comment_key(self.study_panel.study_board.current_ply())
+        if not pos.move_comments and key == "0":
+            return (pos.comment_before or pos.note, pos.comment_after)
+        values = pos.move_comments.get(key, {})
+        return (str(values.get("before", "")), str(values.get("after", "")))
+
+    def _set_current_study_comments(self, pos: StudyPosition, before: str, after: str) -> None:
+        key = self._study_comment_key(self.study_panel.study_board.current_ply())
+        if before.strip() or after.strip():
+            pos.move_comments[key] = {"before": before, "after": after}
+        else:
+            pos.move_comments.pop(key, None)
+        if key == "0":
+            pos.comment_before = before
+            pos.comment_after = after
+            pos.note = before
+        elif not pos.comment_before and not pos.comment_after and pos.move_comments:
+            first_key = sorted(pos.move_comments, key=lambda value: int(value))[0]
+            first = pos.move_comments[first_key]
+            pos.comment_before = str(first.get("before", ""))
+            pos.comment_after = str(first.get("after", ""))
+            pos.note = pos.comment_before
+
+    def _refresh_study_comment_fields_for_current_ply(self) -> None:
+        idx = self._selected_study_position_index()
+        if idx is None:
+            return
+        pos = self.study_positions[idx]
+        before, after = self._current_study_comments(pos)
+        self._syncing_study_positions = True
+        try:
+            self.study_comment_before_edit.setPlainText(before)
+            self.study_comment_after_edit.setPlainText(after)
+        finally:
+            self._syncing_study_positions = False
+
+    def _update_study_position_pgn(self, pos: StudyPosition) -> None:
+        pos.pgn = self.study_panel.study_board.current_pgn(
+            move_comments=self._study_comments_for_pgn(pos),
+            include_all=True,
+        )
+
+    def _on_study_ply_changed(self) -> None:
+        if self._syncing_study_positions:
+            return
+        self._refresh_study_comment_fields_for_current_ply()
+
     def _load_study_position(self, pos: StudyPosition) -> None:
         self.study_panel.load_piece_placement(
             pos.fen,
@@ -1390,11 +1457,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._syncing_study_positions = True
         try:
             self.study_positions_list.setCurrentRow(idx)
-            self.study_comment_before_edit.setPlainText(pos.comment_before or pos.note)
-            self.study_comment_after_edit.setPlainText(pos.comment_after)
         finally:
             self._syncing_study_positions = False
         self._load_study_position(pos)
+        self._refresh_study_comment_fields_for_current_ply()
         self._set_mode("study")
 
     def _on_study_position_double_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
@@ -1415,8 +1481,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._syncing_study_positions = True
         try:
             pos = self.study_positions[idx]
-            self.study_comment_before_edit.setPlainText(pos.comment_before or pos.note)
-            self.study_comment_after_edit.setPlainText(pos.comment_after)
+            before, after = self._current_study_comments(pos)
+            self.study_comment_before_edit.setPlainText(before)
+            self.study_comment_after_edit.setPlainText(after)
         finally:
             self._syncing_study_positions = False
 
@@ -1426,9 +1493,13 @@ class MainWindow(QtWidgets.QMainWindow):
         idx = self._selected_study_position_index()
         if idx is None:
             return
-        self.study_positions[idx].comment_before = self.study_comment_before_edit.toPlainText()
-        self.study_positions[idx].comment_after = self.study_comment_after_edit.toPlainText()
-        self.study_positions[idx].note = self.study_positions[idx].comment_before
+        pos = self.study_positions[idx]
+        self._set_current_study_comments(
+            pos,
+            self.study_comment_before_edit.toPlainText(),
+            self.study_comment_after_edit.toPlainText(),
+        )
+        self._update_study_position_pgn(pos)
         self._refresh_study_positions_list()
 
     def _save_current_study_line(self) -> None:
@@ -1438,14 +1509,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         before = self.study_comment_before_edit.toPlainText()
         after = self.study_comment_after_edit.toPlainText()
-        self.study_positions[idx].comment_before = before
-        self.study_positions[idx].comment_after = after
-        self.study_positions[idx].note = before
-        self.study_positions[idx].pgn = self.study_panel.study_board.current_pgn(
-            comment_before=before,
-            comment_after=after,
-            comment_ply=self.study_panel.study_board.current_ply(),
-        )
+        pos = self.study_positions[idx]
+        self._set_current_study_comments(pos, before, after)
+        self._update_study_position_pgn(pos)
         self.statusBar().showMessage("Linha de estudo atualizada.")
         self._refresh_study_positions_list()
 

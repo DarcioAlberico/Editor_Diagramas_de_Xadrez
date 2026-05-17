@@ -534,11 +534,15 @@ class StudyBoardWidget(QtWidgets.QWidget):
         comment_before: str = "",
         comment_after: str = "",
         comment_ply: Optional[int] = None,
+        move_comments: Optional[dict[int, dict[str, str]]] = None,
+        include_all: bool = False,
     ) -> str:
         return self._game.to_pgn(
             comment_before=comment_before,
             comment_after=comment_after,
             comment_ply=comment_ply,
+            move_comments=move_comments,
+            include_all=include_all,
         )
 
     def current_ply(self) -> int:

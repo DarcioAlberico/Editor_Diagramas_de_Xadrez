@@ -104,3 +104,24 @@ def test_study_pgn_comments_can_target_current_ply():
 
     assert "e4 { Antes de e5 }" in pgn
     assert "e5 { Depois de e5 }" in pgn
+
+
+def test_study_pgn_keeps_comments_for_multiple_moves():
+    game = StudyGame()
+    game.push_move(chess.Move.from_uci("e2e4"))
+    game.push_move(chess.Move.from_uci("e7e5"))
+    game.push_move(chess.Move.from_uci("g1f3"))
+    game.goto_ply(1)
+
+    pgn = game.to_pgn(
+        move_comments={
+            1: {"before": "Antes de e4", "after": "Depois de e4"},
+            3: {"before": "Antes de Nf3", "after": "Depois de Nf3"},
+        },
+        include_all=True,
+    )
+
+    assert "{ Antes de e4 }" in pgn
+    assert "e4 { Depois de e4 }" in pgn
+    assert "{ Antes de Nf3 }" in pgn
+    assert "Nf3 { Depois de Nf3 }" in pgn

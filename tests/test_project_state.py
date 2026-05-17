@@ -33,6 +33,7 @@ def test_project_state_roundtrip_with_erasers(tmp_path):
                 pgn='[Event "Study"]\n\n*',
                 comment_before="final de reis",
                 comment_after="oposicao",
+                move_comments={"2": {"before": "antes", "after": "depois"}},
             )
         ],
         current_page=2,
@@ -59,6 +60,7 @@ def test_project_state_roundtrip_with_erasers(tmp_path):
     assert loaded.study_positions[0].fullmove_number == 8
     assert loaded.study_positions[0].comment_before == "final de reis"
     assert loaded.study_positions[0].comment_after == "oposicao"
+    assert loaded.study_positions[0].move_comments == {"2": {"before": "antes", "after": "depois"}}
     assert loaded.current_page == 2
     assert loaded.include_lichess_link is False
     assert loaded.ocr_full_next_page == 7
@@ -120,6 +122,7 @@ def test_load_project_state_legacy_study_note_to_comment_before(tmp_path):
     assert loaded.study_positions[0].comment_after == ""
     assert loaded.study_positions[0].side_to_move == "w"
     assert loaded.study_positions[0].fullmove_number == 1
+    assert loaded.study_positions[0].move_comments == {"0": {"before": "texto antigo", "after": ""}}
 
 
 def test_load_project_state_legacy_uniform_padding_to_sides(tmp_path):

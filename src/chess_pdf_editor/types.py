@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 Rect = tuple[float, float, float, float]
@@ -57,4 +57,5 @@ class StudyPosition:
     pgn: str = ""
     comment_before: str = ""
     comment_after: str = ""
+    move_comments: dict[str, dict[str, str]] = field(default_factory=dict)
     note: str = ""
