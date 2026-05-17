@@ -83,6 +83,29 @@ def test_study_load_pgn():
     assert game.board.fen().startswith("rnbqkbnr/pp2pppp/3p4/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R")
 
 
+def test_study_load_pgn_returns_mainline_comments():
+    game = StudyGame()
+    pgn_text = """[Event "Test"]
+[Site "Local"]
+[Date "2026.05.17"]
+[Round "-"]
+[White "W"]
+[Black "B"]
+[Result "*"]
+
+{ Plano inicial } 1. e4 { Centro ocupado } e5 2. Nf3 { Desenvolve } *
+"""
+
+    comments = game.load_pgn(pgn_text)
+
+    assert game.san_line() == ["e4", "e5", "Nf3"]
+    assert comments == {
+        0: {"before": "Plano inicial", "after": ""},
+        1: {"before": "", "after": "Centro ocupado"},
+        3: {"before": "", "after": "Desenvolve"},
+    }
+
+
 def test_study_pgn_comments_before_and_after():
     game = StudyGame()
     game.push_move(chess.Move.from_uci("e2e4"))

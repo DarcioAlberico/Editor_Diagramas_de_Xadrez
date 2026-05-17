@@ -118,15 +118,27 @@ class StudyGame:
             board.push(move)
         return out
 
-    def load_pgn(self, pgn_text: str) -> None:
+    def load_pgn(self, pgn_text: str) -> dict[int, dict[str, str]]:
         stream = StringIO(pgn_text or "")
         game = chess.pgn.read_game(stream)
         if game is None:
             raise ValueError("PGN invalido ou vazio.")
         start_board = game.board()
         self.set_start_fen(start_board.fen())
-        for move in game.mainline_moves():
-            self.push_move(move)
+        comments: dict[int, dict[str, str]] = {}
+        root_comment = game.comment.strip()
+        if root_comment:
+            comments[0] = {"before": root_comment, "after": ""}
+        node = game
+        ply = 0
+        while node.variations:
+            node = node.variation(0)
+            ply += 1
+            self.push_move(node.move)
+            comment = node.comment.strip()
+            if comment:
+                comments[ply] = {"before": "", "after": comment}
+        return comments
 
     def to_pgn(
         self,

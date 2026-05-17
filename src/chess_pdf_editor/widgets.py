@@ -497,12 +497,13 @@ class StudyBoardWidget(QtWidgets.QWidget):
         self._refresh()
         self._emit_state_changed("Posicao de estudo carregada.")
 
-    def load_pgn_text(self, pgn_text: str) -> None:
-        self._game.load_pgn(pgn_text)
+    def load_pgn_text(self, pgn_text: str) -> dict[int, dict[str, str]]:
+        move_comments = self._game.load_pgn(pgn_text)
         self._selected_square = None
         self._legal_targets.clear()
         self._refresh()
         self._emit_state_changed("PGN carregado no tabuleiro de estudo.")
+        return move_comments
 
     def goto_ply(self, ply: int) -> bool:
         ok = self._game.goto_ply(ply)

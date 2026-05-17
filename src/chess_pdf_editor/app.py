@@ -16,6 +16,8 @@ from .widgets import BoardEditorWidget, SelectablePageWidget, StudyBoardWidget
 
 
 class StudyPanel(QtWidgets.QWidget):
+    pgn_imported = QtCore.Signal(object)
+
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Tabuleiro de Estudo")
@@ -184,7 +186,8 @@ class StudyPanel(QtWidgets.QWidget):
             return
         try:
             text = Path(file_path).read_text(encoding="utf-8", errors="replace")
-            self.study_board.load_pgn_text(text)
+            move_comments = self.study_board.load_pgn_text(text)
+            self.pgn_imported.emit(move_comments)
             self.status_label.setText(f"PGN importado: {file_path}")
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Erro ao importar PGN", str(exc))
@@ -612,6 +615,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.study_panel = StudyPanel(self)
         self.study_panel.set_pgn_provider(self._study_export_pgn)
         self.study_panel.study_board.line_changed.connect(lambda san_line, cursor: self._on_study_ply_changed())
+        self.study_panel.pgn_imported.connect(self._on_study_pgn_imported)
         study_positions_panel = QtWidgets.QWidget()
         study_positions_layout = QtWidgets.QVBoxLayout(study_positions_panel)
         study_positions_layout.addWidget(self._section_label("Posições deste PDF"))
@@ -1444,7 +1448,23 @@ class MainWindow(QtWidgets.QMainWindow):
             first = pos.move_comments[first_key]
             pos.comment_before = str(first.get("before", ""))
             pos.comment_after = str(first.get("after", ""))
-            pos.note = pos.comment_before
+            pos.note = pos.comment_before or pos.comment_after
+
+    @staticmethod
+    def _set_study_comment_summary(pos: StudyPosition) -> None:
+        pos.comment_before = ""
+        pos.comment_after = ""
+        pos.note = ""
+        if not pos.move_comments:
+            return
+        try:
+            first_key = sorted(pos.move_comments, key=lambda value: int(value))[0]
+        except Exception:
+            first_key = next(iter(pos.move_comments))
+        first = pos.move_comments[first_key]
+        pos.comment_before = str(first.get("before", ""))
+        pos.comment_after = str(first.get("after", ""))
+        pos.note = pos.comment_before or pos.comment_after
 
     def _refresh_study_comment_fields_for_current_ply(self) -> None:
         idx = self._selected_study_position_index()
@@ -1479,6 +1499,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_study_move_comment_markers(pos)
         self._refresh_study_positions_list()
         return pos.pgn
+
+    def _on_study_pgn_imported(self, move_comments: object) -> None:
+        idx = self._selected_study_position_index()
+        if idx is None:
+            self.study_panel.set_commented_plies(set())
+            return
+        pos = self.study_positions[idx]
+        start_fen = self.study_panel.study_board.start_fen()
+        parts = start_fen.split()
+        if len(parts) >= 6:
+            pos.fen = parts[0]
+            pos.side_to_move = "b" if parts[1] == "b" else "w"
+            try:
+                pos.fullmove_number = max(1, int(parts[5]))
+            except Exception:
+                pos.fullmove_number = 1
+        pos.move_comments = {}
+        for ply, values in dict(move_comments or {}).items():
+            if not isinstance(values, dict):
+                continue
+            try:
+                key = str(max(0, int(ply)))
+            except Exception:
+                continue
+            before = str(values.get("before", ""))
+            after = str(values.get("after", ""))
+            if before.strip() or after.strip():
+                pos.move_comments[key] = {"before": before, "after": after}
+        self._set_study_comment_summary(pos)
+        self._update_study_position_pgn(pos)
+        self._refresh_study_move_comment_markers(pos)
+        self._refresh_study_comment_fields_for_current_ply()
+        self._refresh_study_positions_list()
 
     def _on_study_ply_changed(self) -> None:
         if self._syncing_study_positions:

@@ -84,6 +84,7 @@ No toolbar, use `Estudo` para abrir um painel lateral com:
 - `Desfazer` / `Refazer`;
 - `Resetar Linha`;
 - `Importar PGN`, `Copiar FEN`, `Copiar PGN` e `Salvar PGN`.
+  Ao importar PGN, os comentarios da linha principal sao preservados nos lances correspondentes.
 
 Para estudar uma posicao do PDF:
 1. Selecione o diagrama na pagina.
