@@ -92,19 +92,32 @@ class StudyPanel(QtWidgets.QWidget):
         side_panel.addWidget(QtWidgets.QLabel("Lista SAN"))
         side_panel.addWidget(self.moves_table, 1)
 
-        center_layout = QtWidgets.QHBoxLayout()
-        center_layout.addWidget(self.study_board, 1, QtCore.Qt.AlignCenter)
+        self.board_scroll = QtWidgets.QScrollArea()
+        self.board_scroll.setWidget(self.study_board)
+        self.board_scroll.setWidgetResizable(False)
+        self.board_scroll.setAlignment(QtCore.Qt.AlignCenter)
+        self.board_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.board_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self.board_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+
         side_widget = QtWidgets.QWidget()
         side_widget.setLayout(side_panel)
         side_widget.setMinimumWidth(250)
-        center_layout.addWidget(side_widget)
+
+        self.study_center_splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self.study_center_splitter.setChildrenCollapsible(False)
+        self.study_center_splitter.addWidget(self.board_scroll)
+        self.study_center_splitter.addWidget(side_widget)
+        self.study_center_splitter.setStretchFactor(0, 3)
+        self.study_center_splitter.setStretchFactor(1, 2)
+        self.study_center_splitter.setSizes([620, 300])
 
         root = QtWidgets.QVBoxLayout(self)
         root.addLayout(controls_top)
         root.addLayout(controls_1)
         root.addLayout(controls_2)
         root.addWidget(self.status_label)
-        root.addLayout(center_layout, 1)
+        root.addWidget(self.study_center_splitter, 1)
         self._on_line_changed([], 0)
 
     def set_pgn_provider(self, provider: Optional[Callable[[], str]]) -> None:
