@@ -285,13 +285,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.study_comment_after_edit.setMaximumHeight(78)
         self.study_comment_after_edit.textChanged.connect(self._on_study_comment_changed)
 
-        self.btn_ocr = QtWidgets.QPushButton("Reconhecer diagrama")
+        self.btn_ocr = QtWidgets.QPushButton("Reconhecer seleção")
         self.btn_ocr.clicked.connect(self._recognize_selection)
-        self.btn_ocr_page = QtWidgets.QPushButton("Reconhecer pagina atual")
+        self.btn_ocr_page = QtWidgets.QPushButton("Reconhecer página")
         self.btn_ocr_page.clicked.connect(self._recognize_current_page)
-        self.btn_ocr_full = QtWidgets.QPushButton("Encontrar diagramas no PDF")
+        self.btn_ocr_full = QtWidgets.QPushButton("Detectar no PDF")
         self.btn_ocr_full.clicked.connect(self._recognize_full_pdf)
-        self.btn_add = QtWidgets.QPushButton("Substituir no PDF")
+        self.btn_add = QtWidgets.QPushButton("Adicionar substituição")
         self.btn_add.clicked.connect(self._add_operation)
         self.pad_left_spin = QtWidgets.QDoubleSpinBox()
         self.pad_left_spin.setRange(0.0, 30.0)
@@ -335,17 +335,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lichess_link_label.setTextInteractionFlags(QtCore.Qt.TextBrowserInteraction)
         self.lichess_link_label.setOpenExternalLinks(True)
         self.lichess_link_label.setToolTip("Abrir posicao atual no Lichess")
-        self.btn_add_eraser = QtWidgets.QPushButton("Apagar area")
+        self.btn_add_eraser = QtWidgets.QPushButton("Adicionar apagamento")
         self.btn_add_eraser.clicked.connect(self._add_eraser_from_selection)
-        self.btn_remove = QtWidgets.QPushButton("Remover Selecionada")
+        self.btn_remove = QtWidgets.QPushButton("Remover")
         self.btn_remove.clicked.connect(self._remove_selected_operation)
         self.btn_remove_fen = QtWidgets.QPushButton("Remover posicao")
         self.btn_remove_fen.clicked.connect(self._remove_selected_fen_operation)
-        self.btn_clear = QtWidgets.QPushButton("Limpar Lista")
+        self.btn_clear = QtWidgets.QPushButton("Limpar")
         self.btn_clear.clicked.connect(self._clear_operations)
-        self.btn_remove_eraser = QtWidgets.QPushButton("Remover Borracha")
+        self.btn_remove_eraser = QtWidgets.QPushButton("Remover")
         self.btn_remove_eraser.clicked.connect(self._remove_selected_eraser)
-        self.btn_clear_erasers = QtWidgets.QPushButton("Limpar areas")
+        self.btn_clear_erasers = QtWidgets.QPushButton("Limpar")
         self.btn_clear_erasers.clicked.connect(self._clear_erasers)
         self.btn_study_selection = QtWidgets.QPushButton("Estudar selecao")
         self.btn_study_selection.clicked.connect(self._study_selection)
@@ -381,32 +381,44 @@ class MainWindow(QtWidgets.QMainWindow):
         self.edit_tabs = QtWidgets.QTabWidget()
         ocr_tab = QtWidgets.QWidget()
         ocr_tab_layout = QtWidgets.QVBoxLayout(ocr_tab)
+        ocr_tab_layout.addWidget(QtWidgets.QLabel("Reconhecimento"))
         ocr_tab_layout.addWidget(self.btn_ocr)
-        ocr_tab_layout.addWidget(self.btn_ocr_page)
-        ocr_tab_layout.addWidget(self.btn_ocr_full)
+        ocr_actions = QtWidgets.QHBoxLayout()
+        ocr_actions.addWidget(self.btn_ocr_page)
+        ocr_actions.addWidget(self.btn_ocr_full)
+        ocr_tab_layout.addLayout(ocr_actions)
+
+        ocr_tab_layout.addWidget(QtWidgets.QLabel("Aplicar"))
         ocr_tab_layout.addWidget(self.btn_add)
         ocr_tab_layout.addWidget(self.btn_add_eraser)
-        ocr_tab_layout.addWidget(self.whiteout_check)
-        ocr_tab_layout.addWidget(QtWidgets.QLabel("Endpoint OCR"))
-        ocr_tab_layout.addWidget(self.endpoint_edit)
-        ocr_tab_layout.addWidget(QtWidgets.QLabel("Fonte Merida (.ttf/.otf)"))
-        font_layout = QtWidgets.QHBoxLayout()
-        font_layout.addWidget(self.merida_font_edit, 1)
-        font_layout.addWidget(self.btn_select_merida)
-        font_layout.addWidget(self.btn_clear_merida)
-        ocr_tab_layout.addLayout(font_layout)
-        ocr_tab_layout.addWidget(QtWidgets.QLabel("Substituicoes no PDF"))
+
+        ocr_tab_layout.addWidget(QtWidgets.QLabel("Substituições"))
         ocr_tab_layout.addWidget(self.ops_list, 2)
         right_actions = QtWidgets.QHBoxLayout()
         right_actions.addWidget(self.btn_remove)
         right_actions.addWidget(self.btn_clear)
+        right_actions.addStretch(1)
         ocr_tab_layout.addLayout(right_actions)
-        ocr_tab_layout.addWidget(QtWidgets.QLabel("Areas apagadas"))
+
+        ocr_tab_layout.addWidget(QtWidgets.QLabel("Apagamentos"))
         ocr_tab_layout.addWidget(self.erasers_list, 2)
         eraser_actions = QtWidgets.QHBoxLayout()
         eraser_actions.addWidget(self.btn_remove_eraser)
         eraser_actions.addWidget(self.btn_clear_erasers)
+        eraser_actions.addStretch(1)
         ocr_tab_layout.addLayout(eraser_actions)
+
+        ocr_advanced_layout = QtWidgets.QVBoxLayout()
+        ocr_advanced_layout.addWidget(self.whiteout_check)
+        ocr_advanced_layout.addWidget(QtWidgets.QLabel("Endpoint OCR"))
+        ocr_advanced_layout.addWidget(self.endpoint_edit)
+        ocr_advanced_layout.addWidget(QtWidgets.QLabel("Fonte Merida (.ttf/.otf)"))
+        font_layout = QtWidgets.QHBoxLayout()
+        font_layout.addWidget(self.merida_font_edit, 1)
+        font_layout.addWidget(self.btn_select_merida)
+        font_layout.addWidget(self.btn_clear_merida)
+        ocr_advanced_layout.addLayout(font_layout)
+        ocr_tab_layout.addWidget(self._make_collapsible_group("Avançado", ocr_advanced_layout, checked=False))
 
         fens_tab = QtWidgets.QWidget()
         fens_tab_layout = QtWidgets.QVBoxLayout(fens_tab)
@@ -427,25 +439,29 @@ class MainWindow(QtWidgets.QMainWindow):
         fen_actions.addStretch(1)
         fens_tab_layout.addLayout(fen_actions)
         whiteout_tab = QtWidgets.QWidget()
-        whiteout_tab_layout = QtWidgets.QGridLayout(whiteout_tab)
-        whiteout_tab_layout.addWidget(QtWidgets.QLabel("Padding Esq"), 0, 0)
-        whiteout_tab_layout.addWidget(self.pad_left_spin, 0, 1)
-        whiteout_tab_layout.addWidget(QtWidgets.QLabel("Padding Topo"), 1, 0)
-        whiteout_tab_layout.addWidget(self.pad_top_spin, 1, 1)
-        whiteout_tab_layout.addWidget(QtWidgets.QLabel("Padding Dir"), 2, 0)
-        whiteout_tab_layout.addWidget(self.pad_right_spin, 2, 1)
-        whiteout_tab_layout.addWidget(QtWidgets.QLabel("Padding Base"), 3, 0)
-        whiteout_tab_layout.addWidget(self.pad_bottom_spin, 3, 1)
-        whiteout_tab_layout.addWidget(QtWidgets.QLabel("Borda"), 4, 0)
-        whiteout_tab_layout.addWidget(self.op_border_spin, 4, 1)
-        whiteout_tab_layout.addWidget(QtWidgets.QLabel("Analise"), 5, 0)
-        whiteout_tab_layout.addWidget(self.lichess_link_label, 5, 1)
-        whiteout_tab_layout.addWidget(self.include_lichess_link_check, 6, 0, 1, 2)
-        whiteout_tab_layout.addWidget(self.apply_style_all_check, 7, 0, 1, 2)
-        whiteout_tab_layout.setRowStretch(8, 1)
+        whiteout_tab_layout = QtWidgets.QVBoxLayout(whiteout_tab)
+        appearance_grid = QtWidgets.QGridLayout()
+        appearance_grid.addWidget(QtWidgets.QLabel("Padding esq."), 0, 0)
+        appearance_grid.addWidget(self.pad_left_spin, 0, 1)
+        appearance_grid.addWidget(QtWidgets.QLabel("Padding topo"), 1, 0)
+        appearance_grid.addWidget(self.pad_top_spin, 1, 1)
+        appearance_grid.addWidget(QtWidgets.QLabel("Padding dir."), 2, 0)
+        appearance_grid.addWidget(self.pad_right_spin, 2, 1)
+        appearance_grid.addWidget(QtWidgets.QLabel("Padding base"), 3, 0)
+        appearance_grid.addWidget(self.pad_bottom_spin, 3, 1)
+        appearance_grid.addWidget(QtWidgets.QLabel("Borda"), 4, 0)
+        appearance_grid.addWidget(self.op_border_spin, 4, 1)
+        appearance_grid.addWidget(QtWidgets.QLabel("Análise"), 5, 0)
+        appearance_grid.addWidget(self.lichess_link_label, 5, 1)
+        appearance_grid.addWidget(self.include_lichess_link_check, 6, 0, 1, 2)
+        appearance_grid.addWidget(self.apply_style_all_check, 7, 0, 1, 2)
+        whiteout_tab_layout.addWidget(
+            self._make_collapsible_group("Ajustes avançados", appearance_grid, checked=False)
+        )
+        whiteout_tab_layout.addStretch(1)
         self.edit_tabs.addTab(ocr_tab, "OCR")
-        self.edit_tabs.addTab(fens_tab, "Posicoes")
-        self.edit_tabs.addTab(whiteout_tab, "Acabamento")
+        self.edit_tabs.addTab(fens_tab, "FEN")
+        self.edit_tabs.addTab(whiteout_tab, "Aparência")
         self.edit_tabs.setMinimumHeight(220)
         bottom_layout.addWidget(self.edit_tabs, 2)
 
@@ -512,6 +528,31 @@ class MainWindow(QtWidgets.QMainWindow):
         self._try_restore_last_project()
         self._update_lichess_link()
         self._refresh_study_positions_list()
+
+    def _make_collapsible_group(
+        self,
+        title: str,
+        layout: QtWidgets.QLayout,
+        checked: bool = False,
+    ) -> QtWidgets.QGroupBox:
+        group = QtWidgets.QGroupBox(title)
+        group.setCheckable(True)
+        group.setChecked(checked)
+        group.setLayout(layout)
+        group.toggled.connect(lambda visible, target_layout=layout: self._set_layout_visible(target_layout, visible))
+        self._set_layout_visible(layout, checked)
+        return group
+
+    @classmethod
+    def _set_layout_visible(cls, layout: QtWidgets.QLayout, visible: bool) -> None:
+        for idx in range(layout.count()):
+            item = layout.itemAt(idx)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.setVisible(visible)
+            if child_layout is not None:
+                cls._set_layout_visible(child_layout, visible)
 
     def _build_toolbar(self) -> None:
         toolbar = self.addToolBar("Main")
@@ -587,16 +628,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_pdf_text_to_after = QtGui.QAction("Texto da selecao -> comentario depois", self)
         self.act_pdf_text_to_after.triggered.connect(lambda: self._copy_pdf_text_to_study_comment("after"))
 
-        self.act_recognize_selection = QtGui.QAction("Reconhecer diagrama", self)
+        self.act_recognize_selection = QtGui.QAction("Reconhecer seleção", self)
         self.act_recognize_selection.triggered.connect(self._recognize_selection)
 
-        self.act_recognize_page = QtGui.QAction("Reconhecer pagina atual", self)
+        self.act_recognize_page = QtGui.QAction("Reconhecer página", self)
         self.act_recognize_page.triggered.connect(self._recognize_current_page)
 
-        self.act_recognize_full = QtGui.QAction("Encontrar diagramas no PDF", self)
+        self.act_recognize_full = QtGui.QAction("Detectar no PDF", self)
         self.act_recognize_full.triggered.connect(self._recognize_full_pdf)
 
-        self.act_add_operation = QtGui.QAction("Substituir no PDF", self)
+        self.act_add_operation = QtGui.QAction("Adicionar substituição", self)
         self.act_add_operation.triggered.connect(self._add_operation)
 
         self._build_menus()
@@ -641,7 +682,7 @@ class MainWindow(QtWidgets.QMainWindow):
         diagrams_menu.addAction(self.act_recognize_full)
         diagrams_menu.addSeparator()
         diagrams_menu.addAction(self.act_add_operation)
-        diagrams_menu.addAction("Apagar area", self._add_eraser_from_selection)
+        diagrams_menu.addAction("Adicionar apagamento", self._add_eraser_from_selection)
 
         settings_menu = self.menuBar().addMenu("Configuracoes")
         settings_menu.addAction("Selecionar fonte Merida", self._select_merida_font)
@@ -1063,7 +1104,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
             self.statusBar().showMessage(
-                "Nenhum diagrama conhecido nesse clique. Selecione a area e use Reconhecer diagrama ou Estudar selecao."
+                "Nenhum diagrama conhecido nesse clique. Selecione a area e use Reconhecer seleção ou Estudar selecao."
             )
             return
 

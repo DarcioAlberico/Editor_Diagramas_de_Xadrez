@@ -59,18 +59,18 @@ python -m chess_pdf_editor
 2. Escolha o modo de trabalho na toolbar: `Leitura`, `Estudo` ou `Edicao`.
 3. Navegue para a pagina desejada.
 4. Desenhe a selecao do diagrama no preview.
-5. Clique em `Reconhecer diagrama` (usa endpoint configurado).
-6. Opcional: clique em `Reconhecer pagina atual` ou `Encontrar diagramas no PDF` para varrer automaticamente.
+5. Clique em `Reconhecer seleção` (usa endpoint configurado).
+6. Opcional: clique em `Reconhecer página` ou `Detectar no PDF` para varrer automaticamente.
    O modo em lote descarta deteccoes que ocupam mais de 50% da pagina (heuristica anti-falso-positivo).
    Se cancelar no meio, o proximo clique retoma da pagina pendente.
 7. Corrija a posicao no `Editor de Tabuleiro` se necessario.
-8. Ajuste `Padding whiteout` por lado e `Borda` na aba `Acabamento` (ao lado de `Posicoes`).
+8. Se necessário, abra `Aparência` > `Ajustes avançados` para ajustar `Padding whiteout` por lado e `Borda`.
    A opcao `Aplicar em todas as substituicoes` (ligada por padrao) replica a configuracao para toda a lista.
-9. Clique em `Substituir no PDF`.
-10. Para apagar coordenadas/letras residuais, selecione a area e clique em `Apagar area`.
+9. Clique em `Adicionar substituição`.
+10. Para apagar coordenadas/letras residuais, selecione a area e clique em `Adicionar apagamento`.
 11. Repita para outros diagramas.
 12. Clique em `Exportar PDF`.
-   Opcional: na aba `Acabamento`, marque/desmarque `Incluir link Lichess no PDF exportado`.
+   Opcional: na aba `Aparência`, abra `Ajustes avançados` e marque/desmarque `Incluir link Lichess no PDF exportado`.
    Quando habilitado, o PDF exportado inclui um link `Lichess` em azul abaixo de cada diagrama substituido.
 
 ## Modo Estudo (offline)
