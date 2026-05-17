@@ -93,11 +93,14 @@ class StudyPanel(QtWidgets.QWidget):
         root.addWidget(self.status_label)
         self._on_line_changed([], 0)
 
-    def load_piece_placement(self, piece_placement: str) -> None:
-        side_to_move = str(self.side_combo.currentData() or "w")
+    def load_piece_placement(self, piece_placement: str, side_to_move: Optional[str] = None) -> None:
+        side = str(side_to_move or self.side_combo.currentData() or "w")
+        if side not in {"w", "b"}:
+            side = "w"
+        self.side_combo.setCurrentIndex(1 if side == "b" else 0)
         try:
             normalized = normalize_piece_placement(extract_piece_placement(piece_placement))
-            self.study_board.set_start_fen(to_full_fen(normalized, side_to_move=side_to_move))
+            self.study_board.set_start_fen(to_full_fen(normalized, side_to_move=side))
             self.status_label.setText("Posicao carregada do editor.")
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
@@ -189,8 +192,8 @@ class StudyDialog(QtWidgets.QDialog):
         root = QtWidgets.QVBoxLayout(self)
         root.addWidget(self.panel)
 
-    def load_piece_placement(self, piece_placement: str) -> None:
-        self.panel.load_piece_placement(piece_placement)
+    def load_piece_placement(self, piece_placement: str, side_to_move: Optional[str] = None) -> None:
+        self.panel.load_piece_placement(piece_placement, side_to_move=side_to_move)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -810,7 +813,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _open_study_dialog(self) -> None:
         if self.study_dialog is None:
             self.study_dialog = StudyDialog(self)
-        self.study_dialog.load_piece_placement(self.board_editor.piece_placement())
+        side_to_move, _ = self._current_fen_defaults()
+        self.study_dialog.load_piece_placement(self.board_editor.piece_placement(), side_to_move=side_to_move)
         self.study_dialog.show()
         self.study_dialog.raise_()
         self.study_dialog.activateWindow()
@@ -1199,7 +1203,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not (0 <= idx < len(self.operations)):
             return
         op = self.operations[idx]
-        self.study_panel.load_piece_placement(op.fen)
+        self.study_panel.load_piece_placement(op.fen, side_to_move=op.side_to_move)
         self.ops_list.setCurrentRow(idx)
         self._set_mode("study")
         self.statusBar().showMessage(f"Diagrama da pagina {op.page_num + 1} carregado no estudo.")
@@ -1248,8 +1252,10 @@ class MainWindow(QtWidgets.QMainWindow):
             for idx, pos in enumerate(self.study_positions):
                 note = (pos.comment_before or pos.note).strip().replace("\n", " ")
                 suffix = f" | {note[:32]}{'...' if len(note) > 32 else ''}" if note else ""
+                side_label = "pretas" if pos.side_to_move == "b" else "brancas"
                 item = QtWidgets.QListWidgetItem(
-                    f"{idx + 1:03d} | pag {pos.page_num + 1} | {pos.fen[:28]}{'...' if len(pos.fen) > 28 else ''}{suffix}"
+                    f"{idx + 1:03d} | pag {pos.page_num + 1} | {side_label} | "
+                    f"{pos.fen[:28]}{'...' if len(pos.fen) > 28 else ''}{suffix}"
                 )
                 item.setData(QtCore.Qt.UserRole, idx)
                 self.study_positions_list.addItem(item)
@@ -1264,12 +1270,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._syncing_study_positions = False
 
     def _load_study_position(self, pos: StudyPosition) -> None:
-        self.study_panel.load_piece_placement(pos.fen)
+        self.study_panel.load_piece_placement(pos.fen, side_to_move=pos.side_to_move)
         if pos.pgn.strip():
             try:
                 self.study_panel.study_board.load_pgn_text(pos.pgn)
             except Exception:
-                self.study_panel.load_piece_placement(pos.fen)
+                self.study_panel.load_piece_placement(pos.fen, side_to_move=pos.side_to_move)
 
     def _focus_study_position(self, idx: int) -> None:
         if not (0 <= idx < len(self.study_positions)):
@@ -1363,7 +1369,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
             return
-        self.study_panel.load_piece_placement(piece_placement)
+        side_to_move, _ = self._current_fen_defaults()
+        self.study_panel.load_piece_placement(piece_placement, side_to_move=side_to_move)
         self._set_mode("study")
 
     def _text_from_current_selection(self) -> str:
@@ -1430,7 +1437,14 @@ class MainWindow(QtWidgets.QMainWindow):
             selection,
             self.current_render.matrix,
         )
-        pos = StudyPosition(page_num=self.current_page, rect_pdf=rect_pdf, fen=piece_placement)
+        side_to_move, fullmove_number = self._current_fen_defaults()
+        pos = StudyPosition(
+            page_num=self.current_page,
+            rect_pdf=rect_pdf,
+            fen=piece_placement,
+            side_to_move=side_to_move,
+            fullmove_number=fullmove_number,
+        )
         self.study_positions.append(pos)
         self._refresh_study_positions_list()
         self._focus_study_position(len(self.study_positions) - 1)

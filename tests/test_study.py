@@ -42,6 +42,14 @@ def test_study_custom_start_fen_has_setup_tags():
     assert '[FEN "8/8/8/3k4/8/8/4K3/8 w - - 0 1"]' in pgn
 
 
+def test_study_custom_start_fen_black_to_move_accepts_black_first_move():
+    game = StudyGame("4k3/8/8/8/8/8/8/4K3 b - - 0 1")
+    san = game.push_move(chess.Move.from_uci("e8d8"))
+
+    assert san == "Kd8"
+    assert game.board.turn == chess.WHITE
+
+
 def test_study_san_and_goto_ply():
     game = StudyGame()
     game.push_move(chess.Move.from_uci("e2e4"))

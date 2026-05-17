@@ -28,6 +28,8 @@ def test_project_state_roundtrip_with_erasers(tmp_path):
                 page_num=3,
                 rect_pdf=(11.0, 12.0, 13.0, 14.0),
                 fen="8/8/8/8/8/8/8/8",
+                side_to_move="b",
+                fullmove_number=8,
                 pgn='[Event "Study"]\n\n*',
                 comment_before="final de reis",
                 comment_after="oposicao",
@@ -53,6 +55,8 @@ def test_project_state_roundtrip_with_erasers(tmp_path):
     assert loaded.erase_operations[0].page_num == 1
     assert len(loaded.study_positions) == 1
     assert loaded.study_positions[0].page_num == 3
+    assert loaded.study_positions[0].side_to_move == "b"
+    assert loaded.study_positions[0].fullmove_number == 8
     assert loaded.study_positions[0].comment_before == "final de reis"
     assert loaded.study_positions[0].comment_after == "oposicao"
     assert loaded.current_page == 2
@@ -114,6 +118,8 @@ def test_load_project_state_legacy_study_note_to_comment_before(tmp_path):
 
     assert loaded.study_positions[0].comment_before == "texto antigo"
     assert loaded.study_positions[0].comment_after == ""
+    assert loaded.study_positions[0].side_to_move == "w"
+    assert loaded.study_positions[0].fullmove_number == 1
 
 
 def test_load_project_state_legacy_uniform_padding_to_sides(tmp_path):

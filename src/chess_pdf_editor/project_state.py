@@ -87,6 +87,8 @@ def load_project_state(path: str) -> ProjectState:
             page_num=int(item["page_num"]),
             rect_pdf=tuple(item["rect_pdf"]),
             fen=str(item["fen"]),
+            side_to_move=str(item.get("side_to_move", "w")),
+            fullmove_number=max(1, int(item.get("fullmove_number", 1))),
             pgn=str(item.get("pgn", "")),
             comment_before=str(item.get("comment_before", item.get("note", ""))),
             comment_after=str(item.get("comment_after", "")),

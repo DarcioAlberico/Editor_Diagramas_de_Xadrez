@@ -88,8 +88,9 @@ No toolbar, use `Estudo` para abrir um painel lateral com:
 Para estudar uma posicao do PDF:
 1. Selecione o diagrama na pagina.
 2. Reconheca ou monte/corrija a FEN no editor.
-3. Clique em `Estudar selecao`.
-4. Use `Atualizar linha` para salvar o PGN estudado naquela posicao.
+3. Ajuste `Vez de jogar` na aba `FEN` quando a posicao começar com as pretas.
+4. Clique em `Estudar selecao`.
+5. Use `Atualizar linha` para salvar o PGN estudado naquela posicao.
 
 As posicoes de estudo ficam em `Posicoes deste PDF` e sao salvas no projeto.
 

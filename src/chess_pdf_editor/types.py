@@ -52,6 +52,8 @@ class StudyPosition:
     page_num: int
     rect_pdf: Rect
     fen: str
+    side_to_move: str = "w"
+    fullmove_number: int = 1
     pgn: str = ""
     comment_before: str = ""
     comment_after: str = ""
