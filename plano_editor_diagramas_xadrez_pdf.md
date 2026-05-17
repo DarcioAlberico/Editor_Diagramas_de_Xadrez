@@ -600,3 +600,167 @@ Esta seção registra melhorias identificadas na revisão do projeto em 2026-05-
 6. Implementar migrações de projeto.
 7. Expandir testes de integração.
 8. Preparar empacotamento Windows.
+
+---
+
+## 20) Backlog de melhorias de interface e experiência do usuário
+
+Esta seção registra a análise de UX feita em 2026-05-17. O objetivo é reduzir a sensação de interface poluída sem remover funcionalidades importantes.
+
+### 20.1 Diagnóstico atual
+
+- [ ] **Painel direito com excesso de responsabilidades**
+  - O painel lateral mistura editor de tabuleiro, OCR, lista de substituições, áreas apagadas, FEN, acabamento, fonte Merida, endpoint OCR e estudo.
+  - O usuário vê muitas decisões ao mesmo tempo, mesmo quando ainda não selecionou um diagrama.
+
+- [ ] **Muitos botões com o mesmo peso visual**
+  - Ações como reconhecer seleção, reconhecer página, reconhecer PDF inteiro, substituir, apagar área, remover e limpar aparecem com destaque semelhante.
+  - Falta uma ação principal clara para cada momento do fluxo.
+
+- [ ] **Configurações avançadas visíveis demais**
+  - Endpoint OCR, caminho da fonte Merida, padding detalhado, borda e link Lichess são úteis, mas não deveriam competir com as ações principais.
+
+- [ ] **Comandos duplicados em painel, toolbar e menus**
+  - A duplicação é boa para produtividade, mas aumenta a carga visual quando os mesmos comandos aparecem em vários lugares.
+
+- [ ] **Editor de tabuleiro pouco direto**
+  - A seleção de peça por combo funciona, mas exige mais leitura e cliques do que uma paleta visual de peças.
+
+### 20.2 Direção de redesign
+
+- [ ] **Organizar a edição como fluxo por etapas**
+  - Substituir ou reorganizar abas técnicas por etapas de trabalho:
+    1. Selecionar
+    2. Reconhecer
+    3. Corrigir
+    4. Aplicar
+    5. Exportar
+  - O painel deve indicar a próxima ação provável, não mostrar todas as ações com o mesmo destaque.
+
+- [ ] **Criar painel contextual de edição**
+  - Quando não houver PDF aberto: mostrar estado vazio com ação `Abrir PDF`.
+  - Quando houver PDF sem seleção: orientar para selecionar um diagrama.
+  - Quando houver seleção: destacar `Reconhecer seleção`.
+  - Quando houver FEN válido: destacar `Adicionar substituição`.
+  - Quando houver operações: destacar `Exportar PDF`.
+
+- [ ] **Mover opções avançadas para área recolhível ou preferências**
+  - Mover para `Avançado`:
+    - endpoint OCR;
+    - fonte Merida;
+    - padding detalhado;
+    - borda;
+    - inclusão de link Lichess;
+    - aplicar estilo em todas as substituições.
+  - Alternativa futura: criar diálogo `Preferências`.
+
+- [ ] **Unificar listas operacionais**
+  - Trocar listas separadas de substituições, apagamentos e FENs por uma lista principal de `Alterações`.
+  - Cada item deve indicar tipo, página e resumo:
+    - `Diagrama`, com FEN resumido;
+    - `Apagamento`, com página e área;
+    - `Estudo`, se for mantido no mesmo painel.
+  - Manter filtros ou abas secundárias apenas se a lista crescer demais.
+
+- [ ] **Simplificar toolbar**
+  - Manter na toolbar apenas comandos globais:
+    - abrir PDF;
+    - carregar/salvar projeto;
+    - exportar PDF;
+    - modos leitura/edição/estudo;
+    - navegação de página;
+    - zoom.
+  - Remover ou evitar comandos de OCR/substituição na toolbar principal.
+
+- [ ] **Melhorar rótulos**
+  - `Reconhecer pagina atual` -> `Reconhecer página`
+  - `Encontrar diagramas no PDF` -> `Detectar no PDF`
+  - `Substituir no PDF` -> `Adicionar substituição`
+  - `Apagar area` -> `Adicionar apagamento`
+  - `Acabamento` -> `Aparência`
+  - `Posicoes` -> `FEN`
+
+- [ ] **Criar paleta visual de peças**
+  - Substituir o combo `Peça ativa` por botões/ícones de peças.
+  - Incluir opção de casa vazia.
+  - Manter clique direito para limpar casa.
+  - Usar destaque visual na peça ativa.
+
+### 20.3 Layout-alvo sugerido
+
+```text
+PDF / Preview da página
+└── seleção visual, overlays de alterações e zoom
+
+Painel lateral: Edição
+├── Seleção
+│   ├── Reconhecer seleção
+│   ├── Reconhecer página
+│   └── Detectar no PDF
+├── Posição
+│   ├── editor de tabuleiro
+│   ├── paleta visual de peças
+│   ├── FEN
+│   └── avisos de validação
+├── Aplicar
+│   ├── Adicionar substituição
+│   └── Adicionar apagamento
+├── Alterações
+│   ├── lista única de alterações
+│   ├── remover selecionada
+│   └── limpar
+└── Avançado
+    ├── OCR endpoint
+    ├── fonte Merida
+    ├── padding
+    ├── borda
+    └── link Lichess
+```
+
+### 20.4 Etapas sugeridas para implementação
+
+1. **Limpeza rápida de rótulos e hierarquia**
+   - Renomear botões/abas.
+   - Reordenar ações por fluxo.
+   - Reduzir comandos duplicados visíveis.
+   - Baixo risco, sem mudança estrutural profunda.
+
+2. **Área avançada recolhível**
+   - Esconder endpoint OCR, fonte Merida, padding, borda e link Lichess em `Avançado`.
+   - Manter valores atuais e comportamento existente.
+   - Reduz bastante a poluição visual sem mexer na lógica central.
+
+3. **Painel contextual de edição**
+   - Criar estados de UI conforme o progresso: sem PDF, sem seleção, seleção ativa, FEN válido, operações prontas.
+   - Destacar uma ação principal por estado.
+   - Exige cuidado com sinais/eventos da UI.
+
+4. **Lista única de alterações**
+   - Consolidar substituições e apagamentos em uma visão principal.
+   - Manter compatibilidade com as estruturas internas atuais.
+   - Exige revisão de seleção, remoção, foco e overlays.
+
+5. **Paleta visual de peças**
+   - Substituir combo por botões de peças.
+   - Melhorar velocidade de correção manual.
+   - Pode ser implementado dentro do `BoardEditorWidget`.
+
+6. **Polimento final**
+   - Ajustar espaçamentos, tamanhos mínimos, estados vazios e mensagens da barra de status.
+   - Revisar modo estudo para seguir a mesma linguagem visual.
+   - Fazer teste manual com PDFs reais em telas pequenas e grandes.
+
+### 20.5 Critérios de aceite para a nova interface
+
+- [ ] O usuário consegue identificar a próxima ação principal em até 3 segundos.
+- [ ] Configurações avançadas não aparecem por padrão.
+- [ ] O painel lateral não exige rolagem para executar o fluxo básico em tela 1500x900.
+- [ ] O fluxo básico é possível com estes passos visíveis:
+  1. abrir PDF;
+  2. selecionar diagrama;
+  3. reconhecer seleção;
+  4. corrigir FEN/tabuleiro;
+  5. adicionar substituição;
+  6. exportar PDF.
+- [ ] A correção manual no tabuleiro exige menos cliques do que o combo atual.
+- [ ] Comandos destrutivos, como remover/limpar, têm menos destaque que ações principais.
