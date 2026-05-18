@@ -99,7 +99,6 @@ class StudyGame:
         child = next((variation for variation in self._current_node.variations if variation.move == move), None)
         if child is None:
             child = self._current_node.add_variation(move)
-        self._current_node.promote_to_main(child)
         self._current_node = child
         self._sync_board_to_current_node()
         return san

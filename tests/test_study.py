@@ -44,9 +44,9 @@ def test_study_alternate_move_creates_variation():
     game.push_move(chess.Move.from_uci("c7c5"))
     pgn = game.to_pgn(include_all=True)
 
-    assert "1. e4 c5" in pgn
-    assert "( 1... e5 )" in pgn
-    assert game.current_variation_info() == (1, 2)
+    assert "1. e4 e5" in pgn
+    assert "( 1... c5 )" in pgn
+    assert game.current_variation_info() == (2, 2)
     assert game.select_sibling_variation(1) is True
     assert game.san_line() == ["e4", "e5"]
 
@@ -71,9 +71,9 @@ def test_study_move_tree_lists_variations_together():
     tree = game.move_tree()
 
     assert tree[0]["san"] == "e4"
-    assert tree[1]["san"] == "c5"
-    assert [child["san"] for child in tree[0]["children"]] == ["e5"]
-    assert [child["path"] for child in tree[0]["children"]] == ["e2e4|e7e5"]
+    assert tree[1]["san"] == "e5"
+    assert [child["san"] for child in tree[0]["children"]] == ["c5"]
+    assert [child["path"] for child in tree[0]["children"]] == ["e2e4|c7c5"]
 
 
 def test_study_move_entries_keep_variation_continuations_nested():

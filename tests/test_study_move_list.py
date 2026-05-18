@@ -99,9 +99,9 @@ def test_study_panel_shows_variations_in_san_tree():
 
         first = panel.moves_tree.topLevelItem(0)
         assert first.text(1) == "e4"
-        assert panel.moves_tree.topLevelItem(1).text(1) == "c5"
+        assert panel.moves_tree.topLevelItem(1).text(1) == "e5"
         assert first.childCount() == 1
-        assert first.child(0).text(1) == "e5"
+        assert first.child(0).text(1) == "c5"
     finally:
         panel.deleteLater()
         app.processEvents()
