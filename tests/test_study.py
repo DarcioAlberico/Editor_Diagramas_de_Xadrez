@@ -71,8 +71,9 @@ def test_study_move_tree_lists_variations_together():
     tree = game.move_tree()
 
     assert tree[0]["san"] == "e4"
-    assert [child["san"] for child in tree[0]["children"]] == ["c5", "e5"]
-    assert [child["path"] for child in tree[0]["children"]] == ["e2e4|c7c5", "e2e4|e7e5"]
+    assert tree[1]["san"] == "c5"
+    assert [child["san"] for child in tree[0]["children"]] == ["e5"]
+    assert [child["path"] for child in tree[0]["children"]] == ["e2e4|e7e5"]
 
 
 def test_study_pgn_comments_can_target_variation_paths():

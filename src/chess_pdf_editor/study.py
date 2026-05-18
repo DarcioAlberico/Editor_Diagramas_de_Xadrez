@@ -132,32 +132,56 @@ class StudyGame:
         return "|".join(move.uci() for move in moves) if moves else "0"
 
     def move_tree(self) -> list[dict[str, object]]:
-        def visit(
-            parent: chess.pgn.GameNode,
+        def make_entry(node: chess.pgn.GameNode, board: chess.Board, path: list[str]) -> dict[str, object]:
+            move = node.move
+            label = f"{board.fullmove_number}." if board.turn == chess.WHITE else f"{board.fullmove_number}..."
+            child_path = [*path, move.uci()]
+            return {
+                "label": label,
+                "san": board.san(move),
+                "ply": len(child_path),
+                "path": "|".join(child_path),
+                "current": node is self._current_node,
+                "children": [],
+            }
+
+        def append_line(
+            node: chess.pgn.GameNode,
             board: chess.Board,
             path: list[str],
-        ) -> list[dict[str, object]]:
-            entries: list[dict[str, object]] = []
-            for child in parent.variations:
-                move = child.move
-                san = board.san(move)
-                label = f"{board.fullmove_number}." if board.turn == chess.WHITE else f"{board.fullmove_number}..."
-                child_path = [*path, move.uci()]
-                next_board = board.copy(stack=False)
-                next_board.push(move)
-                entries.append(
-                    {
-                        "label": label,
-                        "san": san,
-                        "ply": len(child_path),
-                        "path": "|".join(child_path),
-                        "current": child is self._current_node,
-                        "children": visit(child, next_board, child_path),
-                    }
-                )
-            return entries
+            container: list[dict[str, object]],
+        ) -> dict[str, object]:
+            entry = make_entry(node, board, path)
+            container.append(entry)
+            next_board = board.copy(stack=False)
+            next_board.push(node.move)
+            next_path = [*path, node.move.uci()]
+            append_position(node, next_board, next_path, container, entry)
+            return entry
 
-        return visit(self._game, chess.Board(self._start_fen), [])
+        def append_position(
+            node: chess.pgn.GameNode,
+            board: chess.Board,
+            path: list[str],
+            container: list[dict[str, object]],
+            anchor: Optional[dict[str, object]],
+        ) -> None:
+            if not node.variations:
+                return
+            if anchor is None:
+                for variation in node.variations:
+                    append_line(variation, board, path, container)
+                return
+            for variation in node.variations[1:]:
+                append_line(variation, board, path, entry_children(anchor))
+            append_line(node.variation(0), board, path, container)
+
+        def entry_children(entry: dict[str, object]) -> list[dict[str, object]]:
+            return entry["children"]  # type: ignore[return-value]
+
+        entries: list[dict[str, object]] = []
+        append_position(self._game, chess.Board(self._start_fen), [], entries, None)
+        return entries
 
     def goto_path(self, path_key: str) -> bool:
         target = self._find_node_by_path(self._game, path_key)

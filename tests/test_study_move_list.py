@@ -58,7 +58,7 @@ def test_study_panel_marks_commented_moves():
         panel._on_line_changed(["e4", "e5"], 2)
 
         first = panel.moves_tree.topLevelItem(0)
-        second = first.child(0)
+        second = panel.moves_tree.topLevelItem(1)
         assert first.text(1) == "e4"
         assert second.text(1) == "e5 *"
         assert second.toolTip(1) == "Este lance tem comentario."
@@ -99,8 +99,9 @@ def test_study_panel_shows_variations_in_san_tree():
 
         first = panel.moves_tree.topLevelItem(0)
         assert first.text(1) == "e4"
-        assert first.childCount() == 2
-        assert {first.child(0).text(1), first.child(1).text(1)} == {"c5", "e5"}
+        assert panel.moves_tree.topLevelItem(1).text(1) == "c5"
+        assert first.childCount() == 1
+        assert first.child(0).text(1) == "e5"
     finally:
         panel.deleteLater()
         app.processEvents()
