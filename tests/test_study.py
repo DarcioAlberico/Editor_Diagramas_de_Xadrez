@@ -76,6 +76,27 @@ def test_study_move_tree_lists_variations_together():
     assert [child["path"] for child in tree[0]["children"]] == ["e2e4|e7e5"]
 
 
+def test_study_move_entries_keep_variation_continuations_nested():
+    game = StudyGame()
+    game.load_pgn("1. e4 e5 ( 1... c5 2. Nf3 ) 2. Bc4 *")
+
+    entries = game.move_entries()
+
+    assert [entry.san for entry in entries] == ["e4", "e5", "Bc4"]
+    assert [child.san for child in entries[0].children] == ["c5"]
+    assert [child.san for child in entries[0].children[0].children] == ["Nf3"]
+
+
+def test_study_move_tree_keeps_alternate_first_move_continuation_nested():
+    game = StudyGame()
+    game.load_pgn("1. e4 ( 1. d4 d5 ) e5 *")
+
+    tree = game.move_tree()
+
+    assert [entry["san"] for entry in tree] == ["e4", "e5", "d4"]
+    assert [child["san"] for child in tree[2]["children"]] == ["d5"]
+
+
 def test_study_pgn_comments_can_target_variation_paths():
     game = StudyGame()
     game.push_move(chess.Move.from_uci("e2e4"))

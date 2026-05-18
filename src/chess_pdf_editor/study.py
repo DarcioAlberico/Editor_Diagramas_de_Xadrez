@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from io import StringIO
 from typing import Iterable, Optional, Union
@@ -18,7 +18,34 @@ class StudyState:
     can_redo: bool
 
 
+@dataclass
+class StudyMoveEntry:
+    label: str
+    san: str
+    ply: int
+    path: str
+    current: bool
+    children: list["StudyMoveEntry"] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "label": self.label,
+            "san": self.san,
+            "ply": self.ply,
+            "path": self.path,
+            "current": self.current,
+            "children": [child.as_dict() for child in self.children],
+        }
+
+
 class StudyGame:
+    """Study board state backed by python-chess PGN nodes.
+
+    The PGN tree is the source of truth for the move list and variations. The
+    board is always synchronized from the current PGN node, matching the model
+    used by the reference chessboard template.
+    """
+
     def __init__(self, start_fen: str = chess.STARTING_FEN) -> None:
         self._start_fen = ""
         self._board = chess.Board()
@@ -74,27 +101,27 @@ class StudyGame:
             child = self._current_node.add_variation(move)
         self._current_node.promote_to_main(child)
         self._current_node = child
-        self._board.push(move)
+        self._sync_board_to_current_node()
         return san
 
     def undo(self) -> bool:
         if self._current_node.parent is None:
             return False
         self._current_node = self._current_node.parent
-        self._board = self._current_node.board()
+        self._sync_board_to_current_node()
         return True
 
     def redo(self) -> bool:
         if not self._current_node.variations:
             return False
         self._current_node = self._current_node.variations[0]
-        self._board = self._current_node.board()
+        self._sync_board_to_current_node()
         return True
 
     def clear_moves(self) -> None:
         self._game.variations.clear()
         self._current_node = self._game
-        self._board = chess.Board(self._start_fen)
+        self._sync_board_to_current_node()
 
     def goto_ply(self, ply: int) -> bool:
         path = self._path_nodes()
@@ -105,7 +132,7 @@ class StudyGame:
         if path[target] is self._current_node:
             return False
         self._current_node = path[target]
-        self._board = self._current_node.board()
+        self._sync_board_to_current_node()
         return True
 
     def last_move(self) -> Optional[chess.Move]:
@@ -131,64 +158,20 @@ class StudyGame:
         moves = self._path_moves()
         return "|".join(move.uci() for move in moves) if moves else "0"
 
-    def move_tree(self) -> list[dict[str, object]]:
-        def make_entry(node: chess.pgn.GameNode, board: chess.Board, path: list[str]) -> dict[str, object]:
-            move = node.move
-            label = f"{board.fullmove_number}." if board.turn == chess.WHITE else f"{board.fullmove_number}..."
-            child_path = [*path, move.uci()]
-            return {
-                "label": label,
-                "san": board.san(move),
-                "ply": len(child_path),
-                "path": "|".join(child_path),
-                "current": node is self._current_node,
-                "children": [],
-            }
-
-        def append_line(
-            node: chess.pgn.GameNode,
-            board: chess.Board,
-            path: list[str],
-            container: list[dict[str, object]],
-        ) -> dict[str, object]:
-            entry = make_entry(node, board, path)
-            container.append(entry)
-            next_board = board.copy(stack=False)
-            next_board.push(node.move)
-            next_path = [*path, node.move.uci()]
-            append_position(node, next_board, next_path, container, entry)
-            return entry
-
-        def append_position(
-            node: chess.pgn.GameNode,
-            board: chess.Board,
-            path: list[str],
-            container: list[dict[str, object]],
-            anchor: Optional[dict[str, object]],
-        ) -> None:
-            if not node.variations:
-                return
-            if anchor is None:
-                for variation in node.variations:
-                    append_line(variation, board, path, container)
-                return
-            for variation in node.variations[1:]:
-                append_line(variation, board, path, entry_children(anchor))
-            append_line(node.variation(0), board, path, container)
-
-        def entry_children(entry: dict[str, object]) -> list[dict[str, object]]:
-            return entry["children"]  # type: ignore[return-value]
-
-        entries: list[dict[str, object]] = []
-        append_position(self._game, chess.Board(self._start_fen), [], entries, None)
+    def move_entries(self) -> list[StudyMoveEntry]:
+        entries: list[StudyMoveEntry] = []
+        self._append_position_entries(self._game, self._game.board(), [], entries, None)
         return entries
+
+    def move_tree(self) -> list[dict[str, object]]:
+        return [entry.as_dict() for entry in self.move_entries()]
 
     def goto_path(self, path_key: str) -> bool:
         target = self._find_node_by_path(self._game, path_key)
         if target is None or target is self._current_node:
             return False
         self._current_node = target
-        self._board = self._current_node.board()
+        self._sync_board_to_current_node()
         return True
 
     def current_variation_info(self) -> tuple[int, int]:
@@ -206,7 +189,7 @@ class StudyGame:
         current_idx = parent.variations.index(self._current_node)
         next_idx = (current_idx + int(offset)) % len(parent.variations)
         self._current_node = parent.variations[next_idx]
-        self._board = self._current_node.board()
+        self._sync_board_to_current_node()
         return True
 
     def load_pgn(self, pgn_text: str) -> dict[int, dict[str, str]]:
@@ -218,7 +201,7 @@ class StudyGame:
         self._start_fen = start_board.fen()
         self._game = game
         self._current_node = self._deepest_mainline_node()
-        self._board = self._current_node.board()
+        self._sync_board_to_current_node()
         comments: dict[int, dict[str, str]] = {}
         root_comment = game.comment.strip()
         if root_comment:
@@ -346,6 +329,72 @@ class StudyGame:
 
     def _clone_game(self) -> chess.pgn.Game:
         return chess.pgn.read_game(StringIO(str(self._game))) or chess.pgn.Game()
+
+    def _sync_board_to_current_node(self) -> None:
+        self._board = self._current_node.board()
+
+    def _make_move_entry(
+        self,
+        node: chess.pgn.GameNode,
+        board_before_move: chess.Board,
+        parent_path: list[str],
+    ) -> StudyMoveEntry:
+        if node.move is None:
+            raise ValueError("No move on root PGN node.")
+        label = (
+            f"{board_before_move.fullmove_number}."
+            if board_before_move.turn == chess.WHITE
+            else f"{board_before_move.fullmove_number}..."
+        )
+        path = [*parent_path, node.move.uci()]
+        return StudyMoveEntry(
+            label=label,
+            san=board_before_move.san(node.move),
+            ply=len(path),
+            path="|".join(path),
+            current=node is self._current_node,
+        )
+
+    def _append_move_line(
+        self,
+        node: chess.pgn.GameNode,
+        board_before_move: chess.Board,
+        parent_path: list[str],
+        container: list[StudyMoveEntry],
+        flatten_continuation: bool,
+    ) -> StudyMoveEntry:
+        if node.move is None:
+            raise ValueError("No move on root PGN node.")
+        entry = self._make_move_entry(node, board_before_move, parent_path)
+        container.append(entry)
+
+        board_after_move = board_before_move.copy(stack=False)
+        board_after_move.push(node.move)
+        path = [*parent_path, node.move.uci()]
+        continuation_container = container if flatten_continuation else entry.children
+        self._append_position_entries(node, board_after_move, path, continuation_container, entry)
+        return entry
+
+    def _append_position_entries(
+        self,
+        node: chess.pgn.GameNode,
+        board: chess.Board,
+        path: list[str],
+        container: list[StudyMoveEntry],
+        anchor: Optional[StudyMoveEntry],
+    ) -> None:
+        if not node.variations:
+            return
+
+        if anchor is None:
+            self._append_move_line(node.variation(0), board, path, container, True)
+            for variation in node.variations[1:]:
+                self._append_move_line(variation, board, path, container, False)
+            return
+
+        for variation in node.variations[1:]:
+            self._append_move_line(variation, board, path, anchor.children, False)
+        self._append_move_line(node.variation(0), board, path, container, True)
 
     @staticmethod
     def _find_node_by_path(root: chess.pgn.GameNode, path_key: str) -> Optional[chess.pgn.GameNode]:
