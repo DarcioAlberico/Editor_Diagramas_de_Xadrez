@@ -116,6 +116,24 @@ def test_study_pgn_comments_can_target_variation_paths():
     assert "e5 { Variante aberta }" in pgn
 
 
+def test_study_pgn_before_comment_stays_inside_variation_path():
+    game = StudyGame()
+    game.push_move(chess.Move.from_uci("e2e4"))
+    game.push_move(chess.Move.from_uci("e7e5"))
+    assert game.undo() is True
+    game.push_move(chess.Move.from_uci("c7c5"))
+
+    pgn = game.to_pgn(
+        move_comments={
+            "e2e4|c7c5": {"before": "Antes da variante", "after": ""},
+        },
+        include_all=True,
+    )
+
+    assert "( { Antes da variante } 1... c5 )" in pgn
+    assert "e4 { Antes da variante } 1... e5" not in pgn
+
+
 def test_study_custom_start_fen_has_setup_tags():
     game = StudyGame("8/8/8/3k4/8/8/4K3/8 w - - 0 1")
     pgn = game.to_pgn()

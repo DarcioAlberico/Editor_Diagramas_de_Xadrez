@@ -267,6 +267,17 @@ class StudyGame:
                 return
             target.comment = text if not target.comment else f"{target.comment} {text}"
 
+        def append_starting_comment(target: chess.pgn.ChildNode | chess.pgn.Game, text: str) -> None:
+            text = text.strip()
+            if not text:
+                return
+            if isinstance(target, chess.pgn.ChildNode):
+                target.starting_comment = (
+                    text if not target.starting_comment else f"{target.starting_comment} {text}"
+                )
+            else:
+                append_comment(target, text)
+
         node: chess.pgn.GameNode = game
         root_comments = comments.get(0, {})
         append_comment(game, root_comments.get("before", ""))
@@ -286,8 +297,7 @@ class StudyGame:
             target = self._find_node_by_path(game, key)
             if target is None:
                 continue
-            if target.parent is not None:
-                append_comment(target.parent, values.get("before", ""))
+            append_starting_comment(target, values.get("before", ""))
             append_comment(target, values.get("after", ""))
         append_comment(game, root_comments.get("after", ""))
         return str(game)
