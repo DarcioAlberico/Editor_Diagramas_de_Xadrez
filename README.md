@@ -85,6 +85,7 @@ No toolbar, use `Estudo` para abrir um painel lateral com:
 - lista SAN lateral em colunas (clique em um lance branco ou preto para navegar ate ele);
 - `Desfazer` / `Refazer`;
 - `Resetar Linha`;
+- `Partida inicial` para estudar uma linha de abertura sem OCR/FEN do PDF;
 - `Importar PGN`, `Copiar FEN`, `Copiar PGN` e `Salvar PGN`.
   Ao importar PGN, os comentarios da linha principal sao preservados nos lances correspondentes.
 
@@ -99,6 +100,7 @@ Para estudar uma posicao do PDF:
    A linha e os comentarios tambem sao sincronizados automaticamente ao navegar pelos lances, copiar ou salvar PGN.
 
 As posicoes de estudo ficam em `Posicoes deste PDF` e sao salvas no projeto.
+Para livros de abertura, use `Partida inicial` para criar uma entrada de estudo a partir da posicao inicial do xadrez.
 
 ## Projeto (checkpoint)
 

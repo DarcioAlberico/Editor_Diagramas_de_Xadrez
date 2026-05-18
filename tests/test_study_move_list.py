@@ -2,6 +2,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import chess
 from PySide6 import QtWidgets
 
 from chess_pdf_editor.app import MainWindow, StudyPanel
@@ -87,3 +88,13 @@ def test_study_move_reference_names_selected_ply():
 def test_study_move_reference_handles_black_to_move_start():
     assert MainWindow._study_move_reference(1, ["g3", "Rf1"], "b", 12) == "12... g3"
     assert MainWindow._study_move_reference(2, ["g3", "Rf1"], "b", 12) == "13. Rf1"
+
+
+def test_starting_study_position_uses_initial_board():
+    pos = MainWindow._make_starting_study_position(4)
+
+    assert pos.page_num == 4
+    assert pos.rect_pdf == (0.0, 0.0, 0.0, 0.0)
+    assert pos.fen == chess.STARTING_BOARD_FEN
+    assert pos.side_to_move == "w"
+    assert pos.fullmove_number == 1

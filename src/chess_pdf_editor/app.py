@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional
 
+import chess
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .fen import extract_piece_placement, normalize_piece_placement, validate_piece_placement
@@ -505,6 +506,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_clear_erasers.clicked.connect(self._clear_erasers)
         self.btn_study_selection = QtWidgets.QPushButton("Estudar selecao")
         self.btn_study_selection.clicked.connect(self._study_selection)
+        self.btn_study_initial = QtWidgets.QPushButton("Partida inicial")
+        self.btn_study_initial.clicked.connect(self._study_starting_position)
         self.btn_save_study_line = QtWidgets.QPushButton("Atualizar linha")
         self.btn_save_study_line.clicked.connect(self._save_current_study_line)
         self.btn_pdf_text_to_before = QtWidgets.QPushButton("Texto -> antes")
@@ -637,10 +640,11 @@ class MainWindow(QtWidgets.QMainWindow):
         study_positions_layout.addWidget(self.study_positions_list, 1)
         study_actions = QtWidgets.QGridLayout()
         study_actions.addWidget(self.btn_study_selection, 0, 0)
-        study_actions.addWidget(self.btn_save_study_line, 0, 1)
-        study_actions.addWidget(self.btn_remove_study_position, 0, 2)
+        study_actions.addWidget(self.btn_study_initial, 0, 1)
+        study_actions.addWidget(self.btn_save_study_line, 0, 2)
         study_actions.addWidget(self.btn_pdf_text_to_before, 1, 0)
         study_actions.addWidget(self.btn_pdf_text_to_after, 1, 1)
+        study_actions.addWidget(self.btn_remove_study_position, 1, 2)
         for col in range(3):
             study_actions.setColumnStretch(col, 1)
         study_positions_layout.addLayout(study_actions)
@@ -869,6 +873,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_study_selection.setShortcut(QtGui.QKeySequence("Ctrl+Return"))
         self.act_study_selection.triggered.connect(self._study_selection)
 
+        self.act_study_initial = QtGui.QAction("Partida inicial", self)
+        self.act_study_initial.triggered.connect(self._study_starting_position)
+
         self.act_pdf_text_to_before = QtGui.QAction("Texto da selecao -> comentario antes", self)
         self.act_pdf_text_to_before.triggered.connect(lambda: self._copy_pdf_text_to_study_comment("before"))
 
@@ -907,6 +914,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         study_menu = self.menuBar().addMenu("Estudo")
         study_menu.addAction(self.act_study_selection)
+        study_menu.addAction(self.act_study_initial)
         study_menu.addAction(self.act_pdf_text_to_before)
         study_menu.addAction(self.act_pdf_text_to_after)
         study_menu.addSeparator()
@@ -1778,6 +1786,25 @@ class MainWindow(QtWidgets.QMainWindow):
             fullmove_number=fullmove_number,
         )
         self._set_mode("study")
+
+    @staticmethod
+    def _make_starting_study_position(page_num: int) -> StudyPosition:
+        return StudyPosition(
+            page_num=max(0, int(page_num)),
+            rect_pdf=(0.0, 0.0, 0.0, 0.0),
+            fen=chess.STARTING_BOARD_FEN,
+            side_to_move="w",
+            fullmove_number=1,
+        )
+
+    def _study_starting_position(self) -> None:
+        self._flush_current_study_comment()
+        page_num = self.current_page if self.pdf_service else 0
+        pos = self._make_starting_study_position(page_num)
+        self.study_positions.append(pos)
+        self._refresh_study_positions_list()
+        self._focus_study_position(len(self.study_positions) - 1)
+        self.statusBar().showMessage("Partida inicial enviada para estudo.")
 
     def _text_from_current_selection(self) -> str:
         if not self.current_render or not self.pdf_service:
