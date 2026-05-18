@@ -131,6 +131,42 @@ class StudyGame:
         moves = self._path_moves()
         return "|".join(move.uci() for move in moves) if moves else "0"
 
+    def move_tree(self) -> list[dict[str, object]]:
+        def visit(
+            parent: chess.pgn.GameNode,
+            board: chess.Board,
+            path: list[str],
+        ) -> list[dict[str, object]]:
+            entries: list[dict[str, object]] = []
+            for child in parent.variations:
+                move = child.move
+                san = board.san(move)
+                label = f"{board.fullmove_number}." if board.turn == chess.WHITE else f"{board.fullmove_number}..."
+                child_path = [*path, move.uci()]
+                next_board = board.copy(stack=False)
+                next_board.push(move)
+                entries.append(
+                    {
+                        "label": label,
+                        "san": san,
+                        "ply": len(child_path),
+                        "path": "|".join(child_path),
+                        "current": child is self._current_node,
+                        "children": visit(child, next_board, child_path),
+                    }
+                )
+            return entries
+
+        return visit(self._game, chess.Board(self._start_fen), [])
+
+    def goto_path(self, path_key: str) -> bool:
+        target = self._find_node_by_path(self._game, path_key)
+        if target is None or target is self._current_node:
+            return False
+        self._current_node = target
+        self._board = self._current_node.board()
+        return True
+
     def current_variation_info(self) -> tuple[int, int]:
         parent = self._current_node.parent
         if parent is None:
@@ -225,17 +261,6 @@ class StudyGame:
                 return
             target.comment = text if not target.comment else f"{target.comment} {text}"
 
-        def find_node_by_path(root: chess.pgn.GameNode, path_key: str) -> Optional[chess.pgn.GameNode]:
-            if path_key == "0":
-                return root
-            node = root
-            for uci in path_key.split("|"):
-                child = next((variation for variation in node.variations if variation.move.uci() == uci), None)
-                if child is None:
-                    return None
-                node = child
-            return node
-
         node: chess.pgn.GameNode = game
         root_comments = comments.get(0, {})
         append_comment(game, root_comments.get("before", ""))
@@ -252,7 +277,7 @@ class StudyGame:
         for key, values in comments.items():
             if not isinstance(key, str) or key == "0":
                 continue
-            target = find_node_by_path(game, key)
+            target = self._find_node_by_path(game, key)
             if target is None:
                 continue
             if target.parent is not None:
@@ -297,3 +322,15 @@ class StudyGame:
 
     def _clone_game(self) -> chess.pgn.Game:
         return chess.pgn.read_game(StringIO(str(self._game))) or chess.pgn.Game()
+
+    @staticmethod
+    def _find_node_by_path(root: chess.pgn.GameNode, path_key: str) -> Optional[chess.pgn.GameNode]:
+        if path_key == "0":
+            return root
+        node = root
+        for uci in path_key.split("|"):
+            child = next((variation for variation in node.variations if variation.move.uci() == uci), None)
+            if child is None:
+                return None
+            node = child
+        return node

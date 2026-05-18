@@ -27,6 +27,7 @@ class StudyPanel(QtWidgets.QWidget):
         self._syncing_move_list = False
         self._pgn_provider: Optional[Callable[[], str]] = None
         self._commented_plies: set[int] = set()
+        self._commented_paths: set[str] = set()
 
         self.study_board = StudyBoardWidget(cell_size=58)
         self.study_board.state_changed.connect(self._on_state_changed)
@@ -59,6 +60,13 @@ class StudyPanel(QtWidgets.QWidget):
         self.btn_save_pgn.clicked.connect(self._save_pgn)
         self.btn_import_pgn = QtWidgets.QPushButton("Importar PGN")
         self.btn_import_pgn.clicked.connect(self._import_pgn)
+
+        self.moves_tree = QtWidgets.QTreeWidget()
+        self.moves_tree.setHeaderLabels(["Lance", "SAN"])
+        self.moves_tree.setUniformRowHeights(True)
+        self.moves_tree.setAlternatingRowColors(True)
+        self.moves_tree.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.moves_tree.itemClicked.connect(self._on_san_tree_item_clicked)
 
         self.moves_table = QtWidgets.QTableWidget(0, 3)
         self.moves_table.setHorizontalHeaderLabels(["Lance", "Brancas", "Pretas"])
@@ -97,7 +105,7 @@ class StudyPanel(QtWidgets.QWidget):
 
         side_panel = QtWidgets.QVBoxLayout()
         side_panel.addWidget(QtWidgets.QLabel("Lista SAN"))
-        side_panel.addWidget(self.moves_table, 1)
+        side_panel.addWidget(self.moves_tree, 1)
 
         side_widget = QtWidgets.QWidget()
         side_widget.setLayout(side_panel)
@@ -123,11 +131,13 @@ class StudyPanel(QtWidgets.QWidget):
         self._pgn_provider = provider
 
     def set_commented_plies(self, plies: object) -> None:
-        self._commented_plies = {
-            int(ply)
-            for ply in (plies or [])
-            if isinstance(ply, int) or str(ply).isdigit()
-        }
+        self._commented_plies = set()
+        self._commented_paths = set()
+        for value in plies or []:
+            if isinstance(value, int) or str(value).isdigit():
+                self._commented_plies.add(int(value))
+            elif str(value).strip():
+                self._commented_paths.add(str(value))
         self._on_line_changed(self.study_board.san_line(), self.study_board.current_ply())
 
     def _export_pgn_text(self) -> str:
@@ -226,6 +236,16 @@ class StudyPanel(QtWidgets.QWidget):
         self.about_to_change_line.emit()
         self.study_board.goto_ply(ply)
 
+    def _on_san_tree_item_clicked(self, item: QtWidgets.QTreeWidgetItem, col: int) -> None:
+        del col
+        if self._syncing_move_list:
+            return
+        path_key = str(item.data(0, QtCore.Qt.UserRole) or "")
+        if not path_key:
+            return
+        self.about_to_change_line.emit()
+        self.study_board.goto_path(path_key)
+
     @staticmethod
     def _format_san_rows(
         moves: list[str],
@@ -283,6 +303,7 @@ class StudyPanel(QtWidgets.QWidget):
         moves = list(san_line) if isinstance(san_line, list) else list(san_line or [])
         self._syncing_move_list = True
         try:
+            self._refresh_san_tree()
             self.moves_table.setRowCount(0)
             selected_cell: Optional[tuple[int, int]] = None
             rows = self._format_san_rows(
@@ -313,6 +334,42 @@ class StudyPanel(QtWidgets.QWidget):
                 self.moves_table.clearSelection()
         finally:
             self._syncing_move_list = False
+
+    def _refresh_san_tree(self) -> None:
+        self.moves_tree.clear()
+        selected_item: Optional[QtWidgets.QTreeWidgetItem] = None
+
+        def add_entries(
+            parent: QtWidgets.QTreeWidget | QtWidgets.QTreeWidgetItem,
+            entries: list[dict[str, object]],
+        ) -> None:
+            nonlocal selected_item
+            for entry in entries:
+                path = str(entry.get("path", ""))
+                ply = int(entry.get("ply", 0))
+                san = str(entry.get("san", ""))
+                has_comment = path in self._commented_paths or ply in self._commented_plies
+                item = QtWidgets.QTreeWidgetItem([str(entry.get("label", "")), f"{san} *" if has_comment else san])
+                item.setData(0, QtCore.Qt.UserRole, path)
+                if has_comment:
+                    font = item.font(1)
+                    font.setBold(True)
+                    item.setFont(1, font)
+                    item.setBackground(1, QtGui.QColor("#fff7d6"))
+                    item.setForeground(1, QtGui.QColor("#5f3b00"))
+                    item.setToolTip(1, "Este lance tem comentario.")
+                if bool(entry.get("current", False)):
+                    selected_item = item
+                parent.addChild(item) if isinstance(parent, QtWidgets.QTreeWidgetItem) else parent.addTopLevelItem(item)
+                add_entries(item, list(entry.get("children", [])))
+
+        add_entries(self.moves_tree, self.study_board.move_tree())
+        self.moves_tree.expandAll()
+        self.moves_tree.resizeColumnToContents(0)
+        if selected_item is not None:
+            self.moves_tree.setCurrentItem(selected_item)
+        else:
+            self.moves_tree.clearSelection()
 
     def _on_state_changed(self, message: str) -> None:
         self.status_label.setText(message)
@@ -1561,12 +1618,14 @@ class MainWindow(QtWidgets.QMainWindow):
             idx = self._selected_study_position_index()
             pos = self.study_positions[idx] if idx is not None else None
         comment_keys = pos.move_comments.keys() if pos is not None else set()
-        commented_plies = []
+        commented_items: list[object] = []
         for key in comment_keys:
             ply = self._study_comment_ply(str(key))
             if ply is not None and ply > 0:
-                commented_plies.append(ply)
-        self.study_panel.set_commented_plies(commented_plies)
+                commented_items.append(ply)
+            if not str(key).isdigit() and str(key) != "0":
+                commented_items.append(str(key))
+        self.study_panel.set_commented_plies(commented_items)
 
     def _current_study_comments(self, pos: StudyPosition) -> tuple[str, str]:
         key = self._current_study_comment_key()

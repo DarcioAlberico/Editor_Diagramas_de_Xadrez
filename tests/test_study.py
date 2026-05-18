@@ -61,6 +61,20 @@ def test_study_imports_variations_and_subvariations():
     assert game.san_line() == ["e4", "c5"]
 
 
+def test_study_move_tree_lists_variations_together():
+    game = StudyGame()
+    game.push_move(chess.Move.from_uci("e2e4"))
+    game.push_move(chess.Move.from_uci("e7e5"))
+    assert game.undo() is True
+    game.push_move(chess.Move.from_uci("c7c5"))
+
+    tree = game.move_tree()
+
+    assert tree[0]["san"] == "e4"
+    assert [child["san"] for child in tree[0]["children"]] == ["c5", "e5"]
+    assert [child["path"] for child in tree[0]["children"]] == ["e2e4|c7c5", "e2e4|e7e5"]
+
+
 def test_study_pgn_comments_can_target_variation_paths():
     game = StudyGame()
     game.push_move(chess.Move.from_uci("e2e4"))

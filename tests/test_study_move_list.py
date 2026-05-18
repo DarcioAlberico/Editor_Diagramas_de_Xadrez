@@ -52,12 +52,16 @@ def test_study_panel_marks_commented_moves():
     panel = StudyPanel()
 
     try:
-        panel.set_commented_plies({2})
+        panel.study_board._game.push_move(chess.Move.from_uci("e2e4"))
+        panel.study_board._game.push_move(chess.Move.from_uci("e7e5"))
+        panel.set_commented_plies({"e2e4|e7e5"})
         panel._on_line_changed(["e4", "e5"], 2)
 
-        assert panel.moves_table.item(0, 1).text() == "e4"
-        assert panel.moves_table.item(0, 2).text() == "e5 *"
-        assert panel.moves_table.item(0, 2).toolTip() == "Este lance tem comentario."
+        first = panel.moves_tree.topLevelItem(0)
+        second = first.child(0)
+        assert first.text(1) == "e4"
+        assert second.text(1) == "e5 *"
+        assert second.toolTip(1) == "Este lance tem comentario."
     finally:
         panel.deleteLater()
         app.processEvents()
@@ -70,10 +74,33 @@ def test_study_panel_signals_before_move_navigation():
     panel.about_to_change_line.connect(lambda: calls.append(True))
 
     try:
+        panel.study_board._game.push_move(chess.Move.from_uci("e2e4"))
+        panel.study_board._game.push_move(chess.Move.from_uci("e7e5"))
         panel._on_line_changed(["e4", "e5"], 2)
-        panel._on_san_cell_clicked(0, 1)
+        panel._on_san_tree_item_clicked(panel.moves_tree.topLevelItem(0), 0)
 
         assert calls == [True]
+        assert panel.study_board.current_path_key() == "e2e4"
+    finally:
+        panel.deleteLater()
+        app.processEvents()
+
+
+def test_study_panel_shows_variations_in_san_tree():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    panel = StudyPanel()
+
+    try:
+        panel.study_board._game.push_move(chess.Move.from_uci("e2e4"))
+        panel.study_board._game.push_move(chess.Move.from_uci("e7e5"))
+        panel.study_board._game.undo()
+        panel.study_board._game.push_move(chess.Move.from_uci("c7c5"))
+        panel._on_line_changed(["e4", "c5"], 2)
+
+        first = panel.moves_tree.topLevelItem(0)
+        assert first.text(1) == "e4"
+        assert first.childCount() == 2
+        assert {first.child(0).text(1), first.child(1).text(1)} == {"c5", "e5"}
     finally:
         panel.deleteLater()
         app.processEvents()

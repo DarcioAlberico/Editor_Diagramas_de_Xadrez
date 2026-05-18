@@ -82,7 +82,7 @@ Ao iniciar, o app tenta restaurar o ultimo projeto salvo. Se nao houver projeto 
 No toolbar, use `Estudo` para abrir um painel lateral com:
 - movimentos legais (click na peca e depois na casa destino);
 - seta do ultimo lance;
-- lista SAN lateral em colunas (clique em um lance branco ou preto para navegar ate ele);
+- lista SAN lateral em arvore (clique em qualquer lance, variante ou subvariante para navegar ate ele);
 - `Desfazer` / `Refazer`;
 - `Resetar Linha`;
 - `Partida inicial` para estudar uma linha de abertura sem OCR/FEN do PDF;

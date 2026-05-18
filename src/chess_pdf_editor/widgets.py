@@ -555,6 +555,19 @@ class StudyBoardWidget(QtWidgets.QWidget):
     def current_path_key(self) -> str:
         return self._game.current_path_key()
 
+    def move_tree(self) -> list[dict[str, object]]:
+        return self._game.move_tree()
+
+    def goto_path(self, path_key: str) -> bool:
+        ok = self._game.goto_path(path_key)
+        if not ok:
+            return False
+        self._selected_square = None
+        self._legal_targets.clear()
+        self._refresh()
+        self._emit_state_changed(f"Navegando para {self._game.current_path_key()}.")
+        return True
+
     def current_variation_info(self) -> tuple[int, int]:
         return self._game.current_variation_info()
 
