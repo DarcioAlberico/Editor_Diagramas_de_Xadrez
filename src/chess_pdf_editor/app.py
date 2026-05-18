@@ -45,6 +45,10 @@ class StudyPanel(QtWidgets.QWidget):
         self.btn_redo.clicked.connect(self._redo)
         self.btn_reset = QtWidgets.QPushButton("Resetar Linha")
         self.btn_reset.clicked.connect(self._reset)
+        self.btn_prev_variation = QtWidgets.QPushButton("Var. anterior")
+        self.btn_prev_variation.clicked.connect(lambda: self._switch_variation(-1))
+        self.btn_next_variation = QtWidgets.QPushButton("Var. proxima")
+        self.btn_next_variation.clicked.connect(lambda: self._switch_variation(1))
         self.btn_flip = QtWidgets.QPushButton("Virar Tabuleiro")
         self.btn_flip.clicked.connect(self.study_board.flip_board)
         self.btn_copy_fen = QtWidgets.QPushButton("Copiar FEN")
@@ -85,6 +89,8 @@ class StudyPanel(QtWidgets.QWidget):
         controls_1.addWidget(self.btn_flip)
 
         controls_2 = QtWidgets.QHBoxLayout()
+        controls_2.addWidget(self.btn_prev_variation)
+        controls_2.addWidget(self.btn_next_variation)
         controls_2.addWidget(self.btn_copy_fen)
         controls_2.addWidget(self.btn_copy_pgn)
         controls_2.addWidget(self.btn_save_pgn)
@@ -161,6 +167,11 @@ class StudyPanel(QtWidgets.QWidget):
     def _reset(self) -> None:
         self.about_to_change_line.emit()
         self.study_board.clear_moves()
+
+    def _switch_variation(self, offset: int) -> None:
+        self.about_to_change_line.emit()
+        if not self.study_board.select_sibling_variation(offset):
+            self.status_label.setText("Nao ha outra variante neste lance.")
 
     def _copy_fen(self) -> None:
         QtWidgets.QApplication.clipboard().setText(self.study_board.current_fen())
@@ -1479,6 +1490,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _study_comment_key(ply: int) -> str:
         return str(max(0, int(ply)))
 
+    def _current_study_comment_key(self) -> str:
+        return self.study_panel.study_board.current_path_key()
+
     @staticmethod
     def _study_move_reference(
         ply: int,
@@ -1511,35 +1525,58 @@ class MainWindow(QtWidgets.QMainWindow):
         self.study_comment_target_label.setText(f"Comentando: {reference}")
 
     @staticmethod
-    def _study_comments_for_pgn(pos: StudyPosition) -> dict[int, dict[str, str]]:
-        out: dict[int, dict[str, str]] = {}
+    def _study_comment_sort_key(key: str) -> tuple[int, str]:
+        if str(key).isdigit():
+            return (int(key), str(key))
+        if key == "0":
+            return (0, key)
+        return (len(str(key).split("|")), str(key))
+
+    @staticmethod
+    def _study_comment_ply(key: str) -> Optional[int]:
+        if str(key).isdigit():
+            return int(key)
+        if key == "0":
+            return 0
+        if str(key).strip():
+            return len(str(key).split("|"))
+        return None
+
+    @staticmethod
+    def _study_comments_for_pgn(pos: StudyPosition) -> dict[object, dict[str, str]]:
+        out: dict[object, dict[str, str]] = {}
         for key, values in pos.move_comments.items():
             try:
-                ply = max(0, int(key))
+                out_key: object = max(0, int(key))
             except Exception:
-                continue
+                out_key = str(key)
             before = str(values.get("before", ""))
             after = str(values.get("after", ""))
             if before.strip() or after.strip():
-                out[ply] = {"before": before, "after": after}
+                out[out_key] = {"before": before, "after": after}
         return out
 
     def _refresh_study_move_comment_markers(self, pos: Optional[StudyPosition] = None) -> None:
         if pos is None:
             idx = self._selected_study_position_index()
             pos = self.study_positions[idx] if idx is not None else None
-        commented_plies = self._study_comments_for_pgn(pos).keys() if pos is not None else set()
-        self.study_panel.set_commented_plies(ply for ply in commented_plies if ply > 0)
+        comment_keys = pos.move_comments.keys() if pos is not None else set()
+        commented_plies = []
+        for key in comment_keys:
+            ply = self._study_comment_ply(str(key))
+            if ply is not None and ply > 0:
+                commented_plies.append(ply)
+        self.study_panel.set_commented_plies(commented_plies)
 
     def _current_study_comments(self, pos: StudyPosition) -> tuple[str, str]:
-        key = self._study_comment_key(self.study_panel.study_board.current_ply())
+        key = self._current_study_comment_key()
         if not pos.move_comments and key == "0":
             return (pos.comment_before or pos.note, pos.comment_after)
         values = pos.move_comments.get(key, {})
         return (str(values.get("before", "")), str(values.get("after", "")))
 
     def _set_current_study_comments(self, pos: StudyPosition, before: str, after: str) -> None:
-        key = self._study_comment_key(self.study_panel.study_board.current_ply())
+        key = self._current_study_comment_key()
         if before.strip() or after.strip():
             pos.move_comments[key] = {"before": before, "after": after}
         else:
@@ -1549,7 +1586,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pos.comment_after = after
             pos.note = before
         elif not pos.comment_before and not pos.comment_after and pos.move_comments:
-            first_key = sorted(pos.move_comments, key=lambda value: int(value))[0]
+            first_key = sorted(pos.move_comments, key=self._study_comment_sort_key)[0]
             first = pos.move_comments[first_key]
             pos.comment_before = str(first.get("before", ""))
             pos.comment_after = str(first.get("after", ""))
@@ -1579,9 +1616,9 @@ class MainWindow(QtWidgets.QMainWindow):
         max_ply = len(self.study_panel.study_board.san_line())
         kept_comments: dict[str, dict[str, str]] = {}
         for key, values in pos.move_comments.items():
-            try:
-                ply = int(key)
-            except Exception:
+            ply = self._study_comment_ply(str(key))
+            if ply is None:
+                kept_comments[key] = values
                 continue
             if ply == 0 or ply <= max_ply:
                 kept_comments[key] = values
@@ -1598,7 +1635,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not pos.move_comments:
             return
         try:
-            first_key = sorted(pos.move_comments, key=lambda value: int(value))[0]
+            first_key = sorted(pos.move_comments, key=MainWindow._study_comment_sort_key)[0]
         except Exception:
             first_key = next(iter(pos.move_comments))
         first = pos.move_comments[first_key]
@@ -1655,7 +1692,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if not isinstance(values, dict):
                 continue
             try:
-                key = str(max(0, int(ply)))
+                key = str(max(0, int(ply))) if str(ply).isdigit() else str(ply)
             except Exception:
                 continue
             before = str(values.get("before", ""))

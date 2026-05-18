@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from io import StringIO
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Union
 
 import chess
 import chess.pgn
@@ -22,8 +22,8 @@ class StudyGame:
     def __init__(self, start_fen: str = chess.STARTING_FEN) -> None:
         self._start_fen = ""
         self._board = chess.Board()
-        self._history: list[chess.Move] = []
-        self._cursor = 0
+        self._game = chess.pgn.Game()
+        self._current_node: chess.pgn.GameNode = self._game
         self.set_start_fen(start_fen)
 
     @property
@@ -36,26 +36,30 @@ class StudyGame:
 
     @property
     def cursor(self) -> int:
-        return self._cursor
+        return len(self._path_moves())
 
     @property
     def history_length(self) -> int:
-        return len(self._history)
+        return len(self._path_moves())
 
     def set_start_fen(self, fen: str) -> None:
         board = chess.Board(fen)
         self._start_fen = board.fen()
-        self._history = []
-        self._cursor = 0
+        self._game = chess.pgn.Game()
+        if self._start_fen != chess.STARTING_FEN:
+            self._game.setup(board)
+            self._game.headers["SetUp"] = "1"
+            self._game.headers["FEN"] = self._start_fen
+        self._current_node = self._game
         self._board = board.copy(stack=False)
 
     def state(self) -> StudyState:
         return StudyState(
             start_fen=self._start_fen,
             current_fen=self._board.fen(),
-            move_count=self._cursor,
-            can_undo=self._cursor > 0,
-            can_redo=self._cursor < len(self._history),
+            move_count=self.cursor,
+            can_undo=self._current_node.parent is not None,
+            can_redo=bool(self._current_node.variations),
         )
 
     def legal_moves_from(self, square: int) -> list[chess.Move]:
@@ -65,58 +69,85 @@ class StudyGame:
         if move not in self._board.legal_moves:
             raise ValueError(f"Movimento ilegal: {move.uci()}")
         san = self._board.san(move)
-        if self._cursor < len(self._history):
-            self._history = self._history[: self._cursor]
-        self._history.append(move)
-        self._cursor += 1
+        child = next((variation for variation in self._current_node.variations if variation.move == move), None)
+        if child is None:
+            child = self._current_node.add_variation(move)
+        self._current_node.promote_to_main(child)
+        self._current_node = child
         self._board.push(move)
         return san
 
     def undo(self) -> bool:
-        if self._cursor <= 0:
+        if self._current_node.parent is None:
             return False
-        self._cursor -= 1
-        self._rebuild()
+        self._current_node = self._current_node.parent
+        self._board = self._current_node.board()
         return True
 
     def redo(self) -> bool:
-        if self._cursor >= len(self._history):
+        if not self._current_node.variations:
             return False
-        self._cursor += 1
-        self._rebuild()
+        self._current_node = self._current_node.variations[0]
+        self._board = self._current_node.board()
         return True
 
     def clear_moves(self) -> None:
-        self._history = []
-        self._cursor = 0
-        self._rebuild()
+        self._game.variations.clear()
+        self._current_node = self._game
+        self._board = chess.Board(self._start_fen)
 
     def goto_ply(self, ply: int) -> bool:
-        target = max(0, min(int(ply), len(self._history)))
-        if target == self._cursor:
+        path = self._path_nodes()
+        target = int(ply)
+        if target >= len(path):
+            path = self._mainline_nodes()
+        target = max(0, min(target, len(path) - 1))
+        if path[target] is self._current_node:
             return False
-        self._cursor = target
-        self._rebuild()
+        self._current_node = path[target]
+        self._board = self._current_node.board()
         return True
 
     def last_move(self) -> Optional[chess.Move]:
-        if self._cursor <= 0:
+        if self._current_node.move is None:
             return None
-        return self._history[self._cursor - 1]
+        return self._current_node.move
 
     def moves(self) -> list[chess.Move]:
-        return list(self._history[: self._cursor])
+        return self._path_moves()
 
     def all_moves(self) -> list[chess.Move]:
-        return list(self._history)
+        return self._mainline_moves()
 
     def san_line(self) -> list[str]:
         board = chess.Board(self._start_fen)
         out: list[str] = []
-        for move in self._history:
+        for move in self._path_moves():
             out.append(board.san(move))
             board.push(move)
         return out
+
+    def current_path_key(self) -> str:
+        moves = self._path_moves()
+        return "|".join(move.uci() for move in moves) if moves else "0"
+
+    def current_variation_info(self) -> tuple[int, int]:
+        parent = self._current_node.parent
+        if parent is None:
+            return (0, 0)
+        count = len(parent.variations)
+        index = parent.variations.index(self._current_node) if self._current_node in parent.variations else 0
+        return (index + 1, count)
+
+    def select_sibling_variation(self, offset: int) -> bool:
+        parent = self._current_node.parent
+        if parent is None or len(parent.variations) <= 1:
+            return False
+        current_idx = parent.variations.index(self._current_node)
+        next_idx = (current_idx + int(offset)) % len(parent.variations)
+        self._current_node = parent.variations[next_idx]
+        self._board = self._current_node.board()
+        return True
 
     def load_pgn(self, pgn_text: str) -> dict[int, dict[str, str]]:
         stream = StringIO(pgn_text or "")
@@ -124,7 +155,10 @@ class StudyGame:
         if game is None:
             raise ValueError("PGN invalido ou vazio.")
         start_board = game.board()
-        self.set_start_fen(start_board.fen())
+        self._start_fen = start_board.fen()
+        self._game = game
+        self._current_node = self._deepest_mainline_node()
+        self._board = self._current_node.board()
         comments: dict[int, dict[str, str]] = {}
         root_comment = game.comment.strip()
         if root_comment:
@@ -134,7 +168,6 @@ class StudyGame:
         while node.variations:
             node = node.variation(0)
             ply += 1
-            self.push_move(node.move)
             comment = node.comment.strip()
             if comment:
                 comments[ply] = {"before": "", "after": comment}
@@ -150,10 +183,10 @@ class StudyGame:
         comment_before: str = "",
         comment_after: str = "",
         comment_ply: Optional[int] = None,
-        move_comments: Optional[dict[int, dict[str, str]]] = None,
+        move_comments: Optional[dict[object, dict[str, str]]] = None,
         include_all: bool = False,
     ) -> str:
-        game = chess.pgn.Game()
+        game = self._clone_game()
         now = date or datetime.now()
         game.headers["Event"] = event
         game.headers["Site"] = site
@@ -163,24 +196,24 @@ class StudyGame:
         game.headers["Black"] = black
         game.headers["Result"] = self._board.result(claim_draw=True) if self._board.is_game_over(claim_draw=True) else "*"
 
-        if self._start_fen != chess.STARTING_FEN:
-            game.setup(chess.Board(self._start_fen))
-            game.headers["SetUp"] = "1"
-            game.headers["FEN"] = self._start_fen
-
-        comments: dict[int, dict[str, str]] = {}
+        comments: dict[Union[int, str], dict[str, str]] = {}
         if move_comments:
             for ply, values in move_comments.items():
-                comments[int(ply)] = {
+                key: Union[int, str]
+                try:
+                    key = int(ply)
+                except Exception:
+                    key = str(ply)
+                comments[key] = {
                     "before": str(values.get("before", "")).strip(),
                     "after": str(values.get("after", "")).strip(),
                 }
 
-        moves_to_export = self._history if include_all else self._history[: self._cursor]
+        moves_to_export = self._mainline_moves() if include_all else self._path_moves()
         max_ply = len(moves_to_export)
 
         if comment_before.strip() or comment_after.strip():
-            target_ply = self._cursor if comment_ply is None else max(0, min(int(comment_ply), max_ply))
+            target_ply = self.cursor if comment_ply is None else max(0, min(int(comment_ply), max_ply))
             comments[target_ply] = {
                 "before": comment_before.strip(),
                 "after": comment_after.strip(),
@@ -192,27 +225,75 @@ class StudyGame:
                 return
             target.comment = text if not target.comment else f"{target.comment} {text}"
 
-        node = game
+        def find_node_by_path(root: chess.pgn.GameNode, path_key: str) -> Optional[chess.pgn.GameNode]:
+            if path_key == "0":
+                return root
+            node = root
+            for uci in path_key.split("|"):
+                child = next((variation for variation in node.variations if variation.move.uci() == uci), None)
+                if child is None:
+                    return None
+                node = child
+            return node
+
+        node: chess.pgn.GameNode = game
         root_comments = comments.get(0, {})
         append_comment(game, root_comments.get("before", ""))
 
         for ply_idx, move in enumerate(moves_to_export, start=1):
             ply_comments = comments.get(ply_idx, {})
             append_comment(node, ply_comments.get("before", ""))
-            node = node.add_variation(move)
+            child = next((variation for variation in node.variations if variation.move == move), None)
+            if child is None:
+                child = node.add_variation(move)
+            node = child
             append_comment(node, ply_comments.get("after", ""))
+
+        for key, values in comments.items():
+            if not isinstance(key, str) or key == "0":
+                continue
+            target = find_node_by_path(game, key)
+            if target is None:
+                continue
+            if target.parent is not None:
+                append_comment(target.parent, values.get("before", ""))
+            append_comment(target, values.get("after", ""))
         append_comment(game, root_comments.get("after", ""))
         return str(game)
 
     def load_moves(self, moves: Iterable[chess.Move]) -> None:
-        self._history = []
-        self._cursor = 0
-        self._rebuild()
+        self.clear_moves()
         for move in moves:
             self.push_move(move)
 
-    def _rebuild(self) -> None:
-        board = chess.Board(self._start_fen)
-        for move in self._history[: self._cursor]:
-            board.push(move)
-        self._board = board
+    def _path_nodes(self) -> list[chess.pgn.GameNode]:
+        nodes: list[chess.pgn.GameNode] = []
+        node: Optional[chess.pgn.GameNode] = self._current_node
+        while node is not None:
+            nodes.append(node)
+            node = node.parent
+        nodes.reverse()
+        return nodes
+
+    def _path_moves(self) -> list[chess.Move]:
+        return [node.move for node in self._path_nodes()[1:] if node.move is not None]
+
+    def _mainline_moves(self) -> list[chess.Move]:
+        return list(self._game.mainline_moves())
+
+    def _mainline_nodes(self) -> list[chess.pgn.GameNode]:
+        nodes: list[chess.pgn.GameNode] = [self._game]
+        node: chess.pgn.GameNode = self._game
+        while node.variations:
+            node = node.variation(0)
+            nodes.append(node)
+        return nodes
+
+    def _deepest_mainline_node(self) -> chess.pgn.GameNode:
+        node: chess.pgn.GameNode = self._game
+        while node.variations:
+            node = node.variation(0)
+        return node
+
+    def _clone_game(self) -> chess.pgn.Game:
+        return chess.pgn.read_game(StringIO(str(self._game))) or chess.pgn.Game()

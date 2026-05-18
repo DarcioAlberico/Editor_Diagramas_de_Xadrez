@@ -535,7 +535,7 @@ class StudyBoardWidget(QtWidgets.QWidget):
         comment_before: str = "",
         comment_after: str = "",
         comment_ply: Optional[int] = None,
-        move_comments: Optional[dict[int, dict[str, str]]] = None,
+        move_comments: Optional[dict[object, dict[str, str]]] = None,
         include_all: bool = False,
     ) -> str:
         return self._game.to_pgn(
@@ -551,6 +551,22 @@ class StudyBoardWidget(QtWidgets.QWidget):
 
     def san_line(self) -> list[str]:
         return self._game.san_line()
+
+    def current_path_key(self) -> str:
+        return self._game.current_path_key()
+
+    def current_variation_info(self) -> tuple[int, int]:
+        return self._game.current_variation_info()
+
+    def select_sibling_variation(self, offset: int) -> bool:
+        ok = self._game.select_sibling_variation(offset)
+        if ok:
+            self._selected_square = None
+            self._legal_targets.clear()
+            self._refresh()
+            index, count = self._game.current_variation_info()
+            self._emit_state_changed(f"Variante {index}/{count}.")
+        return ok
 
     def last_move(self) -> Optional[chess.Move]:
         return self._game.last_move()

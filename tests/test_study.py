@@ -35,6 +35,51 @@ def test_study_truncate_redo_after_new_move():
     assert game.board.fen().startswith("rnbqkbnr/pp1ppppp/8/2p5/4P3")
 
 
+def test_study_alternate_move_creates_variation():
+    game = StudyGame()
+    game.push_move(chess.Move.from_uci("e2e4"))
+    game.push_move(chess.Move.from_uci("e7e5"))
+    assert game.undo() is True
+
+    game.push_move(chess.Move.from_uci("c7c5"))
+    pgn = game.to_pgn(include_all=True)
+
+    assert "1. e4 c5" in pgn
+    assert "( 1... e5 )" in pgn
+    assert game.current_variation_info() == (1, 2)
+    assert game.select_sibling_variation(1) is True
+    assert game.san_line() == ["e4", "e5"]
+
+
+def test_study_imports_variations_and_subvariations():
+    game = StudyGame()
+    game.load_pgn("1. e4 ( 1. d4 d5 ) e5 ( 1... c5 ( 1... e6 ) ) 2. Nf3 *")
+
+    assert game.san_line() == ["e4", "e5", "Nf3"]
+    assert game.goto_ply(2) is True
+    assert game.select_sibling_variation(1) is True
+    assert game.san_line() == ["e4", "c5"]
+
+
+def test_study_pgn_comments_can_target_variation_paths():
+    game = StudyGame()
+    game.push_move(chess.Move.from_uci("e2e4"))
+    game.push_move(chess.Move.from_uci("e7e5"))
+    assert game.undo() is True
+    game.push_move(chess.Move.from_uci("c7c5"))
+
+    pgn = game.to_pgn(
+        move_comments={
+            "e2e4|e7e5": {"before": "", "after": "Variante aberta"},
+            "e2e4|c7c5": {"before": "", "after": "Siciliana"},
+        },
+        include_all=True,
+    )
+
+    assert "c5 { Siciliana }" in pgn
+    assert "e5 { Variante aberta }" in pgn
+
+
 def test_study_custom_start_fen_has_setup_tags():
     game = StudyGame("8/8/8/3k4/8/8/4K3/8 w - - 0 1")
     pgn = game.to_pgn()

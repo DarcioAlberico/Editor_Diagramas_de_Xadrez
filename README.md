@@ -86,6 +86,8 @@ No toolbar, use `Estudo` para abrir um painel lateral com:
 - `Desfazer` / `Refazer`;
 - `Resetar Linha`;
 - `Partida inicial` para estudar uma linha de abertura sem OCR/FEN do PDF;
+- suporte a variantes e subvariantes: volte a um lance e jogue outra continuacao para criar uma variante;
+- `Var. anterior` / `Var. proxima` para alternar entre variantes irmas no mesmo ponto da arvore;
 - `Importar PGN`, `Copiar FEN`, `Copiar PGN` e `Salvar PGN`.
   Ao importar PGN, os comentarios da linha principal sao preservados nos lances correspondentes.
 
