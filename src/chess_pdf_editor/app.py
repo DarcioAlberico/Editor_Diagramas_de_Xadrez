@@ -689,13 +689,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.edit_tabs.setMinimumHeight(220)
         bottom_layout.addWidget(self.edit_tabs, 2)
 
-        right_vertical_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        right_vertical_splitter.setChildrenCollapsible(False)
-        right_vertical_splitter.addWidget(top_editor)
-        right_vertical_splitter.addWidget(bottom_panel)
-        right_vertical_splitter.setStretchFactor(0, 2)
-        right_vertical_splitter.setStretchFactor(1, 5)
-        right_vertical_splitter.setSizes([360, 560])
+        self.right_vertical_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+        self.right_vertical_splitter.setChildrenCollapsible(False)
+        self.right_vertical_splitter.addWidget(top_editor)
+        self.right_vertical_splitter.addWidget(bottom_panel)
+        self.right_vertical_splitter.setStretchFactor(0, 2)
+        self.right_vertical_splitter.setStretchFactor(1, 5)
+        self.right_vertical_splitter.setSizes([360, 560])
 
         self.study_panel = StudyPanel(self)
         self.study_panel.set_pgn_provider(self._study_export_pgn)
@@ -739,15 +739,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.study_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
 
         self.side_stack = QtWidgets.QStackedWidget()
-        self.side_stack.addWidget(right_vertical_splitter)
+        self.side_stack.addWidget(self.right_vertical_splitter)
         self.side_stack.addWidget(self.study_scroll)
 
-        splitter = QtWidgets.QSplitter()
-        splitter.addWidget(scroll)
-        splitter.addWidget(self.side_stack)
-        splitter.setStretchFactor(0, 4)
-        splitter.setStretchFactor(1, 2)
-        self.setCentralWidget(splitter)
+        self.main_splitter = QtWidgets.QSplitter()
+        self.main_splitter.addWidget(scroll)
+        self.main_splitter.addWidget(self.side_stack)
+        self.main_splitter.setStretchFactor(0, 4)
+        self.main_splitter.setStretchFactor(1, 2)
+        self._restore_splitter_state(self.main_splitter, "main_splitter_state")
+        self._restore_splitter_state(self.right_vertical_splitter, "right_vertical_splitter_state")
+        self._restore_splitter_state(self.study_workspace, "study_workspace_splitter_state")
+        self.setCentralWidget(self.main_splitter)
 
         self.page_spin = QtWidgets.QSpinBox()
         self.page_spin.setMinimum(1)
@@ -1027,7 +1030,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_mode_edit.setChecked(True)
         self.statusBar().showMessage("Modo edicao.")
 
+    def _restore_splitter_state(self, splitter: QtWidgets.QSplitter, setting_key: str) -> None:
+        state = self.settings.value(setting_key, None)
+        if isinstance(state, QtCore.QByteArray) and not state.isEmpty():
+            splitter.restoreState(state)
+
+    def _save_splitter_state(self, splitter: QtWidgets.QSplitter, setting_key: str) -> None:
+        self.settings.setValue(setting_key, splitter.saveState())
+
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self._save_splitter_state(self.main_splitter, "main_splitter_state")
+        self._save_splitter_state(self.right_vertical_splitter, "right_vertical_splitter_state")
+        self._save_splitter_state(self.study_workspace, "study_workspace_splitter_state")
         if self.study_dialog:
             self.study_dialog.close()
             self.study_dialog = None
