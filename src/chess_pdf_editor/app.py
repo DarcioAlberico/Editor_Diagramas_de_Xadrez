@@ -1806,6 +1806,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if not (0 <= idx < len(self.study_positions)):
             return
         self._flush_current_study_comment()
+        self._activate_study_position(idx, set_mode=True)
+
+    def _activate_study_position(self, idx: int, set_mode: bool = False) -> None:
+        if not (0 <= idx < len(self.study_positions)):
+            return
         pos = self.study_positions[idx]
         if self.pdf_service:
             self.current_page = min(max(0, pos.page_num), self.pdf_service.page_count - 1)
@@ -1825,7 +1830,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._syncing_study_positions = False
         self._refresh_study_move_comment_markers(pos)
         self._refresh_study_comment_fields_for_current_ply()
-        self._set_mode("study")
+        if set_mode:
+            self._set_mode("study")
 
     def _on_study_position_double_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
         idx = int(item.data(QtCore.Qt.UserRole))
@@ -1844,15 +1850,7 @@ class MainWindow(QtWidgets.QMainWindow):
         idx = int(current.data(QtCore.Qt.UserRole))
         if not (0 <= idx < len(self.study_positions)):
             return
-        self._syncing_study_positions = True
-        try:
-            pos = self.study_positions[idx]
-            before, after = self._current_study_comments(pos)
-            self.study_comment_before_edit.setPlainText(before)
-            self.study_comment_after_edit.setPlainText(after)
-            self._update_study_comment_target_label()
-        finally:
-            self._syncing_study_positions = False
+        self._activate_study_position(idx)
 
     def _on_study_comment_changed(self) -> None:
         if self._syncing_study_positions:

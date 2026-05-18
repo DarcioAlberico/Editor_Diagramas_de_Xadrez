@@ -3,9 +3,10 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import chess
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from chess_pdf_editor.app import MainWindow, StudyPanel
+from chess_pdf_editor.types import StudyPosition
 
 
 def test_format_san_rows_starting_from_white_pairs_moves():
@@ -126,3 +127,38 @@ def test_starting_study_position_uses_initial_board():
     assert pos.fen == chess.STARTING_BOARD_FEN
     assert pos.side_to_move == "w"
     assert pos.fullmove_number == 1
+
+
+def test_study_position_click_loads_board_and_preserves_previous_comment():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = MainWindow.__new__(MainWindow)
+    window._syncing_study_positions = False
+    window.pdf_service = None
+    window.current_render = None
+    window.study_panel = StudyPanel()
+    window.study_positions_list = QtWidgets.QListWidget()
+    window.study_comment_target_label = QtWidgets.QLabel()
+    window.study_comment_before_edit = QtWidgets.QPlainTextEdit()
+    window.study_comment_after_edit = QtWidgets.QPlainTextEdit()
+    window.study_positions = [
+        StudyPosition(page_num=0, rect_pdf=(0, 0, 1, 1), fen=chess.STARTING_BOARD_FEN),
+        StudyPosition(page_num=1, rect_pdf=(0, 0, 1, 1), fen="8/8/8/8/8/8/8/4K3", side_to_move="w"),
+    ]
+
+    previous = QtWidgets.QListWidgetItem("001")
+    previous.setData(QtCore.Qt.UserRole, 0)
+    current = QtWidgets.QListWidgetItem("002")
+    current.setData(QtCore.Qt.UserRole, 1)
+    window.study_positions_list.addItem(previous)
+    window.study_positions_list.addItem(current)
+    window.study_positions_list.setCurrentRow(0)
+    window.study_comment_before_edit.setPlainText("comentario anterior")
+
+    try:
+        window._on_study_position_selected(current, previous)
+
+        assert window.study_positions[0].move_comments["0"]["before"] == "comentario anterior"
+        assert window.study_panel.study_board.current_fen().split()[0] == "8/8/8/8/8/8/8/4K3"
+    finally:
+        window.study_panel.deleteLater()
+        app.processEvents()
