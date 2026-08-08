@@ -111,6 +111,23 @@ corrigida — o que esta na tela e o que e aplicado.
 
 Os candidatos pendentes sao salvos no projeto, entao a fila sobrevive a fechar e reabrir o app.
 
+### Revisar so o que esta incerto
+
+Um livro de 898 paginas produz centenas de candidatos em ~8 minutos. Conferir todos
+um a um e o que demora — e a maioria esta certa. Dois controles na secao
+`2 · Conferir` atacam isso:
+
+- **`So leituras incertas`** esconde os candidatos com confianca acima do limiar
+  (padrao `< 0,80`, o mesmo ponto em que o motor hibrido pede segunda opiniao).
+  Confianca desconhecida conta como incerta — nao saber nao e o mesmo que estar
+  confiante.
+- **`Mais incertos primeiro`** ordena por confianca crescente em vez da ordem das
+  paginas, para a revisao comecar onde ha chance real de erro.
+
+Com o filtro ligado, os botoes viram `Aplicar visiveis` / `Descartar visiveis` e a
+confirmacao diz quantos ficam na fila: uma acao em massa **nunca** toca no que
+esta escondido. O titulo da secao mostra `(N incertos de M)`.
+
 ## Reconhecimento e exportacao em segundo plano
 
 `Detectar no PDF` e `Exportar PDF` rodam fora da thread da interface. Na pratica:

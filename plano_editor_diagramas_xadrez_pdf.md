@@ -538,10 +538,9 @@ Beta (meta):
 - Migrações explícitas de `project_state.json`, e recusa de projeto de versão futura
 - Documentação de desenvolvimento no README
 
-### Próximo — Sprint 9: o que o Sprint 7 destravou
+### Sprint 9: o que o Sprint 7 destravou
 
-1. **Modo "revisar pendências"** (§22.5): agora que a confiança é real e vem por
-   casa, dá para montar a fila só com os diagramas inseguros.
+1. **Modo "revisar pendências"** ✅ — ver §29.
 2. **Dividir `app.py`** (§22.3), que continua concentrando UI e orquestração.
 3. **Galeria de diagramas do livro** (§22.5), viável em minutos por livro com o
    reconhecimento local.
@@ -1844,3 +1843,65 @@ procedimento para mudar o schema do projeto salvo.
   remoto) caberia em ~200 MB, se houver demanda por download menor.
 - O modelo de 8,4 MB está versionado no repositório. Para o executável isso é o
   que se quer; para o repositório, vale reavaliar se deveria vir de release.
+
+---
+
+## 29) Sprint 9.1 — fila de revisão por confiança (implementado em 2026-08-08)
+
+### 29.1 O gargalo mudou de lugar
+
+Antes do Sprint 7, reconhecer um livro de 898 páginas eram 898 requisições HTTP e
+dezenas de minutos. Agora são 8,5 minutos, e o que passou a custar caro é **o
+humano conferindo** os candidatos que saem disso — centenas por livro, a maioria
+correta.
+
+O item 7 da §22.5 dependia de duas coisas que só existem desde o Sprint 7: uma
+confiança que significa alguma coisa (a da pior casa, não a média) e volume grande
+o bastante para que filtrar valha a pena.
+
+### 29.2 Os dois controles
+
+| Controle | O que faz |
+|---|---|
+| `Só leituras incertas` | esconde candidatos com confiança ≥ limiar (padrão 0,80) |
+| `Mais incertos primeiro` | ordena por confiança crescente em vez da ordem das páginas |
+
+O limiar padrão é `REINFORCE_BELOW_CONFIDENCE` — o mesmo ponto em que o motor
+híbrido decide pedir segunda opinião ao serviço remoto. Uma régua só para as duas
+decisões: abaixo dela a máquina já não confiou em si mesma, então é onde o olho
+humano rende mais.
+
+**Confiança desconhecida conta como incerta**, a mesma regra do híbrido. Não saber
+não é o mesmo que estar confiante, e um candidato sem confiança é exatamente o que
+ninguém deveria aplicar às cegas.
+
+### 29.3 O detalhe que precisava de cuidado
+
+`Aplicar todos` com filtro ligado aplicaria também o que está escondido — o
+oposto exato do que a fila de conferência existe para evitar. Três medidas:
+
+- as ações em massa agem **só sobre o que está visível**;
+- os botões mudam de rótulo para `Aplicar visíveis` / `Descartar visíveis`
+  enquanto o filtro esconde algo (e voltam a `todos` quando não esconde);
+- a confirmação diz quantos ficam na fila.
+
+A seleção acompanha o **candidato**, não a linha: mudar filtro ou ordenação mantém
+selecionado quem já estava, em vez de saltar para outro diagrama.
+
+A seção não some quando o filtro esvazia a lista — senão não haveria como desligar
+o filtro.
+
+### 29.4 Cobertura de teste
+
+`tests/test_review_queue.py` (18):
+- o filtro respeita o limiar, e mexer no limiar move a linha;
+- **confiança desconhecida aparece no filtro e ordena primeiro**;
+- **ação em massa com filtro não toca no que está escondido** (aplicar e descartar);
+- a confirmação informa quantos ficam;
+- os botões dizem `visíveis` só quando de fato há algo escondido;
+- a seleção segue o candidato ao trocar a ordenação;
+- as preferências sobrevivem a fechar e reabrir;
+- desfazer restaura um descarte em massa filtrado.
+
+Verificado por mutação: fazer as ações em massa ignorarem o filtro derruba
+exatamente os três testes de segurança, e nenhum outro.

@@ -40,6 +40,7 @@ from .recognition import (
     ENGINE_LOCAL,
     ENGINE_MODES,
     ENGINE_REMOTE,
+    REINFORCE_BELOW_CONFIDENCE,
     RecognitionError,
     make_engine,
     mode_uses_network,
@@ -632,6 +633,42 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_discard_all_candidates = QtWidgets.QPushButton("Descartar todos")
         self.btn_discard_all_candidates.clicked.connect(self._discard_all_candidates)
 
+        # Fila de revisão (Sprint 9.1). Reconhecer um livro de 898 páginas passou a
+        # levar 8,5 min; conferir os ~2.000 candidatos um a um é que virou o gargalo.
+        # A confiança por tabuleiro — que só existe desde o Sprint 7 — permite atacar
+        # primeiro o que tem chance real de estar errado.
+        self.candidates_only_uncertain = QtWidgets.QCheckBox("Só leituras incertas")
+        self.candidates_only_uncertain.setChecked(
+            bool(self.settings.value("candidates_only_uncertain", False, bool))
+        )
+        self.candidates_only_uncertain.setToolTip(
+            "Esconde os candidatos cuja confiança está acima do limiar. "
+            "Confiança desconhecida conta como incerta."
+        )
+        self.candidates_only_uncertain.toggled.connect(self._on_candidate_filter_changed)
+        self.candidates_threshold_spin = QtWidgets.QDoubleSpinBox()
+        self.candidates_threshold_spin.setRange(0.0, 1.0)
+        self.candidates_threshold_spin.setSingleStep(0.05)
+        self.candidates_threshold_spin.setDecimals(2)
+        self.candidates_threshold_spin.setPrefix("< ")
+        self.candidates_threshold_spin.setValue(
+            float(self.settings.value("candidates_threshold", REINFORCE_BELOW_CONFIDENCE, float))
+        )
+        self.candidates_threshold_spin.setToolTip(
+            "Abaixo desta confiança o candidato é considerado incerto."
+        )
+        self.candidates_threshold_spin.valueChanged.connect(
+            lambda _value: self._on_candidate_filter_changed()
+        )
+        self.candidates_worst_first = QtWidgets.QCheckBox("Mais incertos primeiro")
+        self.candidates_worst_first.setChecked(
+            bool(self.settings.value("candidates_worst_first", False, bool))
+        )
+        self.candidates_worst_first.setToolTip(
+            "Ordena por confiança crescente em vez da ordem das páginas."
+        )
+        self.candidates_worst_first.toggled.connect(self._on_candidate_filter_changed)
+
         self.btn_snap = QtWidgets.QPushButton("Ajustar seleção à borda")
         self.btn_snap.setToolTip(
             "Encosta a seleção nas bordas reais do tabuleiro (Ctrl+B). "
@@ -759,6 +796,13 @@ class MainWindow(QtWidgets.QMainWindow):
         candidates_layout.setContentsMargins(0, 0, 0, 0)
         self.candidates_label = self._section_label("2 · Conferir")
         candidates_layout.addWidget(self.candidates_label)
+        candidates_filter = QtWidgets.QHBoxLayout()
+        candidates_filter.setContentsMargins(0, 0, 0, 0)
+        candidates_filter.addWidget(self.candidates_only_uncertain)
+        candidates_filter.addWidget(self.candidates_threshold_spin)
+        candidates_filter.addStretch(1)
+        candidates_layout.addLayout(candidates_filter)
+        candidates_layout.addWidget(self.candidates_worst_first)
         self.candidates_list.setMinimumHeight(96)
         candidates_layout.addWidget(self.candidates_list, 1)
         candidate_actions = QtWidgets.QGridLayout()
@@ -3797,24 +3841,85 @@ class MainWindow(QtWidgets.QMainWindow):
         idx = int(data)
         return idx if 0 <= idx < len(self.candidates) else None
 
+    # ------------------------------------------------------------------
+    # Fila de revisão (Sprint 9.1)
+    # ------------------------------------------------------------------
+
+    def _uncertainty_threshold(self) -> float:
+        return float(self.candidates_threshold_spin.value())
+
+    def _is_uncertain(self, candidate: OverlayOperation) -> bool:
+        """Confiança desconhecida conta como incerta.
+
+        Mesma regra do motor híbrido: não saber não é o mesmo que estar confiante,
+        e um candidato sem confiança é exatamente o que ninguém deveria aplicar às
+        cegas.
+        """
+        confidence = getattr(candidate, "confidence", None)
+        return confidence is None or float(confidence) < self._uncertainty_threshold()
+
+    def _visible_candidate_indexes(self) -> list[int]:
+        """Índices reais dos candidatos exibidos, na ordem em que aparecem."""
+        indexes = list(range(len(self.candidates)))
+        if self.candidates_only_uncertain.isChecked():
+            indexes = [i for i in indexes if self._is_uncertain(self.candidates[i])]
+        if self.candidates_worst_first.isChecked():
+            # `None` primeiro (-1.0): é a leitura sobre a qual menos se sabe.
+            indexes.sort(
+                key=lambda i: (
+                    -1.0
+                    if getattr(self.candidates[i], "confidence", None) is None
+                    else float(self.candidates[i].confidence)
+                )
+            )
+        return indexes
+
+    def _on_candidate_filter_changed(self) -> None:
+        self.settings.setValue(
+            "candidates_only_uncertain", bool(self.candidates_only_uncertain.isChecked())
+        )
+        self.settings.setValue("candidates_worst_first", bool(self.candidates_worst_first.isChecked()))
+        self.settings.setValue("candidates_threshold", self._uncertainty_threshold())
+        self.candidates_threshold_spin.setEnabled(self.candidates_only_uncertain.isChecked())
+        self._refresh_candidates_list()
+
+    @staticmethod
+    def _candidate_label(position: int, index: int, candidate: OverlayOperation) -> str:
+        confidence = getattr(candidate, "confidence", None)
+        shown = "  ?  " if confidence is None else f"{float(confidence):.2f}"
+        fen = candidate.fen
+        return (
+            f"{position:03d} | pág {candidate.page_num + 1} | conf {shown} | "
+            f"{fen[:24]}{'...' if len(fen) > 24 else ''}"
+        )
+
     def _refresh_candidates_list(self, keep_row: Optional[int] = None) -> None:
         previous = self._selected_candidate_index() if keep_row is None else keep_row
+        visible = self._visible_candidate_indexes()
         self._loading_ui = True
         try:
             self.candidates_list.clear()
-            self.candidates_label.setText(f"2 · Conferir ({len(self.candidates)})")
+            total = len(self.candidates)
+            if self.candidates_only_uncertain.isChecked() and total:
+                self.candidates_label.setText(f"2 · Conferir ({len(visible)} incertos de {total})")
+            else:
+                self.candidates_label.setText(f"2 · Conferir ({total})")
             # Fila vazia e o estado normal: esconder a secao inteira devolve
-            # espaco vertical para o que importa.
+            # espaco vertical para o que importa. O filtro nao esconde a secao —
+            # senao nao haveria como desligar o filtro.
             self.candidates_section.setVisible(bool(self.candidates))
-            for idx, candidate in enumerate(self.candidates):
+            self.candidates_threshold_spin.setEnabled(self.candidates_only_uncertain.isChecked())
+            for position, idx in enumerate(visible, start=1):
                 item = QtWidgets.QListWidgetItem(
-                    f"{idx + 1:03d} | pág {candidate.page_num + 1} | "
-                    f"{candidate.fen[:28]}{'...' if len(candidate.fen) > 28 else ''}"
+                    self._candidate_label(position, idx, self.candidates[idx])
                 )
                 item.setData(QtCore.Qt.UserRole, idx)
                 self.candidates_list.addItem(item)
-            if previous is not None and self.candidates:
-                self.candidates_list.setCurrentRow(min(previous, len(self.candidates) - 1))
+            if visible:
+                # `previous` é um índice real, não uma linha: procurar por ele
+                # mantém o mesmo candidato selecionado quando o filtro muda.
+                row = visible.index(previous) if previous in visible else 0
+                self.candidates_list.setCurrentRow(row)
         finally:
             self._loading_ui = False
         self._update_candidate_buttons()
@@ -3822,11 +3927,20 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_candidate_buttons(self) -> None:
         has_selection = self._selected_candidate_index() is not None
-        has_any = bool(self.candidates)
+        has_visible = self.candidates_list.count() > 0
         self.btn_apply_candidate.setEnabled(has_selection)
         self.btn_discard_candidate.setEnabled(has_selection)
-        self.btn_apply_all_candidates.setEnabled(has_any)
-        self.btn_discard_all_candidates.setEnabled(has_any)
+        self.btn_apply_all_candidates.setEnabled(has_visible)
+        self.btn_discard_all_candidates.setEnabled(has_visible)
+        # Com filtro ligado, "todos" quer dizer "todos os que você está vendo" —
+        # e o rótulo tem de dizer isso, senão o botão promete demais.
+        filtered = self.candidates_only_uncertain.isChecked() and len(
+            self._visible_candidate_indexes()
+        ) != len(self.candidates)
+        self.btn_apply_all_candidates.setText("Aplicar visíveis" if filtered else "Aplicar todos")
+        self.btn_discard_all_candidates.setText(
+            "Descartar visíveis" if filtered else "Descartar todos"
+        )
 
     def _on_candidate_selected(
         self,
@@ -3927,42 +4041,62 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self._schedule_preview_refresh(immediate=True)
 
+    def _take_visible_candidates(self) -> tuple[list[OverlayOperation], str]:
+        """Retira da fila os candidatos exibidos. Devolve (retirados, descrição).
+
+        Age só sobre o que está visível: com o filtro ligado, "todos" significa
+        "todos os que você está vendo". Aplicar em massa o que está escondido
+        seria exatamente o contrário do que a fila de conferência existe para
+        evitar.
+        """
+        visible = set(self._visible_candidate_indexes())
+        taken = [candidate for idx, candidate in enumerate(self.candidates) if idx in visible]
+        self.candidates = [
+            candidate for idx, candidate in enumerate(self.candidates) if idx not in visible
+        ]
+        scope = "visível(is)" if self.candidates else "candidato(s)"
+        return taken, scope
+
     def _apply_all_candidates(self) -> None:
-        if not self.candidates:
+        visible = self._visible_candidate_indexes()
+        if not visible:
             return
-        answer = QtWidgets.QMessageBox.question(
-            self,
-            "Aplicar todos",
-            f"Aplicar {len(self.candidates)} candidato(s) sem conferir um a um?",
-        )
+        hidden = len(self.candidates) - len(visible)
+        question = f"Aplicar {len(visible)} candidato(s) sem conferir um a um?"
+        if hidden:
+            question += f"\n\n{hidden} candidato(s) fora do filtro ficam na fila."
+        answer = QtWidgets.QMessageBox.question(self, "Aplicar candidatos", question)
         if answer != QtWidgets.QMessageBox.Yes:
             return
-        self.operations.extend(self.candidates)
-        applied = len(self.candidates)
-        self.candidates = []
+
+        taken, scope = self._take_visible_candidates()
+        self.operations.extend(taken)
         self._refresh_operations_list()
         self._refresh_candidates_list()
         self._refresh_page_overlays()
-        self._commit_history(f"aplicar {applied} candidato(s)")
-        self.statusBar().showMessage(f"{applied} candidato(s) aplicados. Total: {len(self.operations)}")
+        self._commit_history(f"aplicar {len(taken)} candidato(s)")
+        self.statusBar().showMessage(
+            f"{len(taken)} {scope} aplicado(s). Total: {len(self.operations)}"
+        )
 
     def _discard_all_candidates(self) -> None:
-        if not self.candidates:
+        visible = self._visible_candidate_indexes()
+        if not visible:
             return
-        answer = QtWidgets.QMessageBox.question(
-            self,
-            "Descartar todos",
-            f"Descartar {len(self.candidates)} candidato(s)?",
-        )
+        hidden = len(self.candidates) - len(visible)
+        question = f"Descartar {len(visible)} candidato(s)?"
+        if hidden:
+            question += f"\n\n{hidden} candidato(s) fora do filtro ficam na fila."
+        answer = QtWidgets.QMessageBox.question(self, "Descartar candidatos", question)
         if answer != QtWidgets.QMessageBox.Yes:
             return
-        discarded = len(self.candidates)
-        self.candidates = []
+
+        taken, scope = self._take_visible_candidates()
         self._refresh_candidates_list()
         self._refresh_page_overlays()
         self._schedule_preview_refresh(immediate=True)
-        self._commit_history(f"descartar {discarded} candidato(s)")
-        self.statusBar().showMessage("Candidatos descartados.")
+        self._commit_history(f"descartar {len(taken)} candidato(s)")
+        self.statusBar().showMessage(f"{len(taken)} {scope} descartado(s).")
 
     def _add_eraser_from_selection(self) -> None:
         if not self.current_render or not self.pdf_service:
