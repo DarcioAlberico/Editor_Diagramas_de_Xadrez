@@ -28,6 +28,15 @@ local = [
   "torch>=2.0.0",
   "torchvision>=0.15.0",
 ]
+dev = [
+  "pytest>=7.0",
+  "ruff>=0.5",
+]
+# Empacotamento do executavel Windows (Sprint 8.1). Separado de `dev` porque so
+# faz sentido em quem gera release, e o PyInstaller nao e usado nos testes.
+build = [
+  "pyinstaller>=6.0",
+]
 
 [project.scripts]
 chess-pdf-editor = "chess_pdf_editor.app:main"

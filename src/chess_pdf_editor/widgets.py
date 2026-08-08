@@ -8,6 +8,7 @@ import chess
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .fen import board_to_matrix, extract_piece_placement, matrix_to_piece_placement
+from .resources import asset_candidates
 from .study import StudyGame
 
 PIECE_VALUES = [".", "P", "N", "B", "R", "Q", "K", "p", "n", "b", "r", "q", "k"]
@@ -49,17 +50,14 @@ def _find_piece_image_dir() -> Optional[Path]:
     if env_dir:
         candidates.append(Path(env_dir))
 
-    root = Path(__file__).resolve().parents[2]
-    candidates.extend(
-        [
-            root / "assets" / "piece_images",
-            root / "Python-Easy-Chess-GUI-master" / "Images" / "60",
-            root / "Images" / "60",
-            Path.cwd() / "assets" / "piece_images",
-            Path.cwd() / "Python-Easy-Chess-GUI-master" / "Images" / "60",
-            Path.cwd() / "Images" / "60",
-        ]
-    )
+    # `asset_candidates` cobre repositório, pasta de trabalho e — no executável —
+    # o diretório extraído pelo PyInstaller e a pasta do próprio `.exe`.
+    for parts in (
+        ("assets", "piece_images"),
+        ("Python-Easy-Chess-GUI-master", "Images", "60"),
+        ("Images", "60"),
+    ):
+        candidates.extend(asset_candidates(*parts))
 
     for folder in candidates:
         if not folder.exists() or not folder.is_dir():

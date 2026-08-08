@@ -49,8 +49,17 @@ def dependencies_available() -> bool:
 
 
 def bundled_model_path() -> Path:
-    """`<raiz do repositório>/models/piece_classifier.pt`."""
-    return Path(__file__).resolve().parents[3] / "models" / BUNDLED_MODEL_NAME
+    """`models/piece_classifier.pt` distribuído com o app.
+
+    Fora do executável isso é a pasta `models/` do repositório; dentro dele, o
+    diretório que o PyInstaller extraiu (ver `resources.asset_roots`). O caminho
+    devolvido é o primeiro que existe, ou o primeiro candidato — que é o que a
+    mensagem de erro deve mostrar quando não há nenhum.
+    """
+    from ..resources import asset_candidates, find_asset
+
+    found = find_asset("models", BUNDLED_MODEL_NAME)
+    return found or asset_candidates("models", BUNDLED_MODEL_NAME)[0]
 
 
 def default_model_path(preferred: Optional[str] = None) -> Optional[Path]:

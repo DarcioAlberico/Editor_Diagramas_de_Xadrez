@@ -377,6 +377,91 @@ Ubuntu) — veja `.github/workflows/tests.yml`. Um segundo job instala o extra
 `local` e falha se o motor local nao ficar disponivel, para um skip silencioso nao
 passar por verde.
 
+## Desenvolvimento
+
+### Ambiente
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install -e ".[local,dev]"
+```
+
+O `-e` (editavel) e o que faz os testes e o app usarem o codigo de `src/` sem
+reinstalar a cada mudanca.
+
+### Rodar
+
+```powershell
+python scripts/run_app.py
+```
+
+Verificacao rapida de que o app se acha por dentro (assets, modelo, janela), sem
+abrir janela e sem tocar suas preferencias:
+
+```powershell
+python scripts/run_app.py --self-test
+```
+
+### Testes e lint
+
+```powershell
+python -m pytest -q
+```
+
+```powershell
+python -m ruff check src tests --select F --exclude "src/chess_pdf_editor/local_ocr/_vendor"
+```
+
+`_vendor/` fica de fora do lint porque e copia fiel de outro projeto — ver abaixo.
+
+### Executavel Windows
+
+```powershell
+pip install -e ".[build]"
+python scripts/build_exe.py
+```
+
+O script confere o ambiente **antes** de construir (dependencias e modelo no
+lugar), constroi via `packaging/chess_pdf_editor.spec` e depois **abre o
+executavel gerado** com `--self-test`, a partir de outra pasta de trabalho — e o
+que pega o erro classico de empacotamento, um caminho que so funcionava rodando
+do repositorio.
+
+Sai em `dist/ChessPdfEditor/`. E `--onedir`, nao `--onefile`: com torch e Qt
+dentro, o `--onefile` extrairia ~2 GB a cada abertura.
+
+Opcoes: `--check` (so confere), `--no-clean` (reaproveita `build/`),
+`--skip-smoke`.
+
+### Codigo de terceiros
+
+`src/chess_pdf_editor/local_ocr/_vendor/` e copia fiel do projeto
+ChessVisionOFF_Puro (detector + classificador). **Nao edite ali**: correcao vai no
+projeto de origem e volta como recopia, para `diff` continuar sendo a forma de
+saber o que mudou. A proveniencia esta em `_vendor/__init__.py`.
+
+### Formato do projeto salvo
+
+`project_state.json` tem `schema_version`. Ao mudar o formato:
+
+1. escreva a funcao de migracao em `src/chess_pdf_editor/migrations.py`;
+2. registre-a em `_MIGRATIONS` sob a versao de origem;
+3. suba `CURRENT_SCHEMA_VERSION`;
+4. acrescente a linha na tabela do cabecalho do modulo.
+
+Um projeto gravado por versao mais nova que o app e **recusado** com mensagem
+explicita — carrega-lo descartaria campos e o autosave gravaria a perda por cima.
+
+### Commits e releases
+
+- Mensagem no imperativo, descrevendo o efeito para o usuario, nao os arquivos.
+- Corpo explica **por que**, com os numeros medidos quando houver.
+- Um sprint do plano por commit, quando as mudancas forem interdependentes.
+- O plano tecnico (`plano_editor_diagramas_xadrez_pdf.md`) e atualizado no mesmo
+  commit que a implementacao — tabela de estado, roadmap e a secao do sprint.
+
 ## Logs
 
 Falhas de render, exportacao, OCR e carregamento de projeto sao registradas em:

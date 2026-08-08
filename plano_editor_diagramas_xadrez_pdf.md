@@ -38,7 +38,9 @@ Technique*, 898 páginas). O que existe hoje:
 | **Motor híbrido: local primeiro, remoto como reforço** | ✅ **novo — ver §27.3** |
 | **Aviso antes de enviar páginas para fora** | ✅ **novo — ver §27.4** |
 | **Correções realimentando o dataset de treino** | ✅ **novo — ver §27.5** |
-| Empacotamento (executável Windows) | ❌ pendente |
+| **Migrações do projeto salvo entre schemas** | ✅ **novo — ver §28.1** |
+| **Empacotamento (executável Windows)** | ✅ **novo — ver §28.2** |
+| Instalador assinado / validação em máquina limpa | ❌ pendente — ver §28.4 |
 
 **O desvio da §5/§6 foi fechado.** Até a versão 1.5 o reconhecimento existia só
 como chamada HTTP para `helpman.komtera.lt/chessocr`, com três consequências:
@@ -531,14 +533,12 @@ Beta (meta):
 - Aviso explícito antes do primeiro envio de páginas para servidor externo
 - Correções do usuário exportáveis para o dataset que treina o classificador
 
-### Próximo — Sprint 8: empacotamento e distribuição
+**Sprint 8 — empacotamento e distribuição (2026-08-08)** ✅ — ver §28
+- Executável Windows com o classificador e os assets embutidos
+- Migrações explícitas de `project_state.json`, e recusa de projeto de versão futura
+- Documentação de desenvolvimento no README
 
-1. Executável Windows (PyInstaller/Nuitka) com assets embutidos — incluindo o
-   `.pt` do classificador e as bibliotecas nativas de OpenCV e torch.
-2. Migrações explícitas de `project_state.json` entre versões de schema.
-3. Documentação de desenvolvimento no README.
-
-### Sprint 9: o que o Sprint 7 destravou
+### Próximo — Sprint 9: o que o Sprint 7 destravou
 
 1. **Modo "revisar pendências"** (§22.5): agora que a confiança é real e vem por
    casa, dá para montar a fila só com os diagramas inseguros.
@@ -636,10 +636,8 @@ Esta seção registra melhorias identificadas na revisão do projeto em 2026-05-
   - Usar `logging` com arquivo local opcional, por exemplo `logs/chess_pdf_editor.log`.
   - Exibir mensagens amigáveis na UI, mantendo detalhes técnicos no log.
 
-- [ ] **Criar migrações explícitas para `project_state.json`**
-  - O projeto já tem `schema_version`.
-  - Adicionar funções de migração entre versões para preservar compatibilidade com projetos antigos.
-  - Testar carregamento de arquivos de estado salvos por versões anteriores.
+- [x] **Criar migrações explícitas para `project_state.json`** — feito no Sprint 8,
+  ver §28.1.
 
 - [ ] **Ampliar testes de integração**
   - Testar aplicação de overlay em PDF real de amostra.
@@ -650,20 +648,12 @@ Esta seção registra melhorias identificadas na revisão do projeto em 2026-05-
 
 ### 19.3 Prioridade baixa / empacotamento
 
-- [ ] **Gerar executável Windows**
-  - Avaliar PyInstaller ou Nuitka.
-  - Incluir assets necessários, como fonte Merida e sons.
-  - Criar script de build reproduzível.
-  - Validar execução em máquina limpa sem ambiente de desenvolvimento.
+- [x] **Gerar executável Windows** — feito no Sprint 8, ver §28.2. Falta ainda a
+  validação numa máquina limpa de verdade (§28.4).
 
 - [x] **Melhorar relatório de processamento** — feito no Sprint 6, ver §26.4.
 
-- [ ] **Documentar fluxo de desenvolvimento**
-  - Adicionar seção no README com:
-    - instalação para desenvolvimento;
-    - execução de testes;
-    - execução do app;
-    - padrão para commits/releases.
+- [x] **Documentar fluxo de desenvolvimento** — feito no Sprint 8, ver §28.3.
 
 ### 19.4 Ordem sugerida de implementação
 
@@ -1749,3 +1739,108 @@ testes do motor pulariam sozinhos e um skip silencioso passaria por verde.
 - Diagrama impresso do ponto de vista das pretas continua não resolvido: ali as
   peças estão desenhadas para cima e o que muda é o mapeamento casa→índice, não os
   pixels — girar a imagem estragaria a leitura. Herdado do projeto de origem.
+
+---
+
+## 28) Sprint 8 — empacotamento e distribuição (implementado em 2026-08-08)
+
+### 28.1 Migrações do projeto salvo
+
+`load_project_state` sempre foi tolerante para trás: lê tudo com `.get()` e
+preenche padrão para o que faltar. Isso funciona e continua valendo — há teste
+carregando projeto de schema 1, 2 e 7.
+
+**O que não existia era proteção para frente**, e essa era uma perda de trabalho
+silenciosa esperando acontecer: abrir com este app um projeto gravado por uma
+versão futura funcionava sem reclamar, os campos desconhecidos eram descartados na
+leitura, e o autosave — que roda sozinho a cada 2 minutos — gravava a perda por
+cima em seguida. O mecanismo que existe para não perder trabalho é justamente o
+que consumaria a perda.
+
+`migrations.migrate_payload` recusa esse caso com mensagem explícita. É a única
+mudança de comportamento; o resto do módulo é registrar o que já acontecia.
+
+**O que a história de fato registrou.** O repositório só conhece dois números:
+
+| Schema | O que mudou | Como se sabe |
+|---|---|---|
+| 1 | sem lado a jogar, sem padding, sem borda | `tests/test_project_state.py` |
+| 2 | `whiteout_padding_pt` uniforme | idem |
+| 3–6 | fronteiras não registradas | — |
+| 7 | estado do primeiro commit | `28a21e5` |
+| 8 | `candidates` (§23) | `a82bb98` |
+
+E o schema **7 foi mutado no lugar duas vezes** sem trocar de número (`9d1d832`
+acrescentou lado a jogar às posições de estudo, `9b51845` os comentários por
+lance). Ou seja: até 7, o número da versão não descreve o formato. Por isso a
+tolerância por campo fica onde está em vez de virar migração — e por isso a
+migração para 1..6 é honestamente "lido em modo de compatibilidade", não uma
+cadeia inventada.
+
+Deste ponto em diante o contrato é outro, e está no README: mudou o formato, entra
+uma função em `_MIGRATIONS` e o número sobe.
+
+### 28.2 Executável Windows
+
+`scripts/build_exe.py` + `packaging/chess_pdf_editor.spec`. O que o script faz
+além de chamar o PyInstaller é falhar cedo e falhar explicado:
+
+1. **antes** de construir, confere dependências e a presença do modelo — um build
+   sem torch gera um executável que abre e diz "motor local indisponível", e a
+   pessoa só descobre depois de distribuir;
+2. **depois**, abre o executável gerado com `--self-test`, **a partir de outra
+   pasta de trabalho**. Sem isso o teste rodaria de dentro do repositório, acharia
+   `models/` e `assets/` do código-fonte e passaria sem provar nada sobre o bundle.
+
+**`resources.py`: uma contagem de `parents[]` só.** Cada busca de asset resolvia o
+caminho por conta própria, com contagens diferentes (2 no `widgets`, 3 no
+`local_ocr`, 4 no `_vendor`). Congelado, `Path(__file__)` e `Path.cwd()` deixam de
+apontar para onde apontavam, e a que quebrasse seria descoberta por alguém abrindo
+o `.exe` numa máquina limpa. Agora existe uma lista de raízes — bundle extraído,
+pasta do `.exe`, repositório, pasta de trabalho — e quem procura só percorre.
+Manter a pasta do `.exe` na lista é o que deixa o usuário largar uma fonte Merida
+ao lado do executável sem reempacotar nada.
+
+**O erro que o auto-teste pegou.** A primeira versão do `.spec` excluía
+`torch.distributed`, `torch.testing`, `torchvision.datasets` e `torchvision.io`
+como "coisas de treino". Medido depois: os quatro entram em `sys.modules` num
+simples `import torch` / `import torchvision`. Excluí-los não enxugava o bundle —
+quebrava o import inteiro, e o sintoma no app era um lacônico "motor local
+indisponível". A regra ficou registrada no `.spec`: só entra em `excludes` o que
+comprovadamente **não** aparece em `sys.modules` depois de importar o pacote.
+
+O auto-teste também **carrega os pesos de verdade** (`warm_up`), não só importa
+torch: é o que prova que o torch empacotado e o `.pt` empacotado funcionam juntos.
+
+**Números medidos** (Windows, Python 3.13, torch CPU):
+
+| | |
+|---|---|
+| Tempo de build | 2,5 min |
+| Tamanho de `dist/ChessPdfEditor/` | 719 MB |
+| Carga do classificador | ~40 ms |
+
+`--onedir` e não `--onefile`: com torch e Qt dentro, o `--onefile` extrairia ~700 MB
+para um temporário **a cada abertura**. Paga-se uma vez, na instalação.
+
+`console=True` por enquanto — o app grava log em arquivo, mas a janela de console é
+o que salva um "não abre" no campo. Trocar quando o build estiver rodado por mais
+gente.
+
+### 28.3 Documentação de desenvolvimento
+
+Seção `Desenvolvimento` no README: ambiente (incluindo o índice CPU do torch),
+como rodar, testes e lint, build do executável, a regra do `_vendor/` e o
+procedimento para mudar o schema do projeto salvo.
+
+### 28.4 Pendente deste sprint
+
+- **Validação em máquina limpa.** O `--self-test` roda de outra pasta de trabalho,
+  o que pega caminho relativo errado, mas não pega DLL do sistema que só existe
+  nesta máquina. Só instalar num Windows sem Python responde isso.
+- **Instalador.** Hoje a entrega é uma pasta de 719 MB; falta um `.msi`/Inno Setup
+  e assinatura de código (sem ela o SmartScreen avisa).
+- **Tamanho.** 719 MB é quase todo torch. Um build "leve" sem motor local (só
+  remoto) caberia em ~200 MB, se houver demanda por download menor.
+- O modelo de 8,4 MB está versionado no repositório. Para o executável isso é o
+  que se quer; para o repositório, vale reavaliar se deveria vir de release.

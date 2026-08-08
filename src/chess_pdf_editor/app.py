@@ -28,7 +28,12 @@ from .pdf_service import (
     clear_board_render_cache,
     crop_from_rendered_page,
 )
-from .project_state import ProjectState, fingerprint_file, load_project_state
+from .project_state import (
+    ProjectSchemaError,
+    ProjectState,
+    fingerprint_file,
+    load_project_state_with_report,
+)
 from .recognition import (
     DEFAULT_ENGINE_MODE,
     ENGINE_LABELS,
@@ -4192,8 +4197,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _load_project_from_path(self, project_path: str, show_dialogs: bool = True) -> bool:
         try:
-            state = load_project_state(project_path)
+            state, migration = load_project_state_with_report(project_path)
+        except ProjectSchemaError as exc:
+            # Formato mais novo que este app: carregar descartaria campos e o
+            # autosave gravaria a perda por cima em até 2 minutos. Recusar é o
+            # comportamento seguro, e o usuário precisa saber por quê.
+            logger.warning("Projeto recusado por schema incompatível: %s", project_path)
+            if show_dialogs:
+                QtWidgets.QMessageBox.critical(self, "Projeto de versão mais nova", str(exc))
+            return False
         except Exception as exc:
+            logger.warning("Falha ao carregar o projeto %s", project_path, exc_info=True)
             if show_dialogs:
                 QtWidgets.QMessageBox.critical(self, "Erro ao carregar projeto", str(exc))
             return False
@@ -4253,7 +4267,13 @@ class MainWindow(QtWidgets.QMainWindow):
             len(self.operations),
             len(self.candidates),
         )
-        self.statusBar().showMessage(f"Projeto carregado: {project_path}")
+        if migration.migrated:
+            # O próximo salvamento grava no formato novo; isso não pode ser surpresa.
+            self.statusBar().showMessage(
+                f"Projeto carregado e atualizado: {migration.describe()}."
+            )
+        else:
+            self.statusBar().showMessage(f"Projeto carregado: {project_path}")
         return True
 
     def _load_project_dialog(self) -> None:
@@ -4265,7 +4285,87 @@ class MainWindow(QtWidgets.QMainWindow):
         self._load_project_from_path(project_path, show_dialogs=True)
 
 
+def self_test() -> int:
+    """Confere que o app se encontra por dentro. Usado pelo build (Sprint 8.1).
+
+    Existe por causa de um modo de falha específico do empacotamento: caminhos que
+    funcionam rodando do repositório (`Path(__file__).parents[N]`, `Path.cwd()`)
+    param de funcionar dentro do executável, e o sintoma aparece só quando alguém
+    abre o `.exe` numa máquina limpa — o app abre, mas o motor local diz "modelo
+    não encontrado" sem dizer por quê.
+
+    Não abre janela: constrói a `MainWindow` offscreen, que é o que exercita de
+    verdade a carga de assets, e imprime o que achou.
+
+    **Não toca o perfil do usuário.** A janela recebe um `QSettings` descartável e
+    o autosave vai para um diretório temporário — sem isso, um auto-teste de build
+    reabriria a última sessão real (PDF e projeto inclusive) e o `closeEvent`
+    poderia gravar por cima do trabalho de alguém.
+    """
+    import os
+    import tempfile
+    import time
+
+    from .resources import asset_roots, is_frozen
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    problems: list[str] = []
+
+    print(f"congelado: {is_frozen()}")
+    print("raízes de assets:")
+    for root in asset_roots():
+        print(f"  - {root}")
+
+    model = local_ocr.default_model_path()
+    if model is None:
+        problems.append(f"classificador não encontrado ({local_ocr.unavailable_reason()})")
+    else:
+        print(f"classificador: {model}")
+
+    if not local_ocr.dependencies_available():
+        # A razão importa: num bundle, "ausente" quase sempre quer dizer "excluído
+        # por engano no .spec", e o nome do módulo que falhou é o que aponta qual.
+        problems.append(local_ocr.unavailable_reason())
+    elif model is not None:
+        # Carregar os pesos de verdade é o que prova que o torch empacotado e o
+        # `.pt` empacotado funcionam **juntos**. Só importar torch não prova.
+        started = time.perf_counter()
+        try:
+            local_ocr.get_recognizer().warm_up()
+        except Exception as exc:
+            problems.append(f"o classificador não carregou: {exc}")
+        else:
+            print(f"classificador carregado em {(time.perf_counter() - started) * 1000:.0f} ms")
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="chess-pdf-selftest-") as scratch:
+            os.environ["CHESS_PDF_EDITOR_AUTOSAVE_DIR"] = scratch
+            settings = QtCore.QSettings(
+                str(Path(scratch) / "settings.ini"), QtCore.QSettings.IniFormat
+            )
+            app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+            window = MainWindow(settings=settings)
+            engine_mode = window._engine_mode()
+            has_pieces = bool(window.board_editor._buttons)
+            window.close()
+            del app
+        print(f"janela construída; motor padrão: {engine_mode}; tabuleiro: {has_pieces}")
+    except Exception as exc:  # pragma: no cover - caminho de build
+        problems.append(f"falha ao construir a janela: {exc}")
+
+    if problems:
+        for problem in problems:
+            print(f"FALHA: {problem}", file=sys.stderr)
+        return 1
+    print("auto-teste: tudo no lugar")
+    return 0
+
+
 def main() -> None:
+    if "--self-test" in sys.argv[1:]:
+        setup_logging()
+        sys.exit(self_test())
+
     setup_logging()
     logger.info("Chess PDF Editor iniciando (log em %s)", log_file_path() or "stderr")
     app = QtWidgets.QApplication(sys.argv)

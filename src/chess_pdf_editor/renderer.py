@@ -131,27 +131,21 @@ def _render_with_python_chess_pdf(piece_placement: str, size_px: int) -> Optiona
 
 
 def _find_merida_font() -> Optional[Path]:
+    from .resources import asset_candidates
+
     env_font = os.getenv("CHESS_MERIDA_FONT", "").strip()
     candidates = []
     if env_font:
         candidates.append(Path(env_font))
 
-    root = Path(__file__).resolve().parents[2]
-    candidates.extend(
-        [
-            root / "assets" / "fonts" / "Merida.ttf",
-            root / "assets" / "fonts" / "MERIDA.TTF",
-            root / "assets" / "fonts" / "Merida.otf",
-            root / "assets" / "fonts" / "MERIDA.OTF",
-            root / "chessmerida.otf",
-            Path.cwd() / "assets" / "fonts" / "Merida.ttf",
-            Path.cwd() / "assets" / "fonts" / "MERIDA.TTF",
-            Path.cwd() / "assets" / "fonts" / "Merida.otf",
-            Path.cwd() / "assets" / "fonts" / "MERIDA.OTF",
-            Path.cwd() / "chessmerida.otf",
-        ]
-    )
-    for fonts_dir in [root / "assets" / "fonts", Path.cwd() / "assets" / "fonts"]:
+    # As raizes cobrem repositorio, pasta de trabalho e — no executavel — o
+    # diretorio extraido pelo PyInstaller e a pasta ao lado do proprio `.exe`,
+    # que e onde o usuario de um build largaria a fonte dele.
+    for name in ("Merida.ttf", "MERIDA.TTF", "Merida.otf", "MERIDA.OTF"):
+        candidates.extend(asset_candidates("assets", "fonts", name))
+    candidates.extend(asset_candidates("chessmerida.otf"))
+
+    for fonts_dir in asset_candidates("assets", "fonts"):
         if not fonts_dir.exists() or not fonts_dir.is_dir():
             continue
         for ext in ("*.ttf", "*.TTF", "*.otf", "*.OTF"):
