@@ -6,6 +6,61 @@ from chess_pdf_editor.project_state import ProjectState, load_project_state, sav
 from chess_pdf_editor.types import EraseOperation, OverlayOperation, StudyPosition
 
 
+def test_project_state_roundtrip_with_candidates(tmp_path):
+    path = tmp_path / "state.json"
+    state = ProjectState(
+        source_pdf="orig.pdf",
+        source_pdf_fingerprint={"sha256": "abc"},
+        operations=[],
+        candidates=[
+            OverlayOperation(
+                page_num=4,
+                rect_pdf=(10.0, 20.0, 30.0, 40.0),
+                fen="8/8/8/4k3/8/8/4K3/8",
+                side_to_move="b",
+                fullmove_number=9,
+                source="ocr-page-candidato",
+                whiteout_padding_left_pt=1.5,
+                border_width_pt=0.75,
+            )
+        ],
+    )
+    save_project_state(str(path), state)
+    loaded = load_project_state(str(path))
+
+    assert loaded.operations == []
+    assert len(loaded.candidates) == 1
+    candidate = loaded.candidates[0]
+    assert candidate.page_num == 4
+    assert candidate.fen == "8/8/8/4k3/8/8/4K3/8"
+    assert candidate.side_to_move == "b"
+    assert candidate.fullmove_number == 9
+    assert candidate.source == "ocr-page-candidato"
+    assert candidate.whiteout_padding_left_pt == 1.5
+    assert candidate.border_width_pt == 0.75
+
+
+def test_project_without_candidates_field_still_loads(tmp_path):
+    """Projetos salvos antes do schema 8 continuam abrindo."""
+    path = tmp_path / "old.json"
+    path.write_text(
+        json.dumps(
+            {
+                "source_pdf": "orig.pdf",
+                "source_pdf_fingerprint": {"sha256": "abc"},
+                "operations": [
+                    {"page_num": 0, "rect_pdf": [1.0, 2.0, 3.0, 4.0], "fen": "8/8/8/8/8/8/8/8"}
+                ],
+                "schema_version": 7,
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_project_state(str(path))
+    assert loaded.candidates == []
+    assert len(loaded.operations) == 1
+
+
 def test_project_state_roundtrip_with_erasers(tmp_path):
     path = tmp_path / "state.json"
     state = ProjectState(

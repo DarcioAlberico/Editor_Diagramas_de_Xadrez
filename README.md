@@ -62,9 +62,12 @@ python -m chess_pdf_editor
 4. Desenhe a selecao do diagrama no preview.
 5. Clique em `Reconhecer seleção` (usa endpoint configurado).
 6. Opcional: clique em `Reconhecer página` ou `Detectar no PDF` para varrer automaticamente.
+   Por padrao as deteccoes entram na fila `Candidatos` para voce conferir antes de aplicar
+   (veja `Conferir antes de aplicar` abaixo).
    O modo em lote descarta deteccoes que ocupam mais de 50% da pagina (heuristica anti-falso-positivo).
    Se cancelar no meio, o proximo clique retoma da pagina pendente.
 7. Corrija a posicao no `Editor de Tabuleiro` se necessario: selecione uma peça na paleta e clique na casa; clique direito limpa a casa.
+   O painel `Prévia (antes / depois)` mostra o resultado em tempo real enquanto voce corrige.
 8. Se necessário, abra `Aparência` > `Ajustes avançados` para ajustar `Padding whiteout` por lado e `Borda`.
    A opcao `Aplicar em todas as substituicoes` (ligada por padrao) replica a configuracao para toda a lista.
 9. Clique em `Adicionar substituição`.
@@ -76,6 +79,88 @@ python -m chess_pdf_editor
    Quando habilitado, o PDF exportado inclui um link `Lichess` em azul abaixo de cada diagrama substituido.
 
 Ao iniciar, o app tenta restaurar o ultimo projeto salvo. Se nao houver projeto valido, ele reabre o ultimo PDF usado e usa essa pasta como ponto inicial ao abrir outro PDF.
+
+## Conferir antes de aplicar
+
+Na aba `OCR`, a opcao **`Aplicar automaticamente ao reconhecer página/PDF`** decide o que
+`Reconhecer página` e `Detectar no PDF` fazem com o que encontrarem:
+
+- **Desligada (padrao):** as deteccoes entram na secao **`2 · Conferir`** (que so aparece
+  quando ha algo na fila), marcadas na pagina com retangulo roxo pontilhado.
+  Nada e aplicado ao PDF ainda. Clique em cada candidato
+  para carrega-lo no editor — a pagina pula para a pagina certa, a area fica selecionada e
+  a posicao vai para o tabuleiro. Com a prévia ligada voce ve exatamente como ficaria.
+  Entao use `Aplicar` (ou `Enter`) para confirmar, ou `Descartar` (ou `Delete`) para jogar fora.
+  `Aplicar todos` / `Descartar todos` resolvem a lista inteira de uma vez.
+- **Ligada:** as substituicoes sao aplicadas direto, como antes. Em `Detectar no PDF` isso
+  tambem dispara a exportacao automatica de `<nome>_hq.pdf` ao final.
+
+Se voce corrigir a posicao enquanto confere um candidato, `Aplicar` grava a versao
+corrigida — o que esta na tela e o que e aplicado.
+
+Os candidatos pendentes sao salvos no projeto, entao a fila sobrevive a fechar e reabrir o app.
+
+## Reconhecimento e exportacao em segundo plano
+
+`Detectar no PDF` e `Exportar PDF` rodam fora da thread da interface. Na pratica:
+
+- a janela continua respondendo e a barra de progresso anda de verdade;
+- `Cancelar` e atendido na hora — o lote termina a pagina atual e para, gravando
+  o ponto de retomada;
+- fechar a janela durante um lote e seguro: o app cancela e espera o worker sair.
+
+O estilo (`Padding`, `Borda`) usado pelo lote e o que estava configurado quando
+voce clicou: mudar no meio da execucao nao faz metade dos diagramas sair
+diferente da outra metade.
+
+## Endpoint do OCR
+
+O padrao aparece em `OCR` > `Avancado` > `Endpoint OCR` e a sua escolha e
+lembrada entre sessoes. Deixe o campo vazio para voltar ao padrao.
+
+Para scripts e ambientes automatizados, sem tocar na interface:
+
+```powershell
+$env:CHESS_OCR_ENDPOINT = "https://meu-servidor/predict"
+$env:CHESS_OCR_TIMEOUT  = "60"
+```
+
+Quando o servico informa a confianca da deteccao, o valor e guardado junto da
+substituicao no projeto.
+
+## Prévia ao vivo do resultado
+
+Voce nao precisa exportar o PDF para saber como o diagrama vai ficar.
+
+- **`Prévia do resultado` (Ctrl+D)**, na toolbar ou no menu `PDF`: a pagina passa a
+  mostrar o resultado das alteracoes em vez do PDF original. Pressione de novo para voltar.
+- **`Prévia (antes / depois)`**, na aba `OCR`: miniaturas lado a lado do diagrama que
+  voce esta editando.
+
+A prévia inclui a substituicao **antes de voce clicar em `Adicionar substituição`**:
+basta selecionar a area e montar a posicao. Ela acompanha ao vivo:
+
+- pecas movidas no editor de tabuleiro;
+- edicao direta do campo FEN;
+- `Padding whiteout` por lado e `Borda`;
+- `Aplicar whiteout antes do overlay` e `Incluir link Lichess`;
+- troca da fonte Merida;
+- apagamentos adicionados ou removidos.
+
+Selecionar uma substituicao ja adicionada e edita-la tambem funciona: a prévia mostra a
+edicao em andamento, nao a versao salva.
+
+A prévia so desenha uma posicao quando ela pertence de fato a area selecionada. Ao
+selecionar um diagrama novo, a posicao do diagrama anterior **nao** e reaproveitada: a
+prévia fica em branco ate voce reconhecer a selecao ou montar a posicao no tabuleiro.
+
+A prévia usa exatamente o mesmo codigo da exportacao, entao **o que aparece na tela e o
+que vai para o PDF** — isso e verificado por teste automatizado comparando os dois
+renders byte a byte. Na prévia as marcacoes de trabalho (retangulos coloridos) somem para
+nao atrapalhar a leitura do resultado, e o titulo da janela mostra `[prévia do resultado]`.
+
+Custo medido em um livro de 1120 paginas: ~120 ms por atualizacao, o mesmo que abrir uma
+pagina normalmente.
 
 ## Modo Estudo (offline)
 
@@ -104,10 +189,35 @@ Para estudar uma posicao do PDF:
 As posicoes de estudo ficam em `Posicoes deste PDF` e sao salvas no projeto.
 Para livros de abertura, use `Partida inicial` para criar uma entrada de estudo a partir da posicao inicial do xadrez.
 
-## Projeto (checkpoint)
+## Desfazer e refazer
+
+No modo `Edicao`, `Ctrl+Z` desfaz e `Ctrl+Y` refaz. O historico cobre
+substituicoes, apagamentos e a fila de candidatos — inclusive as acoes em massa
+como `Descartar todos`, que antes eram definitivas. O menu `Editar` mostra o que
+sera desfeito (`Desfazer remover substituicao`).
+
+Ajustes de `Padding`/`Borda` entram no historico como uma unica etapa por
+sequencia de ajustes, e nao um passo por clique no spinbox.
+
+No modo `Estudo`, `Ctrl+Z` continua pertencendo a linha de lances.
+
+## Projeto (checkpoint) e autosave
 
 - `Salvar Projeto`: salva operacoes pendentes em JSON.
 - `Carregar Projeto`: restaura operacoes e pagina atual.
+
+O trabalho tambem e salvo sozinho, a cada 2 minutos e ao fechar a janela:
+
+- se voce ja escolheu um arquivo de projeto, o autosave grava nele;
+- se ainda nao escolheu, grava em
+  `%LOCALAPPDATA%\ChessPdfEditor\autosave\<nome do PDF>-<hash>.autosave.json`
+  (Linux: `~/.local/state/ChessPdfEditor/autosave`), sem espalhar arquivos pelas
+  suas pastas de livros.
+
+Na sessao seguinte o app reencontra esse arquivo sozinho e continua de onde
+parou. Em `Configuracoes` voce pode desligar o autosave ou forcar
+`Salvar agora`. A gravacao e atomica: um autosave interrompido no meio nao
+corrompe o projeto anterior.
 
 ## Scripts uteis
 
@@ -139,14 +249,44 @@ python scripts/collect_project_labels.py --projects .\project_state.json --image
 
 ```text
 src/chess_pdf_editor/
-  app.py              # GUI principal
-  widgets.py          # viewer selecionavel + editor de tabuleiro
-  pdf_service.py      # render/crop/overlay no PDF
-  ocr_api.py          # cliente da API OCR
+  app.py              # GUI principal (janela, modos, previa ao vivo)
+  widgets.py          # viewer selecionavel, editor de tabuleiro, antes/depois
+  pdf_service.py      # render, previa e overlay no PDF
+  ocr_api.py          # cliente da API OCR (endpoint/timeout/confianca)
+  workers.py          # OCR em lote e exportacao em segundo plano
+  history.py          # pilha de desfazer/refazer do modo Edicao
+  autosave.py         # caminho e gravacao atomica do autosave
+  logging_config.py   # log em arquivo com rotacao
   fen.py              # utilitarios e validacoes FEN
   renderer.py         # render do diagrama (PDF/PNG)
+  study.py            # arvore de lances/variantes do modo Estudo
   project_state.py    # persistencia de checkpoint
 ```
+
+## Testes
+
+```powershell
+python -m pytest tests -q
+```
+
+Os testes de interface rodam com Qt em modo `offscreen` e usam um arquivo de
+configuracao temporario, entao nao abrem janelas nem alteram suas preferencias.
+O autosave e o log tambem sao redirecionados para um diretorio temporario, entao
+a suite nao escreve nada em `%LOCALAPPDATA%`.
+
+A suite roda automaticamente em push e pull request (GitHub Actions, Windows e
+Ubuntu) — veja `.github/workflows/tests.yml`.
+
+## Logs
+
+Falhas de render, exportacao, OCR e carregamento de projeto sao registradas em:
+
+- Windows: `%LOCALAPPDATA%\ChessPdfEditor\logs\chess_pdf_editor.log`
+- Linux: `~/.local/state/ChessPdfEditor/logs/chess_pdf_editor.log`
+
+O arquivo rotaciona em 2 MB (3 backups). `Configuracoes` > `Abrir pasta de logs`
+leva direto ate ele. `CHESS_PDF_EDITOR_LOG_DIR` muda o destino e
+`CHESS_PDF_EDITOR_LOG_LEVEL` (`DEBUG`, `INFO`, ...) muda o detalhamento.
 
 ## Observacoes
 

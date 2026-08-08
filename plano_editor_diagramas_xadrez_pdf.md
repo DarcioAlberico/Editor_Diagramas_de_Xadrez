@@ -1,9 +1,48 @@
 # Plano de Implementação (Skill): Editor de Diagramas de Xadrez em PDF
 
-**Versão:** 1.3 (backlog de melhorias)  
-**Status:** Planejamento / Especificação técnica (MVP → Beta)  
-**Stack alvo:** Python 3.9+ (recomendado 3.11+)  
-**Última revisão:** 2026-05-17  
+**Versão:** 1.5 (não travar e não perder trabalho)  
+**Status:** MVP entregue → endurecimento para Beta  
+**Stack alvo:** Python 3.10+ (rodando em 3.13)  
+**Última revisão:** 2026-08-08  
+
+---
+
+## 0) Estado atual (2026-08-08)
+
+O MVP está **entregue e em uso** sobre livros reais (ex.: *A Matter of Endgame
+Technique*, 898 páginas). O que existe hoje:
+
+| Área | Situação |
+|---|---|
+| Abrir/navegar/renderizar PDF | ✅ pronto (`pdf_service.PdfService`) |
+| Seleção manual de diagrama | ✅ pronto (`widgets.SelectablePageWidget`) |
+| Reconhecimento OCR (seleção / página / PDF inteiro) | ✅ via API externa (`ocr_api`) |
+| Editor visual de tabuleiro + paleta de peças | ✅ pronto (`widgets.BoardEditorWidget`) |
+| Substituição vetorial (Merida embutida / CairoSVG) + fallback raster | ✅ pronto (`renderer`) |
+| Whiteout por lado, borda, link Lichess | ✅ pronto |
+| Apagamentos (erase) | ✅ pronto |
+| **Prévia ao vivo do resultado (WYSIWYG)** | ✅ **novo — ver §21** |
+| **Fila de conferência dos candidatos do OCR** | ✅ **novo — ver §23** |
+| Projeto/checkpoint versionado (`schema_version=8`) | ✅ pronto |
+| Modo Estudo (PGN, variantes, comentários por lance) | ✅ pronto (`study`) |
+| **Workers em segundo plano (OCR em lote / exportação)** | ✅ **novo — ver §25.1** |
+| **Undo/redo no modo edição** | ✅ **novo — ver §25.2** |
+| **Autosave do projeto** | ✅ **novo — ver §25.3** |
+| **CI com `pytest`** | ✅ **novo — ver §25.4** |
+| Logs estruturados em arquivo | ✅ novo (`logging_config`) |
+| Detecção 100% local (OpenCV/PyTorch) | ❌ não implementado — o OCR é remoto |
+| Empacotamento (executável Windows) | ❌ pendente |
+
+**Desvio relevante em relação ao plano original:** o reconhecimento não usa o
+pipeline OpenCV + PyTorch descrito nas §5 e §6. Ele delega para um endpoint HTTP
+externo (`helpman.komtera.lt/chessocr`). Isso acelerou muito o MVP, mas traz três
+consequências que precisam de decisão explícita (ver §22.1):
+
+1. **Privacidade:** "Detectar no PDF" envia *todas as páginas renderizadas* do
+   livro para um servidor de terceiros.
+2. **Disponibilidade:** sem internet (ou com o endpoint fora do ar) o
+   reconhecimento automático simplesmente não funciona.
+3. **Custo/tempo:** 898 páginas = 898 requisições HTTP sequenciais na thread da UI.
 
 ---
 
@@ -440,34 +479,63 @@ Beta (meta):
 
 ---
 
-## 15) Roadmap (realista e incremental)
+## 15) Roadmap
 
-### Sprint 1 (core mínimo + baseline de QA)
+### Concluído
+
+**Sprint 1 — core mínimo** ✅
 - Render PDF + seleção manual de ROI
-- Warp perspectiva + grid 8×8
 - Inserção raster (PNG HQ) no PDF
-- Criar conjunto golden inicial (mín. 30 casos) + script de avaliação
 
-### Sprint 2 (ML inicial)
-- Dataset sintético + treino modelo 13 classes
-- Inferência por casa + FEN
-- Editor visual do tabuleiro (correção)
-- Implementar checkpoint versionado (`schema_version`) + autosave
+**Sprint 2 — correção assistida** ✅
+- Editor visual do tabuleiro + paleta de peças
+- Checkpoint versionado (`schema_version`) + restauração automática de sessão
 
-### Sprint 3 (detecção automática)
-- Detector de candidatos + score
-- Rotação/auto-orientação por validação
-- Testes de round-trip de coordenadas (incluindo páginas rotacionadas)
+**Sprint 3 — reconhecimento** ✅ (com desvio: OCR remoto, não ML local)
+- Reconhecer seleção / página / PDF inteiro
+- Deduplicação por IoU + heurística anti-falso-positivo (>50% da página)
+- Retomada do lote na página pendente após cancelamento
 
-### Sprint 4 (vetor + polimento)
-- SVG → PDF (CairoSVG) + show_pdf_page
-- Whiteout configurável + preview antes/depois
-- Relatório de alterações (CSV/JSON)
+**Sprint 4 — vetor + acabamento** ✅
+- Merida embutida → PDF vetorial; CairoSVG como segundo caminho; raster como fallback
+- Whiteout por lado + borda + link Lichess
+- Apagamentos independentes das substituições
 
-### Sprint 5 (beta)
-- Batch mode (processar vários diagramas)
-- Cache de inferência + acelerações
-- Hardening final: regressão completa no golden + gates MVP/Beta
+**Sprint 4.5 — prévia ao vivo (2026-08-08)** ✅ — ver §21
+- Substituição visível na página **antes** de confirmar
+- Miniaturas antes/depois do diagrama
+- Garantia WYSIWYG coberta por teste (prévia == PDF exportado, byte a byte)
+
+**Sprint 5 — "não travar e não perder trabalho" (2026-08-08)** ✅ — ver §25
+- Workers em segundo plano para OCR em lote e exportação
+- Undo/redo de substituições, apagamentos e candidatos
+- Autosave do projeto em intervalo fixo + ao fechar
+- CI com `pytest` (GitHub Actions, Windows + Ubuntu)
+- Extras da §22.4 que vinham junto: endpoint do OCR centralizado e persistido,
+  `confidence` preenchida, `QSettings` injetável, logs estruturados
+
+### Próximo — Sprint 6: precisão e ajuste fino
+
+1. **Manipular a seleção sem redesenhar**: alças de redimensionamento e
+   deslocamento por setas do teclado (passo de 0,25 pt com Shift).
+2. **Alinhamento automático da bbox** ao diagrama detectado (snap às bordas do
+   tabuleiro por projeção de linhas).
+3. **Auto-orientação**: testar 4 rotações e escolher a de maior plausibilidade.
+4. **Relatório de alterações** (CSV/JSON) com página, bbox, FEN, origem e avisos.
+
+### Sprint 7: independência do OCR remoto
+
+1. Detector local de diagramas (OpenCV: Hough + "gridness") como *primeira*
+   passada — barato, offline, e reduz drasticamente as chamadas HTTP.
+2. Classificador local das 64 casas (§6) usado quando o detector local acha um
+   tabuleiro; endpoint remoto vira reforço opcional, não dependência.
+3. Aviso explícito na UI antes do primeiro envio de páginas para servidor externo.
+
+### Sprint 8: empacotamento e distribuição
+
+1. Executável Windows (PyInstaller/Nuitka) com assets embutidos.
+2. Migrações explícitas de `project_state.json` entre versões de schema.
+3. Documentação de desenvolvimento no README.
 
 ---
 
@@ -764,3 +832,601 @@ Painel lateral: Edição
   6. exportar PDF.
 - [ ] A correção manual no tabuleiro exige menos cliques do que o combo atual.
 - [ ] Comandos destrutivos, como remover/limpar, têm menos destaque que ações principais.
+
+---
+
+## 21) Prévia ao vivo do resultado (implementado em 2026-08-08)
+
+### 21.1 Problema
+
+Até aqui o fluxo era **cego**: o usuário selecionava a área, corrigia a posição,
+clicava em `Adicionar substituição` e só descobria como o diagrama tinha ficado
+depois de exportar o PDF inteiro e abri-lo em outro programa. Erros de padding,
+borda ou bbox custavam um ciclo completo de exportação.
+
+### 21.2 Princípio de projeto: um único caminho de código
+
+A prévia **não** reimplementa o desenho do diagrama em Qt. Ela roda exatamente a
+mesma função que a exportação usa:
+
+```text
+apply_page_operations(page, operations, erase_operations, whiteout, include_lichess_link)
+        ├── apply_operations_to_pdf(...)      → grava o PDF final
+        └── PdfService._preview_page(...)     → alimenta a prévia na tela
+```
+
+Consequência: qualquer divergência entre "o que vejo" e "o que exporto" seria um
+bug de renderização do PyMuPDF, não uma diferença de implementação. Isso está
+travado por teste (`tests/test_preview.py::test_preview_matches_exported_pdf`),
+que compara os PNGs da prévia e do PDF exportado **byte a byte**.
+
+### 21.3 Arquitetura
+
+```mermaid
+flowchart LR
+  A[Seleção + FEN + padding/borda] --> B[_draft_operation<br/>substituição não confirmada]
+  B --> C[_preview_operations<br/>rascunho + ops salvas da página]
+  C --> D[PdfService._preview_page<br/>doc de 1 página + apply_page_operations]
+  D --> E[render página inteira<br/>→ visor do PDF]
+  D --> F[render recorte<br/>→ miniaturas antes/depois]
+```
+
+Pontos-chave:
+
+- **Documento de prévia de uma página só.** `insert_pdf(from_page=n, to_page=n)`
+  copia apenas a página atual, então o custo não depende do tamanho do livro.
+- **Cache por assinatura.** A chave cobre página, whiteout, link, fonte Merida
+  ativa e a identidade visual de cada operação (retângulo, FEN, paddings, borda).
+  Mudou algo → reconstrói; não mudou → reaproveita.
+- **Cache de diagramas renderizados.** Mesma FEN + mesmo tamanho reaproveita o
+  PDF/PNG do tabuleiro (`_BOARD_PDF_CACHE`), o que também acelera a exportação em
+  lote de livros com posições repetidas.
+- **Debounce de 140 ms.** Arrastar a seleção ou clicar várias casas seguidas não
+  dispara um render por evento.
+- **A seleção sobrevive à troca de bitmap.** `_apply_page_pixmap` salva e
+  restaura o retângulo, com uma flag `_refreshing_view` para não realimentar o
+  próprio ciclo de atualização.
+- **Rascunho tem prioridade sobre a operação salva.** Se o rascunho cobre uma
+  substituição existente (IoU ≥ 0,80), a salva é omitida da prévia — assim editar
+  uma substituição já aplicada mostra a edição, não a versão antiga.
+- **Redações em lote.** Todos os whiteouts e apagamentos da página viram
+  `add_redact_annot` e um único `apply_redactions()`. Além de mais rápido, isso
+  elimina o risco de uma redação posterior apagar um overlay já desenhado.
+
+### 21.4 Interface
+
+| Elemento | Onde | Função |
+|---|---|---|
+| `Prévia do resultado` (Ctrl+D) | toolbar + menu PDF | alterna a página entre original e resultado |
+| `Ver resultado na página` | aba OCR | mesmo toggle, junto do fluxo de edição |
+| `Prévia (antes / depois)` | aba OCR | miniaturas lado a lado do diagrama em foco |
+
+Detalhes de comportamento:
+
+- No modo prévia as marcações de trabalho (retângulos azul/laranja/verde) somem,
+  para não competir com o resultado real. O título da janela ganha o sufixo
+  `[prévia do resultado]`.
+- Página sem nenhuma alteração pendente não monta documento de prévia: o
+  resultado seria idêntico ao original.
+- As miniaturas usam um recorte com 10% de margem, para que padding, borda e o
+  link Lichess apareçam no enquadramento.
+
+### 21.5 Ancoragem da posição (correção de 2026-08-08)
+
+A primeira versão montava o rascunho com "seleção atual + FEN atual do editor". Isso
+produzia um efeito errado e assustador: ao selecionar o **segundo** diagrama de uma
+página, a prévia desenhava por cima dele a posição do **primeiro**, que ainda estava
+carregada no editor. Parecia que o app tinha aplicado a substituição errada sozinho.
+
+A correção é uma âncora: `_position_anchor` guarda `(página, retângulo)` da área que
+originou a posição carregada. O rascunho só existe quando a seleção atual bate com a
+âncora (IoU ≥ 0,40). A âncora é atualizada quando — e só quando — a posição passa a
+pertencer àquela área:
+
+| Evento | Âncora vira |
+|---|---|
+| `Reconhecer seleção` conclui | retângulo refinado pelo OCR |
+| Usuário move uma peça / edita a FEN | seleção ativa |
+| Foco em uma substituição existente | retângulo da substituição |
+| Foco em um candidato | retângulo do candidato |
+| `Reconhecer página` | retângulo da primeira detecção |
+
+O limiar de 0,40 é folgado de propósito: reenquadrar a mesma bbox (para ajustar o corte)
+mantém o rascunho vivo e a prévia acompanha o ajuste; selecionar outro diagrama zera.
+
+### 21.6 Desempenho medido
+
+Livro real de 1120 páginas, zoom 2.0, uma substituição na página:
+
+| Operação | Tempo |
+|---|---|
+| Render normal da página (linha de base) | 123 ms |
+| Prévia, primeira montagem | 119 ms |
+| Prévia, cache válido (só re-render) | 94 ms |
+| Prévia após trocar a FEN | 119 ms |
+| Miniatura (recorte) | 8 ms |
+
+Ou seja: a prévia custa **o mesmo que abrir a página**. Com o debounce, editar
+uma casa aparece na tela em ~260 ms. Se algum PDF patológico fugir disso, o
+caminho é mover o render de prévia para o worker do Sprint 5 — a API já é
+síncrona e isolada em `PdfService`, então a mudança é local.
+
+### 21.7 Cobertura de teste
+
+`tests/test_preview.py` (motor):
+- a área do diagrama realmente muda;
+- **prévia == PDF exportado, byte a byte**, em múltiplas páginas com apagamentos;
+- o recorte da miniatura bate com o mesmo recorte da página inteira;
+- o cache é reaproveitado e invalidado quando a FEN muda;
+- geometria preservada em página com `/Rotate 90`;
+- operações fora do intervalo de páginas não derrubam a exportação.
+
+`tests/test_app_preview.py` (GUI offscreen):
+- rascunho montado a partir de seleção + FEN;
+- alternância prévia/original preservando a seleção do usuário;
+- prévia acompanha a edição do tabuleiro;
+- **prévia do rascunho == prévia depois de confirmar** (o que se vê é o que se obtém);
+- miniaturas antes/depois geradas e diferentes entre si;
+- **selecionar outro diagrama não reaproveita a posição do anterior** (§21.5);
+- reenquadrar a mesma bbox mantém o rascunho.
+
+---
+
+## 22) Backlog da revisão de 2026-08-08
+
+### 22.1 Decisões que precisam do dono do produto
+
+- [ ] **Política de privacidade do OCR em lote.**
+  `Detectar no PDF` envia todas as páginas para um servidor de terceiros. Definir:
+  aviso explícito na primeira execução? modo offline obrigatório? lista de
+  endpoints confiáveis?
+
+- [ ] **Dependência de rede.** Decidir se o detector local (Sprint 7) entra ou se
+  o produto assume o endpoint remoto como requisito.
+
+### 22.2 Corrigidos nesta revisão
+
+- [x] **Exportação quebrava com operação fora do intervalo de páginas.**
+  `apply_operations_to_pdf` indexava `doc[op.page_num]` sem checar limites
+  (apagamentos já checavam). Um projeto salvo e reaberto contra um PDF menor
+  derrubava a exportação com `IndexError`. Agora operações fora do intervalo são
+  ignoradas, como já acontecia com os apagamentos.
+
+- [x] **Sobrescrita silenciosa no auto-save do OCR em lote.**
+  Ao terminar `Detectar no PDF`, o app gravava `<nome>_hq.pdf` sem perguntar,
+  sobrescrevendo um arquivo existente. Agora pede confirmação.
+
+- [x] **Fallback raster com Merida gerava caixas vazias.**
+  `_render_with_merida_font` desenhava os code points Unicode de xadrez
+  (`♙♘♗…`) usando a fonte Merida, que mapeia as peças em letras ASCII. O
+  resultado eram glifos `.notdef`. Agora usa o mesmo mapeamento do caminho
+  vetorial (`_merida_rows`).
+
+- [x] **Prévia reaproveitava a posição do diagrama anterior.** Ver §21.5.
+
+- [x] **OCR de página/PDF aplicava sem conferência.** Ver §23.
+
+- [x] **Redações repetidas por operação.** Cada whiteout fazia
+  `add_redact_annot` + `apply_redactions()` isolado, reescrevendo o content
+  stream N vezes por página. Agora é uma passada só.
+
+### 22.3 Prioridade alta
+
+- [x] **Workers em segundo plano** — feito no Sprint 5, ver §25.1.
+
+- [x] **Undo/redo das alterações** — feito no Sprint 5, ver §25.2.
+
+- [x] **CI com `pytest`** — feito no Sprint 5, ver §25.4.
+
+- [ ] **Ajuste fino da seleção.** Não há como mover ou redimensionar um retângulo
+  já desenhado — só apagar e redesenhar. Alças + setas do teclado resolvem, e
+  agora fazem ainda mais sentido porque o efeito é visível ao vivo.
+
+- [ ] **Dividir `app.py`.** O arquivo passou de 3.700 linhas e concentra UI, OCR,
+  estado, estudo, prévia e exportação (separação sugerida na §19.1). O Sprint 5
+  já extraiu `workers`, `history`, `autosave` e `logging_config` para módulos
+  próprios; o que sobrou em `app.py` é a UI e a orquestração.
+
+### 22.4 Prioridade média
+
+- [x] **`confidence` nunca é preenchida.** `OcrApiClient.predict` agora lê o campo
+  da resposta, aceitando os nomes usuais (`confidence`/`conf`/`score`/
+  `probability`/`prob`) e normalizando porcentagem para 0–1. Quando o serviço não
+  manda nada o valor continua `None` — inventar número seria pior que não ter.
+
+- [x] **Endpoint OCR hardcoded em dois lugares.** O padrão tem um dono só
+  (`ocr_api.default_endpoint()`), a escolha do usuário é persistida em
+  `QSettings: ocr_endpoint`, e `CHESS_OCR_ENDPOINT` / `CHESS_OCR_TIMEOUT`
+  configuram scripts e ambientes automatizados sem tocar na GUI.
+
+- [x] **`QSettings` embutido no `MainWindow.__init__`.** Agora é
+  `MainWindow(settings=...)`; as fixtures de teste injetam um `.ini` descartável
+  em vez de trocar a classe inteira por monkeypatch.
+
+- [x] **Logs estruturados.** `logging_config` grava em
+  `%LOCALAPPDATA%/ChessPdfEditor/logs` com rotação (2 MB × 3). Os `except
+  Exception: pass` de render, projeto, fingerprint e redação viraram
+  `logger.warning(..., exc_info=True)` — continuam engolindo a exceção (o app não
+  pode morrer porque um diagrama falhou), mas deixam rastro.
+
+- [ ] **Link Lichess pode colidir com o texto do livro.** Ele é inserido abaixo
+  do diagrama sem whiteout próprio e sem checar se há conteúdo ali.
+
+### 22.5 Novas ferramentas sugeridas
+
+Ordenadas por (valor percebido ÷ esforço):
+
+1. **Modo comparação "cortina"** — arrastar uma linha vertical sobre a página
+   revelando original de um lado e resultado do outro. A infraestrutura já
+   existe: são dois `RenderedPage` do mesmo tamanho.
+
+2. **Aplicar estilo por lote com pré-visualização** — hoje
+   `Aplicar em todas as substituições` muda tudo às cegas; com a prévia, mostrar
+   uma grade de miniaturas "depois" de N diagramas antes de confirmar.
+
+3. **Galeria de diagramas do livro** — painel com todas as substituições em
+   miniatura (antes/depois), navegável, para revisar um livro inteiro sem
+   percorrer página por página.
+
+4. **Verificação de posição por engine** — apontar posições impossíveis ou
+   suspeitas (rei em xeque para quem não joga, material absurdo) usando
+   `python-chess`. Pega erro de OCR que passa pela validação atual.
+
+5. **Detecção de diagrama por clique único** — clicar dentro do tabuleiro e o
+   app encontra as bordas automaticamente, em vez de arrastar a seleção.
+
+6. **Exportar diagramas isolados** — PNG/SVG/PDF de cada posição substituída,
+   para reaproveitar em aulas e materiais próprios.
+
+7. **Modo "revisar pendências"** — fila só com as posições marcadas como
+   incertas (depende de `confidence` funcionar, §22.4).
+
+8. **Diff de projeto** — comparar dois `project_state.json` e listar o que mudou,
+   útil ao reprocessar um livro com um OCR melhor.
+
+---
+
+## 23) Fila de conferência dos candidatos (implementado em 2026-08-08)
+
+### 23.1 Problema
+
+`Reconhecer página` e `Detectar no PDF` gravavam as detecções direto em
+`self.operations`. Ou seja: o OCR errava e a substituição errada já estava
+aplicada — restava caçá-la na lista de `Alterações` e removê-la. Em `Detectar no
+PDF` o efeito era pior, porque ao final o app ainda exportava `<nome>_hq.pdf`
+automaticamente com tudo dentro.
+
+### 23.2 Modelo
+
+Um estado intermediário entre "detectado" e "aplicado":
+
+```text
+OCR ──► candidates[]  ──(Aplicar)──►  operations[]  ──► PDF exportado
+             │
+             └──(Descartar)──► descartado
+```
+
+`candidates` reusa `OverlayOperation` (mesma forma, `source` marcado com o sufixo
+`-candidato`) e é persistido no projeto — `schema_version` 8. Projetos salvos em
+schema 7 continuam abrindo: o campo ausente vira lista vazia.
+
+A chave `Aplicar automaticamente ao reconhecer página/PDF` (`QSettings:
+auto_apply_recognition`, **padrão desligado**) escolhe o destino. Ligada, o
+comportamento antigo volta inteiro, incluindo a exportação automática ao fim do
+lote — que agora só acontece nesse modo.
+
+### 23.3 Fluxo de conferência
+
+Clicar num candidato chama `_focus_candidate`, que reconstrói todo o contexto:
+página, retângulo selecionado, posição no tabuleiro, lado a jogar e número do
+lance. Com a prévia ligada (Ctrl+D), o usuário vê o resultado real antes de
+decidir. Os candidatos aparecem na página em **roxo pontilhado**, distintos do
+azul das substituições aplicadas.
+
+Detalhe importante: `Aplicar` grava o **rascunho da prévia**, não a detecção
+original. Se o usuário corrigiu uma casa durante a conferência, é a versão
+corrigida que entra em `operations` — mantendo a promessa de que o que está na
+tela é o que é aplicado. Sem rascunho válido, cai de volta no candidato como veio
+do OCR.
+
+Atalhos na lista: `Enter` aplica, `Delete` descarta. `Aplicar todos` e
+`Descartar todos` pedem confirmação com a contagem.
+
+A deduplicação por IoU (`_has_similar_operation`) passou a considerar
+`operations` **e** `candidates`, senão rodar `Reconhecer página` duas vezes
+enfileiraria tudo em dobro.
+
+### 23.4 Cobertura de teste
+
+`tests/test_app_preview.py`, com o cliente de OCR trocado por um dublê:
+- auto-aplicar desligado → nada em `operations`, detecção em `candidates`;
+- auto-aplicar ligado → aplica direto, fila vazia;
+- `Aplicar` move o candidato para `operations`;
+- **corrigir durante a conferência aplica a versão corrigida**;
+- `Descartar` não deixa operação nenhuma;
+- conferir com a prévia ligada não aplica nada.
+
+`tests/test_project_state.py`:
+- ida e volta dos candidatos no JSON do projeto;
+- projeto em schema 7 (sem o campo) continua carregando.
+
+---
+
+## 24) Revisão de interface (2026-08-08)
+
+Auditoria feita renderizando a `MainWindow` real com fontes nativas e capturando
+as telas em tema claro e escuro, mais inspeção programática dos widgets.
+
+### 24.1 Textos cortados — a causa
+
+A aba OCR pedia **1121 px** de altura e recebia **270 px**. Sem área rolável, o
+Qt comprime os widgets abaixo do mínimo e corta o texto. O caso extremo era
+`Adicionar substituição`, a ação principal do produto, virar uma barra azul sem
+texto nenhum.
+
+Correção: cada aba do painel passou a ser embrulhada em `QScrollArea`
+(`MainWindow._scrollable`). Com isso a aba pede 288 px e o `minimumSizeHint` cai
+para 68 px — cabe em qualquer altura e rola quando precisa.
+
+### 24.2 Texto invisível no tema escuro
+
+`_SECTION_STYLE` fixava `color: #223042` **sem fundo**. Em tema escuro isso é
+preto sobre preto: sumiam `Reconhecimento`, `Aplicar`, `Alterações`, `FEN`,
+`Posições deste PDF` e todos os demais rótulos de seção. O botão de casa vazia da
+paleta tinha o mesmo problema ao contrário: fundo `#ffffff` fixo com o `×`
+herdando o branco do tema.
+
+Regra adotada:
+
+| Situação | Solução |
+|---|---|
+| Cor pode vir do tema | `palette(...)` no QSS (`palette(base)`, `palette(mid)`, `palette(alternate-base)`) |
+| Fundo é fixo por design (casas do tabuleiro, paleta de peças) | cor de texto **também** fixa |
+| Cor é semântica (aviso, marcador de comentário) | escolhida por `is_dark_theme()` |
+
+Sobraram 5 cores fixas no QSS, todas intencionais: o azul de destaque com texto
+branco e o preto dos botões de fundo claro.
+
+### 24.3 Visor de PDF esmagado
+
+Num perfil novo o splitter dava **58 px de 1500** ao PDF. O `QScrollArea` do
+visor usa `widgetResizable(False)` e nesse modo reporta `sizeHint` (10, 20),
+enquanto o painel lateral pedia 576 px. Correções: `minimumWidth` nos dois lados,
+`setChildrenCollapsible(False)` e divisão inicial 60/40 quando não há estado
+salvo. Agora abre em `[897, 598]`.
+
+### 24.4 Widgets órfãos removidos
+
+Cinco widgets eram criados e populados a cada atualização sem nunca aparecer —
+restos da unificação em "Alterações":
+
+`ops_list` · `erasers_list` · `btn_remove_eraser` · `btn_clear_erasers` ·
+`moves_table` (StudyPanel)
+
+O `moves_table` reconstruía três colunas **a cada lance jogado** no modo Estudo.
+O `ops_list` era usado como modelo invisível de seleção; virou
+`_current_operation_index` + `_set_current_operation()`. O `erasers_list` virou
+`_current_eraser_index`. Auditoria confirma zero órfãos.
+
+### 24.5 Acentuação
+
+82 substituições em textos de interface. Conviviam `Aparência` e `Alterações`
+(corretos) com `Edicao`, `Pagina`, `Configuracoes`, `Estudar selecao`,
+`Numero do lance`, `Substituicao adicionada`. Dois testes que assertavam os
+textos antigos foram atualizados.
+
+### 24.6 Validação de FEN sem modal
+
+`_on_fen_edited` dispara no `editingFinished`: sair do campo com uma FEN pela
+metade abria um `QMessageBox` bloqueante. O aviso passou para o rótulo
+`warnings`, que já existia logo abaixo do campo exatamente para isso. Os modais
+continuam nas ações explícitas (`Adicionar substituição`, `Estudar seleção`),
+onde o usuário clicou esperando um resultado.
+
+### 24.7 Aba OCR em etapas numeradas
+
+`1 · Reconhecer` → `2 · Conferir` → `3 · Conferir a prévia` → `4 · Aplicar` →
+`5 · Alterações` → `Avançado` (recolhido).
+
+A seção `2 · Conferir` fica **oculta quando a fila está vazia** — que é o estado
+normal —, devolvendo espaço vertical ao resto.
+
+### 24.8 Verificado e descartado
+
+Suspeita de que os atalhos de tecla única (`←`/`→` para página, `Delete` e
+`Enter` nas listas, todos com contexto de janela) roubassem teclas dos campos de
+texto. Testado com eventos reais via `QTest`: **não roubam**. O Qt envia
+`ShortcutOverride` antes e o campo focado consome a tecla. Nenhuma mudança feita.
+
+### 24.9 Pendente
+
+- Barra de ferramentas ainda transborda (`»`) em larguras menores.
+- O editor de tabuleiro ocupa 424 px fixos no topo do painel.
+- Modo Estudo: 9 botões esticados em duas fileiras.
+
+---
+
+## 25) Sprint 5 — "não travar e não perder trabalho" (implementado em 2026-08-08)
+
+### 25.1 Workers em segundo plano
+
+#### O problema
+
+`Detectar no PDF` fazia 898 requisições HTTP **sequenciais na thread da UI**,
+com `QtWidgets.QApplication.processEvents()` no meio do laço para manter a
+janela viva. Consequências reais:
+
+- o Windows marcava o app como *"não respondendo"* e escurecia a janela;
+- `progress.wasCanceled()` só era lido no topo da iteração seguinte, então
+  cancelar podia demorar uma requisição inteira;
+- qualquer redraw dependia de o laço chegar no próximo `processEvents`.
+
+A exportação tinha o mesmo defeito, em escala menor: `apply_operations_to_pdf`
+num livro com centenas de diagramas segurava a UI por dezenas de segundos.
+
+#### O contrato de thread
+
+Este é o ponto delicado, porque PyMuPDF não é thread-safe e a prévia ao vivo
+mantém um documento aberto na UI. A regra:
+
+> Cada worker abre o **seu próprio** `fitz.Document` a partir do caminho do
+> arquivo. Nenhum `fitz.Page`, `fitz.Document` ou `PdfService` cruza a fronteira
+> de thread.
+
+O que atravessa por sinal são só dataclasses próprias e tipos imutáveis:
+
+```text
+BatchOcrWorker (thread própria)          MainWindow (thread da UI)
+  PdfService(pdf_path)  ──┐
+  render_page(n)          │  page_done(page_num, [BoardDetection])
+  OcrApiClient.predict()  ├──────────────► _on_batch_ocr_page_done
+  image_rect_to_pdf_rect()│                  monta OverlayOperation
+                        ──┘                  dedup por IoU, aplica ou enfileira
+```
+
+A conversão de coordenadas acontece **no worker**, não na UI, justamente porque
+ela precisa do documento — e o documento do worker é o único que ele pode tocar.
+As conexões entre threads são `QueuedConnection` por padrão, então todos os
+`_on_batch_ocr_*` rodam na thread da UI e podem mexer em widgets à vontade.
+
+#### O que passou a ser compartilhado
+
+O cache global de diagramas renderizados (`_BOARD_PDF_CACHE` / `_BOARD_PNG_CACHE`
+em `pdf_service`) agora é tocado por duas threads: a exportação no worker e a
+prévia ao vivo na UI. `move_to_end` seguido de `popitem` não é atômico entre si,
+então os acessos ganharam um `threading.Lock`. O render em si fica **fora** do
+lock — é a parte cara, e renderizar a mesma posição duas vezes é melhor que uma
+thread segurar a outra.
+
+#### Detalhes de comportamento
+
+| Antes | Agora |
+|---|---|
+| Janela congelada durante o lote | Janela responsiva; a barra de progresso anda de verdade |
+| Cancelar esperava a requisição corrente terminar | Cancelar é lido imediatamente; termina a página atual e sai |
+| Estilo (padding/borda) lido a cada detecção | Congelado no início do lote — mudar no meio não sai com metade de cada jeito |
+| Fechar durante o lote: comportamento indefinido | `closeEvent` cancela e espera (teto de 5 s, depois `terminate`) |
+| Segundo `Detectar no PDF` durante o primeiro | Recusado com aviso, em vez de sobrescrever o worker |
+
+As listas de Alterações e Candidatos só são remontadas **no fim** do lote —
+remontar a lista inteira a cada página custaria mais que o próprio OCR num livro
+de 900 páginas. A página visível é a exceção: ali os overlays atualizam na hora,
+para o usuário ver a detecção aparecer.
+
+### 25.2 Undo/redo no modo edição
+
+O modo Estudo já tinha desfazer; o modo Edição não — remover uma substituição
+era definitivo. Isso ficou mais grave com a fila de candidatos, onde
+`Descartar todos` some com dezenas de detecções de uma vez.
+
+**Snapshot, não comando.** Um `Command` por ação (adicionar, remover, aplicar
+candidato, estilo em lote, limpar tudo) exigiria escrever e manter o inverso de
+cada uma — cinco oportunidades de errar. As listas aqui são rasas e pequenas
+(algumas centenas de dataclasses por livro), então `ChangeHistory` copia o estado
+inteiro: `operations` + `erase_operations` + `candidates`. Custa microssegundos e
+não tem inverso para errar. O limite de 60 snapshots segura a memória.
+
+Pontos de projeto:
+
+- **`commit()` roda depois da mutação**, com um rótulo (`"remover substituição"`)
+  que vira o texto do próprio menu: *Desfazer remover substituição*.
+- **Commit sem mudança real é ignorado**, então ações que não alteram nada não
+  entopem a pilha.
+- **Mudança de estilo é debounced em 600 ms.** Cada passo do spinbox emite um
+  sinal; sem isso, arrastar o padding de 0,5 a 3,0 criaria seis estados que
+  ninguém quer desfazer um a um.
+- **Abrir outro PDF zera o histórico.** Desfazer não pode ressuscitar alterações
+  de outro livro.
+- **`Ctrl+Z` no modo Estudo continua sendo do Estudo** — `_undo_change` roteia
+  para `study_panel._undo()` quando esse é o modo ativo.
+
+### 25.3 Autosave do projeto
+
+Reconhecer um livro de 900 páginas e conferir os candidatos leva horas. Um
+travamento antes do primeiro `Salvar projeto` jogava tudo fora.
+
+**Onde grava.** Se o usuário já escolheu um arquivo de projeto, o autosave
+escreve nele — foi o arquivo que ele pediu. Enquanto não escolheu, grava em
+`%LOCALAPPDATA%/ChessPdfEditor/autosave/<nome>-<hash>.autosave.json`. O hash do
+caminho absoluto desempata dois livros de mesmo nome em pastas diferentes, e o
+nome legível na frente deixa o arquivo reconhecível. Assim o app não espalha
+`.json` pelas pastas de livros do usuário.
+
+**Como grava.** Sempre em arquivo temporário + `os.replace`, que é atômico no
+Windows e no POSIX. Um autosave interrompido no meio (queda de energia, kill)
+não pode deixar um JSON truncado no lugar do projeto bom.
+
+**Como volta.** O caminho do autosave é gravado na mesma chave
+(`last_project_path`) que a restauração de sessão já consultava, então a próxima
+abertura reencontra o trabalho sem nenhuma pergunta. O projeto restaurado vira a
+linha de base do histórico.
+
+Intervalo padrão de 120 s, mais um autosave no `closeEvent`. Só grava se houver
+algo pendente (`_autosave_dirty`). Uma falha de gravação nunca interrompe o
+usuário com modal: vai para o log e a próxima tentativa acontece no tique
+seguinte.
+
+### 25.4 CI com `pytest`
+
+`.github/workflows/tests.yml` roda a suíte em push na `main`, em pull request e
+sob demanda. Matriz: **Windows** (plataforma prioritária) e **Ubuntu** (mais
+barato, pega regressão de caminho/encoding cedo), ambos em Python 3.12.
+
+Os testes de GUI rodam com `QT_QPA_PLATFORM=offscreen`; no Linux o PySide6 ainda
+exige as libs de sistema do Qt, instaladas num passo `apt-get`. O relatório
+JUnit sobe como artefato mesmo quando a suíte falha.
+
+### 25.5 Isolamento da suíte
+
+O app grava fora do diretório do projeto (autosave e log em `%LOCALAPPDATA%`).
+Rodar os testes não pode sujar — nem ler — o perfil real do usuário, então
+`tests/conftest.py` redireciona `CHESS_PDF_EDITOR_AUTOSAVE_DIR` e
+`CHESS_PDF_EDITOR_LOG_DIR` para um temporário de sessão, e o `MainWindow` recebe
+um `QSettings` apontando para um `.ini` descartável.
+
+Sem isso, `test_closing_the_window_saves_pending_work` teria gravado um autosave
+de verdade em `%LOCALAPPDATA%` a cada execução da suíte.
+
+### 25.6 Cobertura de teste
+
+De 63 para 123 testes (~8 s no total).
+
+`tests/test_history.py` (11) — pilha de undo/redo isolada da GUI:
+- o snapshot é imune a mutação posterior da lista da UI;
+- commit sem mudança real não cria passo;
+- um novo commit descarta o ramo de redo;
+- o limite descarta o passado mais antigo, nunca o presente.
+
+`tests/test_autosave.py` (6) — caminho e gravação:
+- caminho estável para o mesmo PDF, distinto para nomes iguais em pastas diferentes;
+- nome sobrevive a caracteres que o sistema de arquivos recusa;
+- **uma gravação que falha não destrói o arquivo bom anterior** (o ponto do `os.replace`).
+
+`tests/test_ocr_api.py` (22) — configuração e confiança, sem rede:
+- variável de ambiente vence o padrão mas mantém a cadeia de fallback;
+- confiança lida dos cinco nomes de campo usuais, porcentagem normalizada;
+- **valor ausente ou lixo vira `None`, não um número inventado**.
+
+`tests/test_app_workflow.py` (24) — o app real, offscreen:
+- **o OCR roda mesmo fora da thread da UI** (o dublê registra em que thread foi chamado);
+- o loop de eventos continua girando durante o lote;
+- cancelar de fato interrompe e grava o ponto de retomada;
+- **nenhuma `QThread` sobrevive ao fechamento da janela**;
+- desfazer restaura substituição removida, apagamento e candidatos descartados;
+- abrir outro PDF limpa o histórico;
+- fechar a janela grava o trabalho pendente;
+- autosave que falha não quebra o app e mantém o trabalho em memória;
+- **a sessão seguinte reabre o autosave** com o histórico zerado;
+- o endpoint do OCR sobrevive ao fechar e reabrir.
+
+Os quatro testes mais importantes foram verificados por mutação: quebrar o commit
+de histórico, o autosave no fechamento, a espera pelo worker e o reset ao abrir
+outro PDF faz falhar exatamente um teste cada — o correspondente.
+
+### 25.7 Pendente deste sprint
+
+- O render de prévia continua síncrono na UI. Medido em 119 ms num livro de 1120
+  páginas (§21.6), então não incomoda; se algum PDF patológico fugir disso, a API
+  já está isolada em `PdfService` e a mudança é local.
+- `apply_operations_to_pdf` não é interrompível, então a exportação não tem
+  botão Cancelar — só a barra indeterminada.

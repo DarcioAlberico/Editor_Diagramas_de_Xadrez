@@ -62,7 +62,7 @@ def test_study_panel_marks_commented_moves():
         second = panel.moves_tree.topLevelItem(1)
         assert first.text(1) == "e4"
         assert second.text(1) == "e5 *"
-        assert second.toolTip(1) == "Este lance tem comentario."
+        assert second.toolTip(1) == "Este lance tem comentário."
     finally:
         panel.deleteLater()
         app.processEvents()
@@ -109,7 +109,7 @@ def test_study_panel_shows_variations_in_san_tree():
 
 
 def test_study_move_reference_names_selected_ply():
-    assert MainWindow._study_move_reference(0, ["e4", "e5"], "w", 1) == "posicao inicial"
+    assert MainWindow._study_move_reference(0, ["e4", "e5"], "w", 1) == "posição inicial"
     assert MainWindow._study_move_reference(1, ["e4", "e5"], "w", 1) == "1. e4"
     assert MainWindow._study_move_reference(2, ["e4", "e5"], "w", 1) == "1... e5"
 

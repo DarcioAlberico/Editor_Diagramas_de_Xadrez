@@ -195,7 +195,7 @@ class StudyGame:
         stream = StringIO(pgn_text or "")
         game = chess.pgn.read_game(stream)
         if game is None:
-            raise ValueError("PGN invalido ou vazio.")
+            raise ValueError("PGN inválido ou vazio.")
         start_board = game.board()
         self._start_fen = start_board.fen()
         self._game = game

@@ -8,12 +8,56 @@ from typing import Callable, Optional
 import chess
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .autosave import (
+    DEFAULT_INTERVAL_SEC,
+    MIN_INTERVAL_SEC,
+    autosave_path_for_pdf,
+    is_autosave_path,
+    write_project_atomically,
+)
 from .fen import extract_piece_placement, normalize_piece_placement, validate_piece_placement
-from .ocr_api import OcrApiClient, OcrApiError
-from .pdf_service import PdfService, apply_operations_to_pdf, crop_from_rendered_page
-from .project_state import ProjectState, fingerprint_file, load_project_state, save_project_state
+from .history import ChangeHistory
+from .logging_config import get_logger, log_file_path, setup_logging
+from .ocr_api import OcrApiClient, OcrApiError, default_endpoint
+from .pdf_service import (
+    PdfService,
+    RenderedPage,
+    clear_board_render_cache,
+    crop_from_rendered_page,
+)
+from .project_state import ProjectState, fingerprint_file, load_project_state
 from .types import EraseOperation, OcrBoardResult, OverlayOperation, StudyPosition
-from .widgets import BoardEditorWidget, SelectablePageWidget, StudyBoardWidget
+from .widgets import BeforeAfterWidget, BoardEditorWidget, SelectablePageWidget, StudyBoardWidget
+from .workers import BatchOcrWorker, ExportWorker
+
+logger = get_logger("app")
+
+
+def is_dark_theme() -> bool:
+    """Tema escuro ativo? Usado so onde a cor nao pode vir da paleta."""
+    try:
+        scheme = QtWidgets.QApplication.styleHints().colorScheme()
+        if scheme == QtCore.Qt.ColorScheme.Dark:
+            return True
+        if scheme == QtCore.Qt.ColorScheme.Light:
+            return False
+    except Exception:
+        pass
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return False
+    return app.palette().color(QtGui.QPalette.Window).lightness() < 128
+
+
+def comment_highlight_colors() -> tuple[QtGui.QColor, QtGui.QColor]:
+    """Fundo e texto do marcador de lance comentado."""
+    if is_dark_theme():
+        return (QtGui.QColor("#4a3b00"), QtGui.QColor("#ffe9a3"))
+    return (QtGui.QColor("#fff7d6"), QtGui.QColor("#5f3b00"))
+
+
+def warning_text_color() -> str:
+    return "#ff8a8a" if is_dark_theme() else "#b02020"
 
 
 class StudyPanel(QtWidgets.QWidget):
@@ -36,7 +80,7 @@ class StudyPanel(QtWidgets.QWidget):
         self.side_combo = QtWidgets.QComboBox()
         self.side_combo.addItem("Brancas", "w")
         self.side_combo.addItem("Pretas", "b")
-        self.arrow_check = QtWidgets.QCheckBox("Seta do ultimo lance")
+        self.arrow_check = QtWidgets.QCheckBox("Seta do último lance")
         self.arrow_check.setChecked(True)
         self.arrow_check.toggled.connect(self.study_board.set_show_last_move_arrow)
 
@@ -48,7 +92,7 @@ class StudyPanel(QtWidgets.QWidget):
         self.btn_reset.clicked.connect(self._reset)
         self.btn_prev_variation = QtWidgets.QPushButton("Var. anterior")
         self.btn_prev_variation.clicked.connect(lambda: self._switch_variation(-1))
-        self.btn_next_variation = QtWidgets.QPushButton("Var. proxima")
+        self.btn_next_variation = QtWidgets.QPushButton("Var. próxima")
         self.btn_next_variation.clicked.connect(lambda: self._switch_variation(1))
         self.btn_flip = QtWidgets.QPushButton("Virar Tabuleiro")
         self.btn_flip.clicked.connect(self.study_board.flip_board)
@@ -68,23 +112,11 @@ class StudyPanel(QtWidgets.QWidget):
         self.moves_tree.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
         self.moves_tree.itemClicked.connect(self._on_san_tree_item_clicked)
 
-        self.moves_table = QtWidgets.QTableWidget(0, 3)
-        self.moves_table.setHorizontalHeaderLabels(["Lance", "Brancas", "Pretas"])
-        self.moves_table.horizontalHeader().setStretchLastSection(True)
-        self.moves_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
-        self.moves_table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
-        self.moves_table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
-        self.moves_table.verticalHeader().setVisible(False)
-        self.moves_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.moves_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectItems)
-        self.moves_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
-        self.moves_table.cellClicked.connect(self._on_san_cell_clicked)
-
-        self.status_label = QtWidgets.QLabel("Clique nas pecas para estudar linhas legais.")
+        self.status_label = QtWidgets.QLabel("Clique nas peças para estudar linhas legais.")
         self.status_label.setWordWrap(True)
 
         controls_top = QtWidgets.QHBoxLayout()
-        controls_top.addWidget(QtWidgets.QLabel("Lado a jogar no FEN do editor:"))
+        controls_top.addWidget(QtWidgets.QLabel("Vez de jogar:"))
         controls_top.addWidget(self.side_combo)
         controls_top.addWidget(self.arrow_check)
         controls_top.addWidget(self.btn_import_pgn)
@@ -160,9 +192,9 @@ class StudyPanel(QtWidgets.QWidget):
             normalized = normalize_piece_placement(extract_piece_placement(piece_placement))
             self.study_board.set_start_fen(f"{normalized} {side} - - 0 {fullmove}")
             self.set_commented_plies(set())
-            self.status_label.setText("Posicao carregada do editor.")
+            self.status_label.setText("Posição carregada do editor.")
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
+            QtWidgets.QMessageBox.warning(self, "FEN inválida", str(exc))
 
     def _undo(self) -> None:
         self.about_to_change_line.emit()
@@ -181,7 +213,7 @@ class StudyPanel(QtWidgets.QWidget):
     def _switch_variation(self, offset: int) -> None:
         self.about_to_change_line.emit()
         if not self.study_board.select_sibling_variation(offset):
-            self.status_label.setText("Nao ha outra variante neste lance.")
+            self.status_label.setText("Não há outra variante neste lance.")
 
     def _copy_fen(self) -> None:
         QtWidgets.QApplication.clipboard().setText(self.study_board.current_fen())
@@ -223,18 +255,6 @@ class StudyPanel(QtWidgets.QWidget):
             self.status_label.setText(f"PGN importado: {file_path}")
         except Exception as exc:
             QtWidgets.QMessageBox.critical(self, "Erro ao importar PGN", str(exc))
-
-    def _on_san_cell_clicked(self, row: int, col: int) -> None:
-        if self._syncing_move_list:
-            return
-        item = self.moves_table.item(row, col) if row >= 0 and col >= 0 else None
-        data = item.data(QtCore.Qt.UserRole) if item is not None else None
-        if data is not None:
-            ply = int(data)
-        else:
-            return
-        self.about_to_change_line.emit()
-        self.study_board.goto_ply(ply)
 
     def _on_san_tree_item_clicked(self, item: QtWidgets.QTreeWidgetItem, col: int) -> None:
         del col
@@ -279,59 +299,11 @@ class StudyPanel(QtWidgets.QWidget):
                 side = "b"
         return rows
 
-    def _make_move_item(
-        self,
-        text: str,
-        ply: Optional[int] = None,
-        has_comment: bool = False,
-    ) -> QtWidgets.QTableWidgetItem:
-        item = QtWidgets.QTableWidgetItem(f"{text} *" if text and has_comment else text)
-        if ply is not None:
-            item.setData(QtCore.Qt.UserRole, int(ply))
-            if has_comment:
-                font = item.font()
-                font.setBold(True)
-                item.setFont(font)
-                item.setBackground(QtGui.QColor("#fff7d6"))
-                item.setForeground(QtGui.QColor("#5f3b00"))
-                item.setToolTip("Este lance tem comentario.")
-        else:
-            item.setFlags(item.flags() & ~QtCore.Qt.ItemIsSelectable)
-        return item
-
     def _on_line_changed(self, san_line: object, cursor: int) -> None:
-        moves = list(san_line) if isinstance(san_line, list) else list(san_line or [])
+        del san_line, cursor
         self._syncing_move_list = True
         try:
             self._refresh_san_tree()
-            self.moves_table.setRowCount(0)
-            selected_cell: Optional[tuple[int, int]] = None
-            rows = self._format_san_rows(
-                moves,
-                self.study_board.start_turn(),
-                self.study_board.start_fullmove_number(),
-            )
-            self.moves_table.setRowCount(len(rows))
-            for row_idx, (move_label, white_san, white_ply, black_san, black_ply) in enumerate(rows):
-                self.moves_table.setItem(row_idx, 0, self._make_move_item(move_label))
-                self.moves_table.setItem(
-                    row_idx,
-                    1,
-                    self._make_move_item(white_san or "", white_ply, white_ply in self._commented_plies),
-                )
-                self.moves_table.setItem(
-                    row_idx,
-                    2,
-                    self._make_move_item(black_san or "", black_ply, black_ply in self._commented_plies),
-                )
-                if white_ply == cursor:
-                    selected_cell = (row_idx, 1)
-                if black_ply == cursor:
-                    selected_cell = (row_idx, 2)
-            if selected_cell is not None:
-                self.moves_table.setCurrentCell(selected_cell[0], selected_cell[1])
-            else:
-                self.moves_table.clearSelection()
         finally:
             self._syncing_move_list = False
 
@@ -355,9 +327,10 @@ class StudyPanel(QtWidgets.QWidget):
                     font = item.font(1)
                     font.setBold(True)
                     item.setFont(1, font)
-                    item.setBackground(1, QtGui.QColor("#fff7d6"))
-                    item.setForeground(1, QtGui.QColor("#5f3b00"))
-                    item.setToolTip(1, "Este lance tem comentario.")
+                    background, foreground = comment_highlight_colors()
+                    item.setBackground(1, background)
+                    item.setForeground(1, foreground)
+                    item.setToolTip(1, "Este lance tem comentário.")
                 if bool(entry.get("current", False)):
                     selected_item = item
                 parent.addChild(item) if isinstance(parent, QtWidgets.QTreeWidgetItem) else parent.addTopLevelItem(item)
@@ -398,38 +371,98 @@ class StudyDialog(QtWidgets.QDialog):
 
 
 class MainWindow(QtWidgets.QMainWindow):
+    # Azul de destaque com texto branco funciona em tema claro e escuro; o resto
+    # sai da paleta do sistema para nao sumir quando o tema muda.
     _PRIMARY_BUTTON_STYLE = (
-        "QPushButton { background-color: #1f6feb; color: white; font-weight: 600; "
+        "QPushButton { background-color: #1f6feb; color: #ffffff; font-weight: 600; "
         "padding: 6px 10px; border-radius: 4px; } "
-        "QPushButton:disabled { background-color: #9bbce8; color: #f4f7fb; }"
+        "QPushButton:hover { background-color: #3b82f6; } "
+        "QPushButton:disabled { background-color: palette(button); color: palette(mid); }"
     )
     _SECONDARY_BUTTON_STYLE = ""
     _CONTEXT_STYLE = (
-        "QLabel { background-color: #f3f6fa; color: #223042; border: 1px solid #d8e0ea; "
-        "border-radius: 5px; padding: 8px; }"
+        "QLabel { background-color: palette(alternate-base); color: palette(window-text); "
+        "border: 1px solid palette(mid); border-radius: 5px; padding: 8px; }"
     )
-    _SECTION_STYLE = "QLabel { color: #223042; font-weight: 600; margin-top: 6px; }"
+    _SECTION_STYLE = "QLabel { font-weight: 600; margin-top: 6px; }"
 
-    def __init__(self) -> None:
+    def __init__(self, settings: Optional[QtCore.QSettings] = None) -> None:
         super().__init__()
         self.setWindowTitle("Chess PDF Editor")
         self.resize(1500, 900)
-        self.settings = QtCore.QSettings("ChessPdfEditor", "ChessPdfEditor")
+        # Injetavel (§22.4): um teste passa um QSettings apontando para um .ini
+        # descartavel em vez de mexer nas preferencias reais do usuario.
+        self.settings = settings or QtCore.QSettings("ChessPdfEditor", "ChessPdfEditor")
 
         self.pdf_service: Optional[PdfService] = None
         self.current_pdf_path: Optional[str] = None
-        self.current_render = None
+        self.current_render: Optional[RenderedPage] = None
+        self.current_preview_render: Optional[RenderedPage] = None
         self.current_page = 0
         self.ocr_full_next_page = 0
         self.project_path: Optional[str] = None
         self.operations: list[OverlayOperation] = []
         self.erase_operations: list[EraseOperation] = []
         self.study_positions: list[StudyPosition] = []
+        self.candidates: list[OverlayOperation] = []
+        # Area que originou a posicao carregada no editor. Sem isso a previa
+        # desenharia a FEN do diagrama anterior sobre uma selecao nova.
+        self._position_anchor: Optional[tuple[int, tuple[float, float, float, float]]] = None
         self._loading_ui = False
         self._syncing_fen_tab = False
         self._syncing_study_positions = False
         self._last_ocr_result: Optional[OcrBoardResult] = None
         self.study_dialog: Optional[StudyDialog] = None
+
+        # Undo/redo do modo edicao (Sprint 5.2). O modo Estudo tem o seu proprio,
+        # dentro do StudyBoardWidget.
+        self.history = ChangeHistory()
+        self._restoring_history = False
+        # Mudanca de padding/borda vem em rajada (cada passo do spinbox e um
+        # sinal); um unico commit atrasado vira uma entrada so no historico.
+        self._style_history_timer = QtCore.QTimer(self)
+        self._style_history_timer.setSingleShot(True)
+        self._style_history_timer.setInterval(600)
+        self._style_history_timer.timeout.connect(
+            lambda: self._commit_history("Aparência das substituições")
+        )
+
+        # Autosave (Sprint 5.3).
+        self._autosave_path: Optional[str] = None
+        self._autosave_dirty = False
+        self.autosave_enabled = bool(self.settings.value("autosave_enabled", True, bool))
+        self.autosave_interval_sec = max(
+            MIN_INTERVAL_SEC,
+            int(self.settings.value("autosave_interval_sec", DEFAULT_INTERVAL_SEC, int) or DEFAULT_INTERVAL_SEC),
+        )
+        self._autosave_timer = QtCore.QTimer(self)
+        self._autosave_timer.setInterval(self.autosave_interval_sec * 1000)
+        self._autosave_timer.timeout.connect(self._on_autosave_timeout)
+
+        # Trabalho em segundo plano (Sprint 5.1).
+        self._ocr_worker: Optional[BatchOcrWorker] = None
+        self._ocr_progress: Optional[QtWidgets.QProgressDialog] = None
+        self._ocr_batch: dict = {}
+        self._export_worker: Optional[ExportWorker] = None
+        self._export_progress: Optional[QtWidgets.QProgressDialog] = None
+
+        # Previa ao vivo: a pagina pode exibir o PDF original ou o resultado das
+        # alteracoes pendentes (incluindo a substituicao ainda nao confirmada).
+        self.preview_result_enabled = bool(self.settings.value("preview_result_enabled", False, bool))
+        self._showing_preview = False
+        self._refreshing_view = False
+        self.act_toggle_preview = QtGui.QAction("Prévia do resultado", self)
+        self.act_toggle_preview.setCheckable(True)
+        self.act_toggle_preview.setShortcut(QtGui.QKeySequence("Ctrl+D"))
+        self.act_toggle_preview.setToolTip(
+            "Mostra a página como ela ficará depois das alterações (Ctrl+D)"
+        )
+        self.act_toggle_preview.setChecked(self.preview_result_enabled)
+        self.act_toggle_preview.toggled.connect(self._on_toggle_preview)
+        self._preview_timer = QtCore.QTimer(self)
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(140)
+        self._preview_timer.timeout.connect(self._refresh_result_preview)
 
         self.page_widget = SelectablePageWidget()
         self.page_widget.selection_changed.connect(self._on_selection_changed)
@@ -446,17 +479,39 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.warnings = QtWidgets.QLabel("")
         self.warnings.setWordWrap(True)
-        self.warnings.setStyleSheet("color: #b02020;")
+        self.warnings.setStyleSheet(f"color: {warning_text_color()};")
 
-        self.endpoint_edit = QtWidgets.QLineEdit("https://helpman.komtera.lt/chessocr/predict")
-        self.endpoint_edit.setPlaceholderText("OCR endpoint")
+        # O endpoint vinha hardcoded aqui E em ocr_api.py (§22.4). Agora o padrao
+        # tem um dono so, o usuario pode trocar, e a escolha sobrevive ao fechar.
+        saved_endpoint = (self.settings.value("ocr_endpoint", "", str) or "").strip()
+        self.endpoint_edit = QtWidgets.QLineEdit(saved_endpoint or default_endpoint())
+        self.endpoint_edit.setPlaceholderText(default_endpoint())
+        self.endpoint_edit.setToolTip(
+            "Serviço de reconhecimento. Vazio usa o padrão "
+            f"({default_endpoint()}); a variável CHESS_OCR_ENDPOINT tem precedência sobre o padrão."
+        )
+        self.endpoint_edit.editingFinished.connect(self._on_endpoint_edited)
         self.whiteout_check = QtWidgets.QCheckBox("Aplicar whiteout antes do overlay")
         self.whiteout_check.setChecked(True)
+        self.whiteout_check.toggled.connect(lambda checked: self._schedule_preview_refresh(immediate=True))
         self.include_lichess_link_check = QtWidgets.QCheckBox("Incluir link Lichess no PDF exportado")
         self.include_lichess_link_check.setChecked(bool(self.settings.value("include_lichess_link", True, bool)))
         self.include_lichess_link_check.toggled.connect(
             lambda checked: self.settings.setValue("include_lichess_link", bool(checked))
         )
+        self.include_lichess_link_check.toggled.connect(
+            lambda checked: self._schedule_preview_refresh(immediate=True)
+        )
+
+        self.before_after = BeforeAfterWidget()
+        self.btn_toggle_preview = QtWidgets.QPushButton("Ver resultado na página")
+        self.btn_toggle_preview.setCheckable(True)
+        self.btn_toggle_preview.setToolTip(
+            "Alterna entre o PDF original e o resultado das alterações (Ctrl+D)"
+        )
+        self.btn_toggle_preview.setChecked(self.preview_result_enabled)
+        self.btn_toggle_preview.toggled.connect(self.act_toggle_preview.setChecked)
+        self.act_toggle_preview.toggled.connect(self.btn_toggle_preview.setChecked)
         self.merida_font_edit = QtWidgets.QLineEdit()
         self.merida_font_edit.setPlaceholderText("Caminho da fonte Merida (.ttf/.otf)")
         self.btn_select_merida = QtWidgets.QPushButton("Selecionar Fonte...")
@@ -464,11 +519,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_clear_merida = QtWidgets.QPushButton("Limpar")
         self.btn_clear_merida.clicked.connect(self._clear_merida_font)
 
-        self.ops_list = QtWidgets.QListWidget()
-        self.ops_list.itemDoubleClicked.connect(self._on_operation_double_clicked)
-        self.ops_list.currentItemChanged.connect(self._on_operation_selected)
-        self.ops_list_delete_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Delete), self.ops_list)
-        self.ops_list_delete_shortcut.activated.connect(self._remove_selected_operation)
+        # Substituicao/apagamento em foco. Antes isso vivia em QListWidgets que
+        # nunca chegaram a ser exibidos depois da unificacao em "Alterações".
+        self._current_operation_index: Optional[int] = None
+        self._current_eraser_index: Optional[int] = None
+
         self.changes_list = QtWidgets.QListWidget()
         self.changes_list.currentItemChanged.connect(self._on_change_selected)
         self.changes_list.itemDoubleClicked.connect(self._on_change_double_clicked)
@@ -481,9 +536,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.fen_ops_list,
         )
         self.fen_ops_list_delete_shortcut.activated.connect(self._remove_selected_fen_operation)
-        self.fen_ops_list.setStyleSheet(
-            "QListWidget::item:selected { background-color: #bfe3ff; color: #102030; }"
-        )
         self.fen_side_combo = QtWidgets.QComboBox()
         self.fen_side_combo.addItem("Brancas", "w")
         self.fen_side_combo.addItem("Pretas", "b")
@@ -492,13 +544,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fen_move_spin.setRange(1, 500)
         self.fen_move_spin.setValue(1)
         self.fen_move_spin.valueChanged.connect(self._on_fen_meta_changed)
-        self.erasers_list = QtWidgets.QListWidget()
-        self.erasers_list.itemDoubleClicked.connect(self._on_eraser_double_clicked)
-        self.erasers_list.currentItemChanged.connect(lambda current, previous: self._update_edit_context_state())
         self.study_positions_list = QtWidgets.QListWidget()
         self.study_positions_list.itemDoubleClicked.connect(self._on_study_position_double_clicked)
         self.study_positions_list.currentItemChanged.connect(self._on_study_position_selected)
-        self.study_comment_target_label = QtWidgets.QLabel("Comentando: selecione uma posicao de estudo")
+        self.study_comment_target_label = QtWidgets.QLabel("Comentando: selecione uma posição de estudo")
         self.study_comment_target_label.setWordWrap(True)
         self.study_comment_target_label.setStyleSheet(self._CONTEXT_STYLE)
         self.study_comment_before_edit = QtWidgets.QPlainTextEdit()
@@ -509,6 +558,33 @@ class MainWindow(QtWidgets.QMainWindow):
         self.study_comment_after_edit.setPlaceholderText("Texto depois do lance selecionado")
         self.study_comment_after_edit.setMaximumHeight(78)
         self.study_comment_after_edit.textChanged.connect(self._on_study_comment_changed)
+
+        self.auto_apply_check = QtWidgets.QCheckBox("Aplicar automaticamente ao reconhecer página/PDF")
+        self.auto_apply_check.setChecked(bool(self.settings.value("auto_apply_recognition", False, bool)))
+        self.auto_apply_check.setToolTip(
+            "Desligado: as detecções entram na fila de candidatos para você conferir antes de aplicar."
+        )
+        self.auto_apply_check.toggled.connect(self._on_auto_apply_toggled)
+
+        self.candidates_list = QtWidgets.QListWidget()
+        self.candidates_list.currentItemChanged.connect(self._on_candidate_selected)
+        self.candidates_list.itemDoubleClicked.connect(self._on_candidate_double_clicked)
+        self.candidates_apply_shortcut = QtGui.QShortcut(
+            QtGui.QKeySequence(QtCore.Qt.Key_Return), self.candidates_list
+        )
+        self.candidates_apply_shortcut.activated.connect(self._apply_selected_candidate)
+        self.candidates_discard_shortcut = QtGui.QShortcut(
+            QtGui.QKeySequence(QtCore.Qt.Key_Delete), self.candidates_list
+        )
+        self.candidates_discard_shortcut.activated.connect(self._discard_selected_candidate)
+        self.btn_apply_candidate = QtWidgets.QPushButton("Aplicar")
+        self.btn_apply_candidate.clicked.connect(self._apply_selected_candidate)
+        self.btn_discard_candidate = QtWidgets.QPushButton("Descartar")
+        self.btn_discard_candidate.clicked.connect(self._discard_selected_candidate)
+        self.btn_apply_all_candidates = QtWidgets.QPushButton("Aplicar todos")
+        self.btn_apply_all_candidates.clicked.connect(self._apply_all_candidates)
+        self.btn_discard_all_candidates = QtWidgets.QPushButton("Descartar todos")
+        self.btn_discard_all_candidates.clicked.connect(self._discard_all_candidates)
 
         self.btn_ocr = QtWidgets.QPushButton("Reconhecer seleção")
         self.btn_ocr.clicked.connect(self._recognize_selection)
@@ -553,26 +629,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.op_border_spin.setSuffix(" pt")
         self.op_border_spin.setValue(0.0)
         self.op_border_spin.valueChanged.connect(self._on_operation_style_changed)
-        self.apply_style_all_check = QtWidgets.QCheckBox("Aplicar em todas as substituicoes")
+        self.apply_style_all_check = QtWidgets.QCheckBox("Aplicar em todas as substituições")
         self.apply_style_all_check.setChecked(True)
         self.lichess_link_label = QtWidgets.QLabel()
         self.lichess_link_label.setTextFormat(QtCore.Qt.RichText)
         self.lichess_link_label.setTextInteractionFlags(QtCore.Qt.TextBrowserInteraction)
         self.lichess_link_label.setOpenExternalLinks(True)
-        self.lichess_link_label.setToolTip("Abrir posicao atual no Lichess")
+        self.lichess_link_label.setToolTip("Abrir posição atual no Lichess")
         self.btn_add_eraser = QtWidgets.QPushButton("Adicionar apagamento")
         self.btn_add_eraser.clicked.connect(self._add_eraser_from_selection)
         self.btn_remove = QtWidgets.QPushButton("Remover")
         self.btn_remove.clicked.connect(self._remove_selected_change)
-        self.btn_remove_fen = QtWidgets.QPushButton("Remover posicao")
+        self.btn_remove_fen = QtWidgets.QPushButton("Remover posição")
         self.btn_remove_fen.clicked.connect(self._remove_selected_fen_operation)
         self.btn_clear = QtWidgets.QPushButton("Limpar")
         self.btn_clear.clicked.connect(self._clear_changes)
-        self.btn_remove_eraser = QtWidgets.QPushButton("Remover")
-        self.btn_remove_eraser.clicked.connect(self._remove_selected_eraser)
-        self.btn_clear_erasers = QtWidgets.QPushButton("Limpar")
-        self.btn_clear_erasers.clicked.connect(self._clear_erasers)
-        self.btn_study_selection = QtWidgets.QPushButton("Estudar selecao")
+        self.btn_study_selection = QtWidgets.QPushButton("Estudar seleção")
         self.btn_study_selection.clicked.connect(self._study_selection)
         self.btn_study_initial = QtWidgets.QPushButton("Partida inicial")
         self.btn_study_initial.clicked.connect(self._study_starting_position)
@@ -582,7 +654,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_pdf_text_to_before.clicked.connect(lambda: self._copy_pdf_text_to_study_comment("before"))
         self.btn_pdf_text_to_after = QtWidgets.QPushButton("Texto -> depois")
         self.btn_pdf_text_to_after.clicked.connect(lambda: self._copy_pdf_text_to_study_comment("after"))
-        self.btn_remove_study_position = QtWidgets.QPushButton("Remover posicao")
+        self.btn_remove_study_position = QtWidgets.QPushButton("Remover posição")
         self.btn_remove_study_position.clicked.connect(self._remove_selected_study_position)
 
         self.btn_rotate = QtWidgets.QPushButton("Rotacionar 90°")
@@ -612,19 +684,46 @@ class MainWindow(QtWidgets.QMainWindow):
         self.edit_context_label.setWordWrap(True)
         self.edit_context_label.setStyleSheet(self._CONTEXT_STYLE)
         ocr_tab_layout.addWidget(self.edit_context_label)
-        ocr_tab_layout.addWidget(self._section_label("Reconhecimento"))
+
+        ocr_tab_layout.addWidget(self._section_label("1 · Reconhecer"))
         ocr_tab_layout.addWidget(self.btn_ocr)
         ocr_actions = QtWidgets.QHBoxLayout()
         ocr_actions.addWidget(self.btn_ocr_page)
         ocr_actions.addWidget(self.btn_ocr_full)
         ocr_tab_layout.addLayout(ocr_actions)
+        ocr_tab_layout.addWidget(self.auto_apply_check)
 
-        ocr_tab_layout.addWidget(self._section_label("Aplicar"))
+        # A secao de conferencia so aparece quando ha o que conferir.
+        self.candidates_section = QtWidgets.QWidget()
+        candidates_layout = QtWidgets.QVBoxLayout(self.candidates_section)
+        candidates_layout.setContentsMargins(0, 0, 0, 0)
+        self.candidates_label = self._section_label("2 · Conferir")
+        candidates_layout.addWidget(self.candidates_label)
+        self.candidates_list.setMinimumHeight(96)
+        candidates_layout.addWidget(self.candidates_list, 1)
+        candidate_actions = QtWidgets.QGridLayout()
+        candidate_actions.addWidget(self.btn_apply_candidate, 0, 0)
+        candidate_actions.addWidget(self.btn_discard_candidate, 0, 1)
+        candidate_actions.addWidget(self.btn_apply_all_candidates, 1, 0)
+        candidate_actions.addWidget(self.btn_discard_all_candidates, 1, 1)
+        candidates_layout.addLayout(candidate_actions)
+        self.candidates_section.setVisible(False)
+        ocr_tab_layout.addWidget(self.candidates_section)
+
+        preview_layout = QtWidgets.QVBoxLayout()
+        preview_layout.addWidget(self.btn_toggle_preview)
+        preview_layout.addWidget(self.before_after)
+        self.compare_group = self._make_collapsible_group("3 · Conferir a prévia", preview_layout, checked=True)
+        self.compare_group.toggled.connect(lambda checked: self._schedule_preview_refresh(immediate=True))
+        ocr_tab_layout.addWidget(self.compare_group)
+
+        ocr_tab_layout.addWidget(self._section_label("4 · Aplicar"))
         ocr_tab_layout.addWidget(self.btn_add)
         ocr_tab_layout.addWidget(self.btn_add_eraser)
 
-        self.changes_label = self._section_label("Alterações")
+        self.changes_label = self._section_label("5 · Alterações")
         ocr_tab_layout.addWidget(self.changes_label)
+        self.changes_list.setMinimumHeight(110)
         ocr_tab_layout.addWidget(self.changes_list, 3)
         right_actions = QtWidgets.QHBoxLayout()
         right_actions.addWidget(self.btn_remove)
@@ -653,7 +752,7 @@ class MainWindow(QtWidgets.QMainWindow):
         fen_meta = QtWidgets.QGridLayout()
         fen_meta.addWidget(QtWidgets.QLabel("Vez de jogar"), 0, 0)
         fen_meta.addWidget(self.fen_side_combo, 0, 1)
-        fen_meta.addWidget(QtWidgets.QLabel("Numero do lance"), 1, 0)
+        fen_meta.addWidget(QtWidgets.QLabel("Número do lance"), 1, 0)
         fen_meta.addWidget(self.fen_move_spin, 1, 1)
         fens_tab_layout.addLayout(fen_meta)
         self.fen_ops_list.setMinimumHeight(120)
@@ -683,9 +782,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._make_collapsible_group("Ajustes avançados", appearance_grid, checked=False)
         )
         whiteout_tab_layout.addStretch(1)
-        self.edit_tabs.addTab(ocr_tab, "OCR")
-        self.edit_tabs.addTab(fens_tab, "FEN")
-        self.edit_tabs.addTab(whiteout_tab, "Aparência")
+        # Cada aba rola: sem isso o conteudo e comprimido abaixo do minimo e o
+        # Qt corta o texto dos botoes e rotulos.
+        self.edit_tabs.addTab(self._scrollable(ocr_tab), "OCR")
+        self.edit_tabs.addTab(self._scrollable(fens_tab), "FEN")
+        self.edit_tabs.addTab(self._scrollable(whiteout_tab), "Aparência")
         self.edit_tabs.setMinimumHeight(220)
         bottom_layout.addWidget(self.edit_tabs, 2)
 
@@ -742,12 +843,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.side_stack.addWidget(self.right_vertical_splitter)
         self.side_stack.addWidget(self.study_scroll)
 
+        # O QScrollArea do PDF usa widgetResizable(False) e por isso reporta um
+        # sizeHint minusculo: sem largura minima o splitter o esmagava ate ~58px
+        # e o visor de PDF sumia numa instalacao nova.
+        scroll.setMinimumWidth(360)
+        self.side_stack.setMinimumWidth(380)
+
         self.main_splitter = QtWidgets.QSplitter()
+        self.main_splitter.setChildrenCollapsible(False)
         self.main_splitter.addWidget(scroll)
         self.main_splitter.addWidget(self.side_stack)
         self.main_splitter.setStretchFactor(0, 4)
         self.main_splitter.setStretchFactor(1, 2)
-        self._restore_splitter_state(self.main_splitter, "main_splitter_state")
+        if not self._restore_splitter_state(self.main_splitter, "main_splitter_state"):
+            self.main_splitter.setSizes([int(self.width() * 0.6), int(self.width() * 0.4)])
         self._restore_splitter_state(self.right_vertical_splitter, "right_vertical_splitter_state")
         self._restore_splitter_state(self.study_workspace, "study_workspace_splitter_state")
         self.setCentralWidget(self.main_splitter)
@@ -772,7 +881,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_lichess_link()
         self._refresh_study_positions_list()
         self._refresh_changes_list()
+        self._refresh_candidates_list()
         self._update_edit_context_state()
+        # A sessao restaurada (se houve) e a linha de base do historico.
+        self._reset_history("sessão restaurada" if self.current_pdf_path else "inicio")
+        self._start_autosave_timer()
 
     def _make_collapsible_group(
         self,
@@ -792,6 +905,17 @@ class MainWindow(QtWidgets.QMainWindow):
         label = QtWidgets.QLabel(text)
         label.setStyleSheet(self._SECTION_STYLE)
         return label
+
+    @staticmethod
+    def _scrollable(widget: QtWidgets.QWidget) -> QtWidgets.QScrollArea:
+        """Embrulha um painel numa area rolavel que respeita a altura minima."""
+        area = QtWidgets.QScrollArea()
+        area.setWidget(widget)
+        area.setWidgetResizable(True)
+        area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        return area
 
     @classmethod
     def _set_layout_visible(cls, layout: QtWidgets.QLayout, visible: bool) -> None:
@@ -826,10 +950,15 @@ class MainWindow(QtWidgets.QMainWindow):
             target.setStyleSheet(self._PRIMARY_BUTTON_STYLE)
 
     def _update_edit_context_state(self) -> None:
-        if not hasattr(self, "edit_context_label"):
+        if not hasattr(self, "edit_context_label") or not hasattr(self, "act_save_pdf"):
             return
 
         has_pdf = bool(self.pdf_service and self.current_render)
+        self.act_toggle_preview.setEnabled(has_pdf)
+        self.btn_toggle_preview.setEnabled(has_pdf)
+        self.btn_toggle_preview.setText(
+            "Voltar ao PDF original" if self._showing_preview else "Ver resultado na página"
+        )
         has_selection = bool(self.page_widget.selection_rect()) if has_pdf else False
         has_position = self._current_fen_has_pieces()
         has_changes = bool(self.operations or self.erase_operations)
@@ -841,8 +970,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_add_eraser.setEnabled(has_selection)
         self.btn_remove.setEnabled(self._selected_change() is not None)
         self.btn_clear.setEnabled(bool(self.operations or self.erase_operations))
-        self.btn_remove_eraser.setEnabled(self.erasers_list.currentItem() is not None)
-        self.btn_clear_erasers.setEnabled(bool(self.erase_operations))
         self.act_save_pdf.setEnabled(has_changes)
         self.act_recognize_selection.setEnabled(has_selection)
         self.act_recognize_page.setEnabled(has_pdf)
@@ -902,6 +1029,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
         toolbar.addSeparator()
 
+        self.act_undo = QtGui.QAction("Desfazer", self)
+        self.act_undo.setShortcut(QtGui.QKeySequence.Undo)
+        self.act_undo.setToolTip("Desfaz a última alteração (Ctrl+Z)")
+        self.act_undo.setEnabled(False)
+        self.act_undo.triggered.connect(self._undo_change)
+        toolbar.addAction(self.act_undo)
+
+        self.act_redo = QtGui.QAction("Refazer", self)
+        self.act_redo.setShortcuts([QtGui.QKeySequence.Redo, QtGui.QKeySequence("Ctrl+Y")])
+        self.act_redo.setToolTip("Refaz a alteração desfeita (Ctrl+Y)")
+        self.act_redo.setEnabled(False)
+        self.act_redo.triggered.connect(self._redo_change)
+        toolbar.addAction(self.act_redo)
+
+        toolbar.addSeparator()
+
         self.act_mode_read = QtGui.QAction("Leitura", self)
         self.act_mode_read.setCheckable(True)
         self.act_mode_read.triggered.connect(lambda: self._set_mode("read"))
@@ -912,7 +1055,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_mode_study.triggered.connect(lambda: self._set_mode("study"))
         toolbar.addAction(self.act_mode_study)
 
-        self.act_mode_edit = QtGui.QAction("Edicao", self)
+        self.act_mode_edit = QtGui.QAction("Edição", self)
         self.act_mode_edit.setCheckable(True)
         self.act_mode_edit.triggered.connect(lambda: self._set_mode("edit"))
         toolbar.addAction(self.act_mode_edit)
@@ -924,33 +1067,36 @@ class MainWindow(QtWidgets.QMainWindow):
 
         toolbar.addSeparator()
 
-        self.act_prev = QtGui.QAction("Pagina -", self)
+        self.act_prev = QtGui.QAction("Página -", self)
         self.act_prev.setShortcut(QtGui.QKeySequence.MoveToPreviousChar)
         self.act_prev.triggered.connect(self._prev_page)
         toolbar.addAction(self.act_prev)
 
-        self.act_next = QtGui.QAction("Pagina +", self)
+        self.act_next = QtGui.QAction("Página +", self)
         self.act_next.setShortcut(QtGui.QKeySequence.MoveToNextChar)
         self.act_next.triggered.connect(self._next_page)
         toolbar.addAction(self.act_next)
 
-        toolbar.addWidget(QtWidgets.QLabel("  Pagina: "))
+        toolbar.addWidget(QtWidgets.QLabel("  Página: "))
         toolbar.addWidget(self.page_spin)
 
         toolbar.addWidget(QtWidgets.QLabel("  Zoom: "))
         toolbar.addWidget(self.zoom_spin)
 
-        self.act_study_selection = QtGui.QAction("Estudar selecao", self)
+        toolbar.addSeparator()
+        toolbar.addAction(self.act_toggle_preview)
+
+        self.act_study_selection = QtGui.QAction("Estudar seleção", self)
         self.act_study_selection.setShortcut(QtGui.QKeySequence("Ctrl+Return"))
         self.act_study_selection.triggered.connect(self._study_selection)
 
         self.act_study_initial = QtGui.QAction("Partida inicial", self)
         self.act_study_initial.triggered.connect(self._study_starting_position)
 
-        self.act_pdf_text_to_before = QtGui.QAction("Texto da selecao -> comentario antes", self)
+        self.act_pdf_text_to_before = QtGui.QAction("Texto da seleção → comentário antes", self)
         self.act_pdf_text_to_before.triggered.connect(lambda: self._copy_pdf_text_to_study_comment("before"))
 
-        self.act_pdf_text_to_after = QtGui.QAction("Texto da selecao -> comentario depois", self)
+        self.act_pdf_text_to_after = QtGui.QAction("Texto da seleção → comentário depois", self)
         self.act_pdf_text_to_after.triggered.connect(lambda: self._copy_pdf_text_to_study_comment("after"))
 
         self.act_recognize_selection = QtGui.QAction("Reconhecer seleção", self)
@@ -978,6 +1124,10 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction("Sair", self.close)
 
+        edit_menu = self.menuBar().addMenu("Editar")
+        edit_menu.addAction(self.act_undo)
+        edit_menu.addAction(self.act_redo)
+
         mode_menu = self.menuBar().addMenu("Modo")
         mode_menu.addAction(self.act_mode_read)
         mode_menu.addAction(self.act_mode_study)
@@ -1001,6 +1151,8 @@ class MainWindow(QtWidgets.QMainWindow):
         pdf_menu.addAction(self.act_next)
         pdf_menu.addAction("Ajustar zoom a 100%", lambda: self.zoom_spin.setValue(1.0))
         pdf_menu.addAction("Ajustar zoom a 200%", lambda: self.zoom_spin.setValue(2.0))
+        pdf_menu.addSeparator()
+        pdf_menu.addAction(self.act_toggle_preview)
 
         diagrams_menu = self.menuBar().addMenu("Diagramas")
         diagrams_menu.addAction(self.act_recognize_selection)
@@ -1010,9 +1162,22 @@ class MainWindow(QtWidgets.QMainWindow):
         diagrams_menu.addAction(self.act_add_operation)
         diagrams_menu.addAction("Adicionar apagamento", self._add_eraser_from_selection)
 
-        settings_menu = self.menuBar().addMenu("Configuracoes")
+        settings_menu = self.menuBar().addMenu("Configurações")
         settings_menu.addAction("Selecionar fonte Merida", self._select_merida_font)
         settings_menu.addAction("Limpar fonte Merida", self._clear_merida_font)
+        settings_menu.addSeparator()
+        self.act_autosave = QtGui.QAction("Autosave do projeto", self)
+        self.act_autosave.setCheckable(True)
+        self.act_autosave.setChecked(self.autosave_enabled)
+        self.act_autosave.setToolTip(
+            f"Salva o projeto a cada {self.autosave_interval_sec}s e ao fechar."
+        )
+        self.act_autosave.toggled.connect(self._on_autosave_toggled)
+        settings_menu.addAction(self.act_autosave)
+        settings_menu.addAction("Salvar agora", lambda: self._autosave_now(quiet=False))
+        if log_file_path() is not None:
+            settings_menu.addSeparator()
+            settings_menu.addAction("Abrir pasta de logs", self._open_log_folder)
 
     def _set_mode(self, mode: str) -> None:
         if mode == "read":
@@ -1028,17 +1193,40 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.side_stack.setCurrentIndex(0)
         self.act_mode_edit.setChecked(True)
-        self.statusBar().showMessage("Modo edicao.")
+        self.statusBar().showMessage("Modo edição.")
 
-    def _restore_splitter_state(self, splitter: QtWidgets.QSplitter, setting_key: str) -> None:
+    def _restore_splitter_state(self, splitter: QtWidgets.QSplitter, setting_key: str) -> bool:
         state = self.settings.value(setting_key, None)
         if isinstance(state, QtCore.QByteArray) and not state.isEmpty():
-            splitter.restoreState(state)
+            return bool(splitter.restoreState(state))
+        return False
 
     def _save_splitter_state(self, splitter: QtWidgets.QSplitter, setting_key: str) -> None:
         self.settings.setValue(setting_key, splitter.saveState())
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self._preview_timer.stop()
+        self._style_history_timer.stop()
+        self._autosave_timer.stop()
+
+        # Uma QThread destruida enquanto roda derruba o processo. Cancelar e
+        # esperar e obrigatorio, e o `wait` tem teto para nao travar o fechamento
+        # se o worker estiver preso numa requisicao HTTP lenta.
+        if self._ocr_worker is not None:
+            self._ocr_worker.cancel()
+            if not self._ocr_worker.wait(5000):
+                logger.warning("Worker de OCR não terminou a tempo; encerrando mesmo assim")
+                self._ocr_worker.terminate()
+                self._ocr_worker.wait(1000)
+            self._ocr_worker = None
+        if self._export_worker is not None and not self._export_worker.wait(15000):
+            logger.warning("Exportação ainda em andamento no fechamento")
+        self._export_worker = None
+
+        # Autosave final: fechar a janela nunca pode custar o trabalho da sessao.
+        if self._autosave_dirty:
+            self._autosave_now(quiet=True)
+
         self._save_splitter_state(self.main_splitter, "main_splitter_state")
         self._save_splitter_state(self.right_vertical_splitter, "right_vertical_splitter_state")
         self._save_splitter_state(self.study_workspace, "study_workspace_splitter_state")
@@ -1062,6 +1250,200 @@ class MainWindow(QtWidgets.QMainWindow):
         self.study_dialog.show()
         self.study_dialog.raise_()
         self.study_dialog.activateWindow()
+
+    # ------------------------------------------------------------------
+    # Historico de alteracoes (undo/redo do modo edicao — Sprint 5.2)
+    # ------------------------------------------------------------------
+
+    def _commit_history(self, label: str) -> None:
+        """Grava o estado atual das alteracoes no historico.
+
+        Chamado **depois** da mutacao. Durante um undo/redo o commit e suprimido,
+        senao restaurar um estado empilharia esse proprio estado de novo.
+        """
+        if self._restoring_history:
+            return
+        if self.history.commit(label, self.operations, self.erase_operations, self.candidates):
+            self._mark_project_dirty()
+        self._update_history_actions()
+
+    def _reset_history(self, label: str = "inicio") -> None:
+        self.history.reset(self.operations, self.erase_operations, self.candidates, label=label)
+        self._update_history_actions()
+
+    def _update_history_actions(self) -> None:
+        act_undo = getattr(self, "act_undo", None)
+        act_redo = getattr(self, "act_redo", None)
+        if act_undo is None or act_redo is None:
+            return  # ainda montando a toolbar
+        act_undo.setEnabled(self.history.can_undo)
+        act_redo.setEnabled(self.history.can_redo)
+        undo_label = self.history.undo_label
+        redo_label = self.history.redo_label
+        act_undo.setText(f"Desfazer {undo_label}".strip() if undo_label else "Desfazer")
+        act_redo.setText(f"Refazer {redo_label}".strip() if redo_label else "Refazer")
+
+    def _apply_history_snapshot(self, snapshot, verb: str) -> None:
+        self._restoring_history = True
+        try:
+            self.operations = snapshot.restore_operations()
+            self.erase_operations = snapshot.restore_erase_operations()
+            self.candidates = snapshot.restore_candidates()
+            # Indices apontavam para itens que podem ter sumido.
+            self._current_operation_index = None
+            self._current_eraser_index = None
+            self._position_anchor = None
+            self._refresh_operations_list()
+            self._refresh_erasers_list()
+            self._refresh_candidates_list()
+            self._refresh_page_overlays()
+            self._update_edit_context_state()
+            self._schedule_preview_refresh(immediate=True)
+        finally:
+            self._restoring_history = False
+        self._mark_project_dirty()
+        self._update_history_actions()
+        self.statusBar().showMessage(f"{verb}: {snapshot.label}" if snapshot.label else verb)
+
+    def _undo_change(self) -> None:
+        if self._is_study_mode():
+            # No modo Estudo o Ctrl+Z pertence a linha de lances.
+            self.study_panel._undo()
+            return
+        label = self.history.undo_label
+        snapshot = self.history.undo()
+        if snapshot is None:
+            self.statusBar().showMessage("Nada para desfazer.")
+            return
+        self._apply_history_snapshot(snapshot, f"Desfeito {label}".strip())
+
+    def _redo_change(self) -> None:
+        if self._is_study_mode():
+            self.study_panel._redo()
+            return
+        snapshot = self.history.redo()
+        if snapshot is None:
+            self.statusBar().showMessage("Nada para refazer.")
+            return
+        self._apply_history_snapshot(snapshot, "Refeito")
+
+    # ------------------------------------------------------------------
+    # Autosave (Sprint 5.3)
+    # ------------------------------------------------------------------
+
+    def _mark_project_dirty(self) -> None:
+        """Ha trabalho novo que ainda nao foi para o disco."""
+        self._autosave_dirty = True
+
+    def _on_autosave_toggled(self, checked: bool) -> None:
+        self.autosave_enabled = bool(checked)
+        self.settings.setValue("autosave_enabled", self.autosave_enabled)
+        self._start_autosave_timer()
+        self.statusBar().showMessage(
+            f"Autosave ligado (a cada {self.autosave_interval_sec}s)."
+            if self.autosave_enabled
+            else "Autosave desligado."
+        )
+
+    def _open_log_folder(self) -> None:
+        path = log_file_path()
+        if path is None:
+            QtWidgets.QMessageBox.information(self, "Logs", "O log está indo apenas para o console.")
+            return
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(path.parent)))
+
+    def _current_project_state(self) -> Optional[ProjectState]:
+        if not self.current_pdf_path:
+            return None
+        try:
+            fingerprint = fingerprint_file(self.current_pdf_path)
+        except Exception:
+            logger.warning("Fingerprint do PDF falhou: %s", self.current_pdf_path, exc_info=True)
+            fingerprint = {}
+        return ProjectState(
+            source_pdf=self.current_pdf_path,
+            source_pdf_fingerprint=fingerprint,
+            operations=self.operations,
+            erase_operations=self.erase_operations,
+            study_positions=self.study_positions,
+            candidates=self.candidates,
+            current_page=self.current_page,
+            include_lichess_link=self.include_lichess_link_check.isChecked(),
+            ocr_full_next_page=self.ocr_full_next_page,
+        )
+
+    def _autosave_target(self) -> Optional[str]:
+        """Onde o autosave grava.
+
+        Se o usuario ja escolheu um arquivo de projeto, e nele — foi o arquivo
+        que ele pediu. Senao, num caminho estavel derivado do PDF, dentro do
+        diretorio do app, para nao espalhar `.json` pelas pastas dele.
+        """
+        if self.project_path:
+            return self.project_path
+        if not self.current_pdf_path:
+            return None
+        if self._autosave_path is None:
+            self._autosave_path = str(autosave_path_for_pdf(self.current_pdf_path))
+        return self._autosave_path
+
+    def _start_autosave_timer(self) -> None:
+        if self.autosave_enabled and self.current_pdf_path:
+            self._autosave_timer.start()
+        else:
+            self._autosave_timer.stop()
+
+    def _on_autosave_timeout(self) -> None:
+        if not self._autosave_dirty:
+            return
+        self._autosave_now(quiet=True)
+
+    def _autosave_now(self, quiet: bool = False) -> bool:
+        """Grava o estado atual. Nunca interrompe o usuario com um modal."""
+        if not self.autosave_enabled:
+            return False
+        target = self._autosave_target()
+        state = self._current_project_state()
+        if not target or state is None:
+            return False
+        try:
+            write_project_atomically(target, state)
+        except Exception:
+            # Falhar o autosave nao pode derrubar nem travar o app; a proxima
+            # tentativa acontece no proximo tique.
+            logger.exception("Autosave falhou em %s", target)
+            if not quiet:
+                self.statusBar().showMessage("Autosave falhou — veja o log.")
+            return False
+
+        self._autosave_dirty = False
+        # Um autosave restauravel na proxima sessao: o caminho entra na mesma
+        # chave que `_try_restore_last_project` ja consulta.
+        self._remember_last_project_path(target)
+        logger.info("Autosave gravado: %s", target)
+        if not quiet:
+            self.statusBar().showMessage(f"Autosave: {target}")
+        return True
+
+    # ------------------------------------------------------------------
+    # Configuracao do OCR
+    # ------------------------------------------------------------------
+
+    def _ocr_endpoint(self) -> Optional[str]:
+        """Endpoint escolhido pelo usuario, ou None para a cadeia padrao."""
+        text = self.endpoint_edit.text().strip()
+        return text or None
+
+    def _make_ocr_client(self) -> OcrApiClient:
+        return OcrApiClient(endpoint=self._ocr_endpoint())
+
+    def _on_endpoint_edited(self) -> None:
+        endpoint = self.endpoint_edit.text().strip()
+        self.settings.setValue("ocr_endpoint", endpoint)
+        if endpoint:
+            self.statusBar().showMessage(f"Endpoint OCR: {endpoint}")
+        else:
+            self.statusBar().showMessage(f"Endpoint OCR padrão: {default_endpoint()}")
 
     def _load_merida_font_setting(self) -> None:
         env_font = os.getenv("CHESS_MERIDA_FONT", "").strip()
@@ -1090,15 +1472,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.merida_font_edit.clear()
         os.environ.pop("CHESS_MERIDA_FONT", None)
         self.settings.setValue("merida_font_path", "")
+        clear_board_render_cache()
+        self._schedule_preview_refresh(immediate=True)
         self.statusBar().showMessage("Fonte Merida desativada. Usando fallback de render.")
 
     def _apply_merida_font_path(self, file_path: str, persist: bool) -> None:
         p = Path(file_path)
         if not p.exists() or not p.is_file():
-            QtWidgets.QMessageBox.warning(self, "Fonte invalida", "Arquivo de fonte nao encontrado.")
+            QtWidgets.QMessageBox.warning(self, "Fonte inválida", "Arquivo de fonte não encontrado.")
             return
         if p.suffix.lower() not in {".ttf", ".otf"}:
-            QtWidgets.QMessageBox.warning(self, "Fonte invalida", "Selecione um arquivo .ttf ou .otf.")
+            QtWidgets.QMessageBox.warning(self, "Fonte inválida", "Selecione um arquivo .ttf ou .otf.")
             return
 
         resolved = str(p.resolve())
@@ -1106,6 +1490,8 @@ class MainWindow(QtWidgets.QMainWindow):
         os.environ["CHESS_MERIDA_FONT"] = resolved
         if persist:
             self.settings.setValue("merida_font_path", resolved)
+        clear_board_render_cache()
+        self._schedule_preview_refresh(immediate=True)
         self.statusBar().showMessage(f"Fonte Merida configurada: {resolved}")
 
     def _open_pdf_dialog(self) -> None:
@@ -1173,6 +1559,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pdf_service = PdfService(file_path)
         self.current_pdf_path = file_path
         self._remember_last_pdf_path(file_path)
+        # Outro livro, outro destino de autosave.
+        self._autosave_path = None
         self.current_page = 0
         self.page_spin.blockSignals(True)
         self.page_spin.setMaximum(max(1, self.pdf_service.page_count))
@@ -1182,12 +1570,23 @@ class MainWindow(QtWidgets.QMainWindow):
             self.operations = []
             self.erase_operations = []
             self.study_positions = []
+            self.candidates = []
             self.ocr_full_next_page = 0
+            self._position_anchor = None
             self._refresh_operations_list()
             self._refresh_erasers_list()
             self._refresh_study_positions_list()
+            self._refresh_candidates_list()
         self._render_current_page()
         self._update_edit_context_state()
+        if clear_ops:
+            # Abrir um livro novo zera o que da para desfazer: o passado
+            # pertencia ao livro anterior.
+            self._reset_history("abrir PDF")
+            self.project_path = None
+            self._autosave_dirty = False
+        self._start_autosave_timer()
+        logger.info("PDF aberto: %s (%d páginas)", file_path, self.pdf_service.page_count)
         self.statusBar().showMessage(f"PDF aberto: {file_path}")
 
     def _render_current_page(self) -> None:
@@ -1196,17 +1595,241 @@ class MainWindow(QtWidgets.QMainWindow):
         self.current_page = max(0, min(self.current_page, self.pdf_service.page_count - 1))
         zoom = float(self.zoom_spin.value())
         self.current_render = self.pdf_service.render_page(self.current_page, zoom=zoom)
-        pixmap = QtGui.QPixmap()
-        pixmap.loadFromData(self.current_render.image_png, "PNG")
-        self.page_widget.set_page_pixmap(pixmap)
-        self._refresh_page_overlays()
+        self.current_preview_render = None
+        self._showing_preview = False
+        self._apply_page_pixmap(self.current_render, preserve_selection=False)
         self.page_spin.blockSignals(True)
         self.page_spin.setValue(self.current_page + 1)
         self.page_spin.blockSignals(False)
-        self.setWindowTitle(
-            f"Chess PDF Editor - {Path(self.current_pdf_path or '').name} - Pagina {self.current_page + 1}/{self.pdf_service.page_count}"
-        )
+        self._update_window_title()
         self._update_edit_context_state()
+        self._schedule_preview_refresh()
+
+    def _update_window_title(self) -> None:
+        if not self.pdf_service:
+            self.setWindowTitle("Chess PDF Editor")
+            return
+        suffix = " [prévia do resultado]" if self._showing_preview else ""
+        self.setWindowTitle(
+            f"Chess PDF Editor - {Path(self.current_pdf_path or '').name} - "
+            f"Página {self.current_page + 1}/{self.pdf_service.page_count}{suffix}"
+        )
+
+    def _apply_page_pixmap(self, render: RenderedPage, preserve_selection: bool) -> None:
+        """Troca o bitmap exibido sem perder a selecao ativa do usuario."""
+        pixmap = QtGui.QPixmap()
+        pixmap.loadFromData(render.image_png, "PNG")
+        self._refreshing_view = True
+        try:
+            selection = self.page_widget.selection_rect() if preserve_selection else None
+            self.page_widget.set_page_pixmap(pixmap)
+            if selection is not None:
+                self.page_widget.set_selection_rect(selection)
+        finally:
+            self._refreshing_view = False
+        self._refresh_page_overlays()
+        self._update_window_title()
+        self._update_edit_context_state()
+
+    # ------------------------------------------------------------------
+    # Previa ao vivo do resultado
+    # ------------------------------------------------------------------
+
+    def _on_toggle_preview(self, checked: bool) -> None:
+        self.preview_result_enabled = bool(checked)
+        self.settings.setValue("preview_result_enabled", self.preview_result_enabled)
+        if self.preview_result_enabled:
+            self.statusBar().showMessage(
+                "Prévia ligada: a página mostra como o PDF vai ficar. Ctrl+D volta ao original."
+            )
+        else:
+            self._show_original_render()
+            self.statusBar().showMessage("Prévia desligada: mostrando o PDF original.")
+        self._schedule_preview_refresh(immediate=True)
+
+    def _show_original_render(self) -> None:
+        if self.current_render is None or not self._showing_preview:
+            return
+        self._showing_preview = False
+        self._apply_page_pixmap(self.current_render, preserve_selection=True)
+
+    def _schedule_preview_refresh(self, immediate: bool = False) -> None:
+        if self._refreshing_view or not self.pdf_service:
+            return
+        if immediate:
+            self._preview_timer.stop()
+            self._refresh_result_preview()
+            return
+        self._preview_timer.start()
+
+    def _set_position_anchor(self, rect_pdf: Optional[tuple[float, float, float, float]]) -> None:
+        """Marca a area que originou a posicao atualmente carregada no editor."""
+        self._position_anchor = None if rect_pdf is None else (self.current_page, tuple(rect_pdf))
+
+    def _anchor_from_selection(self) -> None:
+        if not self.pdf_service or not self.current_render:
+            return
+        selection = self.page_widget.selection_rect()
+        if not selection:
+            return
+        self._set_position_anchor(
+            self.pdf_service.image_rect_to_pdf_rect(
+                self.current_page,
+                selection,
+                self.current_render.matrix,
+            )
+        )
+
+    def _position_matches_selection(self, rect_pdf: tuple[float, float, float, float]) -> bool:
+        """A posicao do editor pertence mesmo a esta selecao?
+
+        Sem essa checagem, selecionar o segundo diagrama de uma pagina faria a
+        previa desenhar a posicao do primeiro sobre a area nova.
+        """
+        if self._position_anchor is None:
+            return False
+        anchor_page, anchor_rect = self._position_anchor
+        if anchor_page != self.current_page:
+            return False
+        return self._rect_iou(anchor_rect, rect_pdf) >= 0.40
+
+    def _draft_operation(self) -> Optional[OverlayOperation]:
+        """Substituicao ainda nao confirmada, montada da selecao + FEN atuais."""
+        if not self.pdf_service or not self.current_render:
+            return None
+        selection = self.page_widget.selection_rect()
+        if not selection:
+            return None
+        piece_placement = self._current_piece_placement_or_none()
+        if not piece_placement or not any(ch in "PNBRQKpnbrqk" for ch in piece_placement):
+            return None
+
+        rect_pdf = self.pdf_service.image_rect_to_pdf_rect(
+            self.current_page,
+            selection,
+            self.current_render.matrix,
+        )
+        if not self._position_matches_selection(rect_pdf):
+            return None
+
+        pad_left, pad_top, pad_right, pad_bottom = self._current_whiteout_padding()
+        side_to_move, fullmove_number = self._current_fen_defaults()
+        return OverlayOperation(
+            page_num=self.current_page,
+            rect_pdf=rect_pdf,
+            fen=piece_placement,
+            side_to_move=side_to_move,
+            fullmove_number=fullmove_number,
+            source="draft",
+            whiteout_padding_pt=(pad_left + pad_top + pad_right + pad_bottom) / 4.0,
+            whiteout_padding_left_pt=pad_left,
+            whiteout_padding_top_pt=pad_top,
+            whiteout_padding_right_pt=pad_right,
+            whiteout_padding_bottom_pt=pad_bottom,
+            border_width_pt=float(self.op_border_spin.value()),
+        )
+
+    def _preview_operations(
+        self,
+    ) -> tuple[list[OverlayOperation], list[EraseOperation], Optional[OverlayOperation]]:
+        draft = self._draft_operation()
+        operations: list[OverlayOperation] = []
+        for op in self.operations:
+            if op.page_num != self.current_page:
+                continue
+            # Editar uma substituicao ja existente: o rascunho manda, para que a
+            # previa reflita a edicao em andamento em vez da versao salva.
+            if draft is not None and self._rect_iou(op.rect_pdf, draft.rect_pdf) >= 0.80:
+                continue
+            operations.append(op)
+        if draft is not None:
+            operations.append(draft)
+        erasers = [op for op in self.erase_operations if op.page_num == self.current_page]
+        return (operations, erasers, draft)
+
+    def _compare_rect_pdf(self, draft: Optional[OverlayOperation]) -> Optional[tuple[float, float, float, float]]:
+        if draft is not None:
+            return draft.rect_pdf
+        if self.page_widget.selection_rect():
+            # Ha uma selecao ativa sem posicao correspondente: mostrar as
+            # miniaturas de outro diagrama so confundiria.
+            return None
+        selected = self._selected_change()
+        if selected is not None and selected[0] == "operation":
+            return self.operations[selected[1]].rect_pdf
+        idx = self._selected_operation_index()
+        if idx is not None and self.operations[idx].page_num == self.current_page:
+            return self.operations[idx].rect_pdf
+        return None
+
+    @staticmethod
+    def _expanded_rect(rect_pdf: tuple[float, float, float, float], ratio: float = 0.10) -> tuple[float, float, float, float]:
+        x0, y0, x1, y1 = rect_pdf
+        margin = max(6.0, max(x1 - x0, y1 - y0) * ratio)
+        return (x0 - margin, y0 - margin, x1 + margin, y1 + margin)
+
+    def _refresh_result_preview(self) -> None:
+        if not self.pdf_service or not self.current_render:
+            self.before_after.set_message("Abra um PDF para comparar antes e depois.")
+            return
+
+        operations, erasers, draft = self._preview_operations()
+        compare_rect = self._compare_rect_pdf(draft)
+        want_thumbs = self.compare_group.isChecked() and compare_rect is not None
+        # Pagina sem nenhuma alteracao: a previa seria identica ao original,
+        # entao evita o custo de montar e renderizar o documento de previa.
+        want_page = self.preview_result_enabled and bool(operations or erasers)
+
+        if not want_page and not want_thumbs:
+            self.current_preview_render = None
+            if self.compare_group.isChecked():
+                self.before_after.set_message(
+                    "Selecione um diagrama e monte a posição para ver o antes e depois."
+                )
+            self._show_original_render()
+            return
+
+        zoom = float(self.zoom_spin.value())
+        whiteout = self.whiteout_check.isChecked()
+        include_link = self.include_lichess_link_check.isChecked()
+
+        try:
+            if want_page:
+                self.current_preview_render = self.pdf_service.render_page_with_operations(
+                    self.current_page,
+                    zoom,
+                    operations,
+                    erase_operations=erasers,
+                    whiteout=whiteout,
+                    include_lichess_link=include_link,
+                )
+                self._showing_preview = True
+                self._apply_page_pixmap(self.current_preview_render, preserve_selection=True)
+            else:
+                self.current_preview_render = None
+                self._show_original_render()
+
+            if want_thumbs and compare_rect is not None:
+                region = self._expanded_rect(compare_rect)
+                before_png = self.pdf_service.render_region(self.current_page, 2.0, region)
+                after_png = self.pdf_service.render_region_with_operations(
+                    self.current_page,
+                    2.0,
+                    region,
+                    operations,
+                    erase_operations=erasers,
+                    whiteout=whiteout,
+                    include_lichess_link=include_link,
+                )
+                self.before_after.set_images(before_png, after_png)
+            elif self.compare_group.isChecked():
+                self.before_after.set_message(
+                    "Selecione um diagrama e monte a posição para ver o antes e depois."
+                )
+        except Exception as exc:
+            self.current_preview_render = None
+            self.before_after.set_message(f"Não foi possível gerar a prévia: {exc}")
+            self.statusBar().showMessage(f"Falha ao gerar prévia: {exc}")
 
     def _prev_page(self) -> None:
         if not self.pdf_service:
@@ -1234,11 +1857,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self._render_current_page()
 
     def _selected_operation_index(self) -> Optional[int]:
-        item = self.ops_list.currentItem()
-        if not item:
-            return None
-        idx = int(item.data(QtCore.Qt.UserRole))
-        if 0 <= idx < len(self.operations):
+        idx = self._current_operation_index
+        if idx is not None and 0 <= idx < len(self.operations):
+            return idx
+        return None
+
+    def _set_current_operation(self, idx: Optional[int]) -> None:
+        """Define a substituicao em foco e sincroniza os paineis dependentes."""
+        if idx is None or not (0 <= idx < len(self.operations)):
+            self._current_operation_index = None
+            self._update_edit_context_state()
+            return
+
+        self._current_operation_index = idx
+        self._update_edit_context_state()
+        if self._loading_ui:
+            return
+        self._select_operation_in_fen_tab(idx)
+        self._update_lichess_link()
+        if self.apply_style_all_check.isChecked():
+            return
+        op = self.operations[idx]
+        self._loading_ui = True
+        self.pad_left_spin.setValue(float(op.whiteout_padding_left_pt))
+        self.pad_top_spin.setValue(float(op.whiteout_padding_top_pt))
+        self.pad_right_spin.setValue(float(op.whiteout_padding_right_pt))
+        self.pad_bottom_spin.setValue(float(op.whiteout_padding_bottom_pt))
+        self.op_border_spin.setValue(float(op.border_width_pt))
+        self._loading_ui = False
+        self._update_edit_context_state()
+
+    def _selected_eraser_index(self) -> Optional[int]:
+        idx = self._current_eraser_index
+        if idx is not None and 0 <= idx < len(self.erase_operations):
             return idx
         return None
 
@@ -1320,8 +1971,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _update_lichess_link(self) -> None:
         full_fen = self._current_full_fen_for_lichess()
         if not full_fen:
-            self.lichess_link_label.setText('<span style="color:#6c6c6c;">Lichess (FEN invalido)</span>')
-            self.lichess_link_label.setToolTip("Informe uma FEN valida para abrir no Lichess.")
+            self.lichess_link_label.setText("Lichess (FEN inválida)")
+            self.lichess_link_label.setToolTip("Informe uma FEN válida para abrir no Lichess.")
             return
         url = self._build_lichess_analysis_url(full_fen)
         self.lichess_link_label.setText(f'<a href="{url}">Lichess</a>')
@@ -1358,6 +2009,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.board_editor.set_piece_placement(op.fen)
         self.fen_edit.setText(op.fen)
         self._loading_ui = False
+        self._set_position_anchor(op.rect_pdf)
         self._update_warnings(op.fen)
         self._update_lichess_link()
         self._select_change("operation", idx)
@@ -1370,10 +2022,13 @@ class MainWindow(QtWidgets.QMainWindow):
         return (left, top, right, bottom)
 
     def _refresh_page_overlays(self) -> None:
-        if not self.pdf_service or not self.current_render:
+        if not self.pdf_service or not self.current_render or self._showing_preview:
+            # Na previa a pagina ja mostra o resultado real; as marcacoes de
+            # trabalho sairiam do caminho do "como vai ficar".
             self.page_widget.set_operation_rects([])
             self.page_widget.set_eraser_rects([])
             self.page_widget.set_study_rects([])
+            self.page_widget.set_candidate_rects([])
             return
 
         op_rects: list[tuple[float, float, float, float]] = []
@@ -1412,16 +2067,33 @@ class MainWindow(QtWidgets.QMainWindow):
             study_rects.append(rect_img)
         self.page_widget.set_study_rects(study_rects)
 
+        candidate_rects: list[tuple[float, float, float, float]] = []
+        for candidate in self.candidates:
+            if candidate.page_num != self.current_page:
+                continue
+            candidate_rects.append(
+                self.pdf_service.pdf_rect_to_image_rect(
+                    self.current_page,
+                    candidate.rect_pdf,
+                    self.current_render.matrix,
+                )
+            )
+        self.page_widget.set_candidate_rects(candidate_rects)
+
     def _on_selection_changed(self, rect: object) -> None:
+        if self._refreshing_view:
+            return
         if rect is None:
-            self.statusBar().showMessage("Selecao limpa.")
+            self.statusBar().showMessage("Seleção limpa.")
             self._update_edit_context_state()
+            self._schedule_preview_refresh()
             return
         x0, y0, x1, y1 = rect
         self.statusBar().showMessage(
-            f"Selecao imagem: x0={x0:.1f}, y0={y0:.1f}, x1={x1:.1f}, y1={y1:.1f}"
+            f"Seleção na imagem: x0={x0:.1f}, y0={y0:.1f}, x1={x1:.1f}, y1={y1:.1f}"
         )
         self._update_edit_context_state()
+        self._schedule_preview_refresh()
 
     def _operation_index_at_image_point(self, x: float, y: float) -> Optional[int]:
         if not self.pdf_service or not self.current_render:
@@ -1491,9 +2163,9 @@ class MainWindow(QtWidgets.QMainWindow):
             side_to_move=op.side_to_move,
             fullmove_number=op.fullmove_number,
         )
-        self.ops_list.setCurrentRow(idx)
+        self._set_current_operation(idx)
         self._set_mode("study")
-        self.statusBar().showMessage(f"Diagrama da pagina {op.page_num + 1} carregado no estudo.")
+        self.statusBar().showMessage(f"Diagrama da página {op.page_num + 1} carregado no estudo.")
 
     def _on_page_clicked(self, point: object) -> None:
         if not isinstance(point, tuple) or len(point) != 2:
@@ -1512,14 +2184,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
             self.statusBar().showMessage(
-                "Nenhum diagrama conhecido nesse clique. Selecione a area e use Reconhecer seleção ou Estudar selecao."
+                "Nenhum diagrama conhecido nesse clique. Selecione a área e use Reconhecer seleção ou Estudar seleção."
             )
             return
 
         idx = self._operation_index_at_image_point(x, y)
         if idx is None:
             return
-        self.ops_list.setCurrentRow(idx)
+        self._set_current_operation(idx)
         self._focus_operation(idx)
 
     def _selected_study_position_index(self) -> Optional[int]:
@@ -1572,7 +2244,7 @@ class MainWindow(QtWidgets.QMainWindow):
         start_fullmove_number: int,
     ) -> str:
         if ply <= 0:
-            return "posicao inicial"
+            return "posição inicial"
         rows = StudyPanel._format_san_rows(san_line, start_turn, start_fullmove_number)
         for move_label, white_san, white_ply, black_san, black_ply in rows:
             move_no = move_label.rstrip(".")
@@ -1585,7 +2257,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _update_study_comment_target_label(self) -> None:
         idx = self._selected_study_position_index()
         if idx is None:
-            self.study_comment_target_label.setText("Comentando: selecione uma posicao de estudo")
+            self.study_comment_target_label.setText("Comentando: selecione uma posição de estudo")
             return
         reference = self._study_move_reference(
             self.study_panel.study_board.current_ply(),
@@ -1864,7 +2536,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _save_current_study_line(self) -> None:
         idx = self._selected_study_position_index()
         if idx is None:
-            QtWidgets.QMessageBox.information(self, "Estudo", "Selecione uma posicao de estudo primeiro.")
+            QtWidgets.QMessageBox.information(self, "Estudo", "Selecione uma posição de estudo primeiro.")
             return
         self._flush_study_comment_for_index(idx)
         self.statusBar().showMessage("Linha de estudo atualizada.")
@@ -1876,7 +2548,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         del self.study_positions[idx]
         self._refresh_study_positions_list()
-        self.statusBar().showMessage(f"Posicao de estudo removida. Total: {len(self.study_positions)}")
+        self.statusBar().showMessage(f"Posição de estudo removida. Total: {len(self.study_positions)}")
 
     def _load_editor_position_into_study(self) -> None:
         text = self.fen_edit.text().strip()
@@ -1885,7 +2557,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             piece_placement = normalize_piece_placement(extract_piece_placement(text))
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
+            QtWidgets.QMessageBox.warning(self, "FEN inválida", str(exc))
             return
         side_to_move, fullmove_number = self._current_fen_defaults()
         self.study_panel.load_piece_placement(
@@ -1919,7 +2591,7 @@ class MainWindow(QtWidgets.QMainWindow):
             raise ValueError("Abra um PDF primeiro.")
         selection = self.page_widget.selection_rect()
         if not selection:
-            raise ValueError("Selecione a area do texto no PDF.")
+            raise ValueError("Selecione a área do texto no PDF.")
         rect_pdf = self.pdf_service.image_rect_to_pdf_rect(
             self.current_page,
             selection,
@@ -1927,7 +2599,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         text = self.pdf_service.extract_text_from_pdf_rect(self.current_page, rect_pdf)
         if not text:
-            raise ValueError("Nenhum texto selecionavel encontrado nessa area.")
+            raise ValueError("Nenhum texto selecionável encontrado nessa área.")
         return text
 
     @staticmethod
@@ -1944,7 +2616,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _copy_pdf_text_to_study_comment(self, target: str) -> None:
         idx = self._selected_study_position_index()
         if idx is None:
-            QtWidgets.QMessageBox.information(self, "Estudo", "Selecione ou crie uma posicao de estudo primeiro.")
+            QtWidgets.QMessageBox.information(self, "Estudo", "Selecione ou crie uma posição de estudo primeiro.")
             return
         try:
             text = self._text_from_current_selection()
@@ -1956,7 +2628,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._append_text_to_plain_edit(edit, text)
         QtWidgets.QApplication.clipboard().setText(text)
         self._save_current_study_line()
-        self.statusBar().showMessage("Texto copiado do PDF e salvo no comentario.")
+        self.statusBar().showMessage("Texto copiado do PDF e salvo no comentário.")
 
     def _study_selection(self) -> None:
         if not self.current_render or not self.pdf_service:
@@ -1964,14 +2636,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         selection = self.page_widget.selection_rect()
         if not selection:
-            QtWidgets.QMessageBox.warning(self, "Sem selecao", "Selecione o diagrama na pagina.")
+            QtWidgets.QMessageBox.warning(self, "Sem seleção", "Selecione o diagrama na página.")
             return
         text = self.fen_edit.text().strip() or self.board_editor.piece_placement()
         try:
             piece_placement = normalize_piece_placement(extract_piece_placement(text))
             validate_piece_placement(piece_placement)
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
+            QtWidgets.QMessageBox.warning(self, "FEN inválida", str(exc))
             return
         rect_pdf = self.pdf_service.image_rect_to_pdf_rect(
             self.current_page,
@@ -1989,35 +2661,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.study_positions.append(pos)
         self._refresh_study_positions_list()
         self._focus_study_position(len(self.study_positions) - 1)
-        self.statusBar().showMessage(f"Posicao enviada para estudo. Total: {len(self.study_positions)}")
-
-    def _on_operation_selected(
-        self,
-        current: Optional[QtWidgets.QListWidgetItem],
-        previous: Optional[QtWidgets.QListWidgetItem],
-    ) -> None:
-        del previous
-        self._update_edit_context_state()
-        if self._loading_ui:
-            return
-        if current is None:
-            return
-        idx = int(current.data(QtCore.Qt.UserRole))
-        if not (0 <= idx < len(self.operations)):
-            return
-        self._select_operation_in_fen_tab(idx)
-        self._update_lichess_link()
-        if self.apply_style_all_check.isChecked():
-            return
-        op = self.operations[idx]
-        self._loading_ui = True
-        self.pad_left_spin.setValue(float(op.whiteout_padding_left_pt))
-        self.pad_top_spin.setValue(float(op.whiteout_padding_top_pt))
-        self.pad_right_spin.setValue(float(op.whiteout_padding_right_pt))
-        self.pad_bottom_spin.setValue(float(op.whiteout_padding_bottom_pt))
-        self.op_border_spin.setValue(float(op.border_width_pt))
-        self._loading_ui = False
-        self._update_edit_context_state()
+        self.statusBar().showMessage(f"Posição enviada para estudo. Total: {len(self.study_positions)}")
 
     def _on_change_selected(
         self,
@@ -2034,15 +2678,17 @@ class MainWindow(QtWidgets.QMainWindow):
         kind = str(data[0])
         idx = int(data[1])
         if kind == "operation" and 0 <= idx < len(self.operations):
-            self.ops_list.setCurrentRow(idx)
-            self._select_operation_in_fen_tab(idx)
+            self._current_eraser_index = None
+            self._set_current_operation(idx)
             self._update_lichess_link()
+            self._schedule_preview_refresh()
             return
         if kind == "eraser":
-            self.erasers_list.setCurrentRow(idx if 0 <= idx < len(self.erase_operations) else -1)
-            self.ops_list.setCurrentRow(-1)
+            self._current_eraser_index = idx if 0 <= idx < len(self.erase_operations) else None
+            self._set_current_operation(None)
             self.fen_ops_list.setCurrentRow(-1)
             self._update_lichess_link()
+            self._schedule_preview_refresh()
 
     def _on_change_double_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
         data = item.data(QtCore.Qt.UserRole)
@@ -2062,6 +2708,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._loading_ui:
             return
         if not self.operations:
+            # Sem substituicoes salvas o ajuste ainda vale para o rascunho.
+            self._schedule_preview_refresh()
             return
         pad_left, pad_top, pad_right, pad_bottom = self._current_whiteout_padding()
         border = float(self.op_border_spin.value())
@@ -2081,6 +2729,10 @@ class MainWindow(QtWidgets.QMainWindow):
             op.border_width_pt = border
         self._refresh_operations_list()
         self._refresh_page_overlays()
+        self._schedule_preview_refresh()
+        # Cada passo do spinbox emite um sinal; um commit por passo encheria o
+        # historico de estados intermediarios que ninguem quer desfazer um a um.
+        self._style_history_timer.start()
 
     def _on_fen_operation_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
         if self._syncing_fen_tab:
@@ -2088,7 +2740,7 @@ class MainWindow(QtWidgets.QMainWindow):
         idx = int(item.data(QtCore.Qt.UserRole))
         if not (0 <= idx < len(self.operations)):
             return
-        self.ops_list.setCurrentRow(idx)
+        self._set_current_operation(idx)
         self._focus_operation(idx)
 
     def _on_fen_meta_changed(self, value: int) -> None:
@@ -2109,18 +2761,21 @@ class MainWindow(QtWidgets.QMainWindow):
         op.side_to_move = side_to_move
         op.fullmove_number = fullmove_number
         self._refresh_operations_list()
-        self.ops_list.setCurrentRow(idx)
+        self._set_current_operation(idx)
         self._update_lichess_link()
 
     def _on_board_changed(self, piece_placement: str) -> None:
         if self._loading_ui:
             return
+        # Edicao manual: a posicao passa a pertencer a selecao ativa.
+        self._anchor_from_selection()
         self._loading_ui = True
         self.fen_edit.setText(piece_placement)
         self._loading_ui = False
         self._update_warnings(piece_placement)
         self._update_lichess_link()
         self._update_edit_context_state()
+        self._schedule_preview_refresh()
 
     def _on_fen_edited(self) -> None:
         if self._loading_ui:
@@ -2128,6 +2783,7 @@ class MainWindow(QtWidgets.QMainWindow):
         text = self.fen_edit.text().strip()
         try:
             piece_placement = normalize_piece_placement(extract_piece_placement(text))
+            self._anchor_from_selection()
             self._loading_ui = True
             self.board_editor.set_piece_placement(piece_placement)
             self.fen_edit.setText(piece_placement)
@@ -2135,11 +2791,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_warnings(piece_placement)
             self._update_lichess_link()
             self._update_edit_context_state()
+            self._schedule_preview_refresh()
         except Exception as exc:
+            # Sair do campo com a FEN pela metade nao pode virar modal: o aviso
+            # vai para o rotulo logo abaixo, que existe exatamente para isso.
             self._loading_ui = False
+            self.warnings.setText(f"FEN inválida: {exc}")
             self._update_lichess_link()
             self._update_edit_context_state()
-            QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
 
     def _update_warnings(self, piece_placement: str) -> None:
         try:
@@ -2155,11 +2814,10 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         selection = self.page_widget.selection_rect()
         if not selection:
-            QtWidgets.QMessageBox.warning(self, "Sem selecao", "Selecione uma regiao da pagina.")
+            QtWidgets.QMessageBox.warning(self, "Sem seleção", "Selecione uma região da página.")
             return
 
-        endpoint = self.endpoint_edit.text().strip() or None
-        client = OcrApiClient(endpoint=endpoint)
+        client = self._make_ocr_client()
 
         cursor_set = False
         try:
@@ -2178,7 +2836,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QApplication.restoreOverrideCursor()
 
         if not prediction.results:
-            QtWidgets.QMessageBox.information(self, "OCR", "Nenhum tabuleiro detectado na selecao.")
+            QtWidgets.QMessageBox.information(self, "OCR", "Nenhum tabuleiro detectado na seleção.")
             return
 
         best = prediction.results[0]
@@ -2198,9 +2856,12 @@ class MainWindow(QtWidgets.QMainWindow):
         rx1 = sx0 + (best.xc + best.width / 2.0) * sw
         ry1 = sy0 + (best.yc + best.height / 2.0) * sh
         self.page_widget.set_selection_rect((rx0, ry0, rx1, ry1))
+        # A posicao reconhecida pertence a esta area: libera a previa do rascunho.
+        self._anchor_from_selection()
+        self._schedule_preview_refresh(immediate=True)
 
         info = (
-            f"OCR concluido. id={prediction.request_id or '-'} "
+            f"OCR concluído. id={prediction.request_id or '-'} "
             f"status={prediction.status} boards={len(prediction.results)}"
         )
         if prediction.message:
@@ -2213,8 +2874,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Sem PDF", "Abra um PDF antes de rodar OCR.")
             return
 
-        endpoint = self.endpoint_edit.text().strip() or None
-        client = OcrApiClient(endpoint=endpoint)
+        client = self._make_ocr_client()
         cursor_set = False
         try:
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
@@ -2234,9 +2894,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QApplication.restoreOverrideCursor()
 
         if not prediction.results:
-            QtWidgets.QMessageBox.information(self, "OCR", "Nenhum tabuleiro detectado nesta pagina.")
+            QtWidgets.QMessageBox.information(self, "OCR", "Nenhum tabuleiro detectado nesta página.")
             return
 
+        auto_apply = self.auto_apply_check.isChecked()
         added_count = 0
         skipped_count = 0
         first_rect: Optional[tuple[float, float, float, float]] = None
@@ -2281,7 +2942,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if self._has_similar_operation(op):
                 skipped_count += 1
                 continue
-            self.operations.append(op)
+            if auto_apply:
+                self.operations.append(op)
+            else:
+                op.source = "ocr-page-candidato"
+                self.candidates.append(op)
             added_count += 1
             if first_rect is None:
                 first_rect = rect_img
@@ -2293,15 +2958,31 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._update_warnings(piece_placement)
 
         self._refresh_operations_list()
+        self._refresh_candidates_list()
         self._refresh_page_overlays()
         if first_rect is not None:
             self.page_widget.set_selection_rect(first_rect)
-            self.ops_list.setCurrentRow(len(self.operations) - added_count)
-            self._select_change("operation", len(self.operations) - added_count)
+            self._anchor_from_selection()
+            if auto_apply:
+                self._set_current_operation(len(self.operations) - added_count)
+                self._select_change("operation", len(self.operations) - added_count)
+            else:
+                self.candidates_list.setCurrentRow(len(self.candidates) - added_count)
         self._update_edit_context_state()
-        self.statusBar().showMessage(
-            f"Pagina reconhecida. adicionadas={added_count}, ignoradas={skipped_count}"
-        )
+        self._schedule_preview_refresh(immediate=True)
+        if added_count:
+            self._commit_history(
+                f"reconhecer página ({added_count} {'substituições' if auto_apply else 'candidatos'})"
+            )
+        if auto_apply:
+            self.statusBar().showMessage(
+                f"Página reconhecida. aplicadas={added_count}, ignoradas={skipped_count}"
+            )
+        else:
+            self.statusBar().showMessage(
+                f"Página reconhecida. candidatos={added_count}, ignorados={skipped_count}. "
+                "Confira cada um e clique em Aplicar."
+            )
 
     @staticmethod
     def _rect_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
@@ -2329,30 +3010,73 @@ class MainWindow(QtWidgets.QMainWindow):
         return max(0.0, x1 - x0) * max(0.0, y1 - y0)
 
     def _has_similar_operation(self, candidate: OverlayOperation, iou_threshold: float = 0.90) -> bool:
-        for op in self.operations:
+        # Uma deteccao ja na fila de candidatos tambem conta como duplicata.
+        for op in (*self.operations, *self.candidates):
             if op.page_num != candidate.page_num:
                 continue
             if self._rect_iou(op.rect_pdf, candidate.rect_pdf) >= iou_threshold:
                 return True
         return False
 
+    # ------------------------------------------------------------------
+    # OCR em lote (Sprint 5.1: fora da thread da UI)
+    # ------------------------------------------------------------------
+    #
+    # Antes: 898 requisicoes HTTP sequenciais na thread da UI, com
+    # `processEvents()` segurando a janela. O Windows marcava o app como "nao
+    # respondendo" e o botao Cancelar so era lido no proximo processEvents.
+    #
+    # Agora o `BatchOcrWorker` renderiza e reconhece numa thread propria (com o
+    # seu proprio `fitz.Document`) e manda cada pagina pronta por sinal. Todos os
+    # `_on_batch_ocr_*` abaixo rodam na thread da UI — conexao entre threads e
+    # `QueuedConnection` por padrao —, entao eles podem mexer nas listas e nos
+    # widgets a vontade.
+
     def _recognize_full_pdf(self) -> None:
         if not self.pdf_service or not self.current_pdf_path:
             QtWidgets.QMessageBox.warning(self, "Sem PDF", "Abra um PDF antes de rodar OCR.")
             return
+        if self._ocr_worker is not None and self._ocr_worker.isRunning():
+            QtWidgets.QMessageBox.information(
+                self,
+                "OCR em lote",
+                "Já existe um reconhecimento em andamento.",
+            )
+            return
 
-        endpoint = self.endpoint_edit.text().strip() or None
-        client = OcrApiClient(endpoint=endpoint)
         total_pages = self.pdf_service.page_count
         if total_pages <= 0:
-            QtWidgets.QMessageBox.information(self, "OCR", "PDF sem paginas para processar.")
+            QtWidgets.QMessageBox.information(self, "OCR", "PDF sem páginas para processar.")
             return
+
         start_page = int(self.ocr_full_next_page)
         if start_page < 0 or start_page >= total_pages:
             start_page = 0
         remaining_pages = total_pages - start_page
         if start_page > 0:
-            self.statusBar().showMessage(f"OCR em lote retomando da pagina {start_page + 1}/{total_pages}...")
+            self.statusBar().showMessage(
+                f"OCR em lote retomando da página {start_page + 1}/{total_pages}..."
+            )
+
+        # Congelado no inicio do lote: mudar o estilo no meio da execucao nao
+        # pode fazer metade das deteccoes sair com outro padding.
+        pad_left, pad_top, pad_right, pad_bottom = self._current_whiteout_padding()
+        side_to_move, fullmove_number = self._current_fen_defaults()
+        self._ocr_batch = {
+            "auto_apply": self.auto_apply_check.isChecked(),
+            "total_pages": total_pages,
+            "start_page": start_page,
+            "added": 0,
+            "skipped": 0,
+            "skipped_too_large": 0,
+            "pages_with_hits": 0,
+            "errors": 0,
+            "padding": (pad_left, pad_top, pad_right, pad_bottom),
+            "side_to_move": side_to_move,
+            "fullmove_number": fullmove_number,
+            "border_width_pt": float(self.op_border_spin.value()),
+            "max_area_ratio": 0.50,
+        }
 
         progress = QtWidgets.QProgressDialog(
             "Reconhecendo diagramas no PDF inteiro...",
@@ -2364,127 +3088,161 @@ class MainWindow(QtWidgets.QMainWindow):
         progress.setWindowTitle("OCR em lote")
         progress.setWindowModality(QtCore.Qt.WindowModal)
         progress.setMinimumDuration(0)
+        # O ciclo de vida do dialogo e nosso: ele so fecha quando o worker
+        # confirmar que terminou, senao um cancelamento deixaria a thread orfa.
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
         progress.setValue(0)
+        progress.canceled.connect(self._cancel_batch_ocr)
+        self._ocr_progress = progress
 
-        added_count = 0
-        skipped_count = 0
-        skipped_too_large = 0
-        pages_with_hits = 0
-        error_count = 0
-        canceled = False
-        max_diagram_area_ratio = 0.50
-        next_page_for_resume = start_page
+        worker = BatchOcrWorker(
+            self.current_pdf_path,
+            start_page,
+            total_pages,
+            endpoint=self._ocr_endpoint(),
+            zoom=2.0,
+            parent=self,
+        )
+        worker.progress.connect(self._on_batch_ocr_progress)
+        worker.page_done.connect(self._on_batch_ocr_page_done)
+        worker.page_failed.connect(self._on_batch_ocr_page_failed)
+        worker.completed.connect(self._on_batch_ocr_completed)
+        self._ocr_worker = worker
+        logger.info("OCR em lote: paginas %d..%d", start_page + 1, total_pages)
+        worker.start()
 
-        cursor_set = False
-        try:
-            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
-            cursor_set = True
+    def _cancel_batch_ocr(self) -> None:
+        if self._ocr_worker is not None:
+            self._ocr_worker.cancel()
+        if self._ocr_progress is not None:
+            self._ocr_progress.setLabelText("Cancelando após a página atual...")
 
-            for page_num in range(start_page, total_pages):
-                if progress.wasCanceled():
-                    canceled = True
-                    break
+    def _on_batch_ocr_progress(self, page_num: int, total: int) -> None:
+        if self._ocr_progress is None:
+            return
+        batch = self._ocr_batch
+        self._ocr_progress.setLabelText(
+            f"Página {page_num + 1}/{batch['total_pages']} — {batch['added']} encontrado(s)"
+        )
+        self._ocr_progress.setValue(page_num - batch["start_page"])
 
-                progress.setLabelText(f"Pagina {page_num + 1}/{total_pages}...")
-                progress.setValue(page_num - start_page)
-                QtWidgets.QApplication.processEvents()
-                try:
-                    try:
-                        rendered = self.pdf_service.render_page(page_num, zoom=2.0)
-                    except Exception:
-                        error_count += 1
-                        continue
-                    try:
-                        pred = client.predict(rendered.image_png, filename=f"page_{page_num + 1}.png")
-                    except OcrApiError:
-                        error_count += 1
-                        continue
-                    except Exception:
-                        error_count += 1
-                        continue
+    def _on_batch_ocr_page_failed(self, page_num: int, message: str) -> None:
+        self._ocr_batch["errors"] += 1
+        logger.warning("OCR em lote falhou na página %d: %s", page_num + 1, message)
 
-                    if not pred.results:
-                        continue
-                    pages_with_hits += 1
+    def _on_batch_ocr_page_done(self, page_num: int, detections: list) -> None:
+        if not detections:
+            return
+        batch = self._ocr_batch
+        batch["pages_with_hits"] += 1
+        pad_left, pad_top, pad_right, pad_bottom = batch["padding"]
+        auto_apply = batch["auto_apply"]
+        touches_current_page = False
 
-                    for result in pred.results:
-                        try:
-                            piece_placement = normalize_piece_placement(extract_piece_placement(result.fen))
-                            validate_piece_placement(piece_placement)
-                        except Exception:
-                            skipped_count += 1
-                            continue
+        for detection in detections:
+            try:
+                piece_placement = normalize_piece_placement(extract_piece_placement(detection.fen))
+                validate_piece_placement(piece_placement)
+            except Exception:
+                batch["skipped"] += 1
+                continue
 
-                        sw = max(1.0, float(rendered.width_px))
-                        sh = max(1.0, float(rendered.height_px))
-                        x0 = (result.xc - result.width / 2.0) * sw
-                        y0 = (result.yc - result.height / 2.0) * sh
-                        x1 = (result.xc + result.width / 2.0) * sw
-                        y1 = (result.yc + result.height / 2.0) * sh
-                        rect_pdf = self.pdf_service.image_rect_to_pdf_rect(
-                            page_num,
-                            (x0, y0, x1, y1),
-                            rendered.matrix,
-                        )
-                        page_rect = self.pdf_service.doc[page_num].rect
-                        page_area = max(1.0, page_rect.width * page_rect.height)
-                        diagram_area_ratio = self._rect_area(rect_pdf) / page_area
-                        if diagram_area_ratio > max_diagram_area_ratio:
-                            skipped_too_large += 1
-                            continue
+            # Um "diagrama" maior que metade da pagina quase sempre e a pagina
+            # inteira detectada por engano.
+            if detection.area_ratio > batch["max_area_ratio"]:
+                batch["skipped_too_large"] += 1
+                continue
 
-                        pad_left, pad_top, pad_right, pad_bottom = self._current_whiteout_padding()
-                        side_to_move, fullmove_number = self._current_fen_defaults()
-                        op = OverlayOperation(
-                            page_num=page_num,
-                            rect_pdf=rect_pdf,
-                            fen=piece_placement,
-                            side_to_move=side_to_move,
-                            fullmove_number=fullmove_number,
-                            source="ocr-auto",
-                            confidence=result.confidence,
-                            whiteout_padding_pt=(pad_left + pad_top + pad_right + pad_bottom) / 4.0,
-                            whiteout_padding_left_pt=pad_left,
-                            whiteout_padding_top_pt=pad_top,
-                            whiteout_padding_right_pt=pad_right,
-                            whiteout_padding_bottom_pt=pad_bottom,
-                            border_width_pt=float(self.op_border_spin.value()),
-                        )
-                        if self._has_similar_operation(op):
-                            skipped_count += 1
-                            continue
-                        self.operations.append(op)
-                        added_count += 1
-                finally:
-                    next_page_for_resume = page_num + 1
+            op = OverlayOperation(
+                page_num=detection.page_num,
+                rect_pdf=detection.rect_pdf,
+                fen=piece_placement,
+                side_to_move=batch["side_to_move"],
+                fullmove_number=batch["fullmove_number"],
+                source="ocr-auto",
+                confidence=detection.confidence,
+                whiteout_padding_pt=(pad_left + pad_top + pad_right + pad_bottom) / 4.0,
+                whiteout_padding_left_pt=pad_left,
+                whiteout_padding_top_pt=pad_top,
+                whiteout_padding_right_pt=pad_right,
+                whiteout_padding_bottom_pt=pad_bottom,
+                border_width_pt=batch["border_width_pt"],
+            )
+            if self._has_similar_operation(op):
+                batch["skipped"] += 1
+                continue
 
-            progress.setValue(remaining_pages)
-        finally:
-            if cursor_set:
-                QtWidgets.QApplication.restoreOverrideCursor()
-            progress.close()
+            if auto_apply:
+                self.operations.append(op)
+            else:
+                op.source = "ocr-auto-candidato"
+                self.candidates.append(op)
+            batch["added"] += 1
+            if op.page_num == self.current_page:
+                touches_current_page = True
+
+        # As listas so sao remontadas no fim do lote (900 paginas x remontar a
+        # lista inteira seria mais caro que o proprio OCR). A pagina visivel e a
+        # excecao: ali o usuario ve a deteccao aparecer.
+        if touches_current_page:
+            self._refresh_page_overlays()
+
+    def _on_batch_ocr_completed(self, next_page: int, canceled: bool) -> None:
+        batch = self._ocr_batch
+        total_pages = batch["total_pages"]
+        auto_apply = batch["auto_apply"]
+        added_count = batch["added"]
+
+        if self._ocr_progress is not None:
+            self._ocr_progress.close()
+            self._ocr_progress = None
+        if self._ocr_worker is not None:
+            self._ocr_worker.wait()
+            self._ocr_worker.deleteLater()
+            self._ocr_worker = None
 
         if canceled:
-            self.ocr_full_next_page = max(0, min(next_page_for_resume, total_pages - 1))
+            self.ocr_full_next_page = max(0, min(int(next_page), total_pages - 1))
         else:
             self.ocr_full_next_page = 0
 
         self._refresh_operations_list()
+        self._refresh_candidates_list()
         self._refresh_page_overlays()
         self._update_edit_context_state()
+        if added_count:
+            self._commit_history(
+                f"Detectar no PDF ({added_count} {'substituições' if auto_apply else 'candidatos'})"
+            )
+        self._mark_project_dirty()
 
+        label = "aplicadas" if auto_apply else "candidatos"
         status = (
-            f"OCR em lote concluido. adicionadas={added_count}, ignoradas={skipped_count}, "
-            f"grandes_descartadas={skipped_too_large}, paginas com deteccao={pages_with_hits}, falhas={error_count}"
+            f"OCR em lote concluído. {label}={added_count}, ignoradas={batch['skipped']}, "
+            f"grandes_descartadas={batch['skipped_too_large']}, "
+            f"páginas com detecção={batch['pages_with_hits']}, falhas={batch['errors']}"
         )
         if canceled:
-            status += f" (cancelado pelo usuario; retomada na pagina {self.ocr_full_next_page + 1})"
+            status += f" (cancelado pelo usuário; retomada na página {self.ocr_full_next_page + 1})"
+        if not auto_apply and added_count:
+            status += ". Confira os candidatos antes de aplicar."
         self.statusBar().showMessage(status)
+        logger.info("%s", status)
 
         QtWidgets.QMessageBox.information(self, "OCR em lote", status)
-        
-        if not canceled and added_count > 0:
-            auto_path = str(Path(self.current_pdf_path).with_name(Path(self.current_pdf_path).stem + "_hq.pdf"))
+
+        if not auto_apply and added_count:
+            self.candidates_list.setCurrentRow(0)
+            self._focus_candidate(0)
+            return
+
+        # A exportacao automatica so faz sentido quando as substituicoes ja
+        # foram aplicadas sem conferencia.
+        if not canceled and added_count > 0 and self.current_pdf_path:
+            auto_path = str(
+                Path(self.current_pdf_path).with_name(Path(self.current_pdf_path).stem + "_hq.pdf")
+            )
             self._save_output_pdf(auto_save_path=auto_path)
 
     def _add_operation(self) -> None:
@@ -2494,7 +3252,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         selection = self.page_widget.selection_rect()
         if not selection:
-            QtWidgets.QMessageBox.warning(self, "Sem selecao", "Selecione a area do diagrama na pagina.")
+            QtWidgets.QMessageBox.warning(self, "Sem seleção", "Selecione a área do diagrama na página.")
             return
 
         fen_text = self.fen_edit.text().strip()
@@ -2502,7 +3260,7 @@ class MainWindow(QtWidgets.QMainWindow):
             piece_placement = normalize_piece_placement(extract_piece_placement(fen_text))
             validate_piece_placement(piece_placement)
         except Exception as exc:
-            QtWidgets.QMessageBox.warning(self, "FEN invalido", str(exc))
+            QtWidgets.QMessageBox.warning(self, "FEN inválida", str(exc))
             return
 
         rect_pdf = self.pdf_service.image_rect_to_pdf_rect(
@@ -2532,11 +3290,12 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.operations.append(op)
         self._refresh_operations_list()
-        self.ops_list.setCurrentRow(len(self.operations) - 1)
+        self._set_current_operation(len(self.operations) - 1)
         self._select_change("operation", len(self.operations) - 1)
         self._refresh_page_overlays()
         self._update_edit_context_state()
-        self.statusBar().showMessage(f"Substituicao adicionada. Total: {len(self.operations)}")
+        self._commit_history("adicionar substituição")
+        self.statusBar().showMessage(f"Substituição adicionada. Total: {len(self.operations)}")
 
     def _refresh_operations_list(self) -> None:
         selected_idx = self._selected_operation_index()
@@ -2547,38 +3306,27 @@ class MainWindow(QtWidgets.QMainWindow):
                 if 0 <= candidate < len(self.operations):
                     selected_idx = candidate
 
-        self.ops_list.clear()
         self.fen_ops_list.clear()
         for idx, op in enumerate(self.operations):
-            pad_desc = (
-                f"E{op.whiteout_padding_left_pt:.1f}/T{op.whiteout_padding_top_pt:.1f}/"
-                f"D{op.whiteout_padding_right_pt:.1f}/B{op.whiteout_padding_bottom_pt:.1f}pt"
-            )
-            text = (
-                f"{idx + 1:03d} | pag {op.page_num + 1} | "
-                f"pad={pad_desc} | borda={op.border_width_pt:.2f}pt | "
-                f"{op.fen[:20]}{'...' if len(op.fen) > 20 else ''}"
-            )
-            item = QtWidgets.QListWidgetItem(text)
-            item.setData(QtCore.Qt.UserRole, idx)
-            self.ops_list.addItem(item)
-
             fen_item = QtWidgets.QListWidgetItem(
-                f"{idx + 1:03d} | pag {op.page_num + 1} | {self._operation_full_fen(op)}"
+                f"{idx + 1:03d} | pág {op.page_num + 1} | {self._operation_full_fen(op)}"
             )
             fen_item.setData(QtCore.Qt.UserRole, idx)
             self.fen_ops_list.addItem(fen_item)
 
         if selected_idx is not None and 0 <= selected_idx < len(self.operations):
-            self._loading_ui = True
-            self.ops_list.setCurrentRow(selected_idx)
-            self._loading_ui = False
+            self._current_operation_index = selected_idx
             self._select_operation_in_fen_tab(selected_idx)
         self._update_lichess_link()
         self._refresh_changes_list()
         self._update_edit_context_state()
 
     def _refresh_changes_list(self, selected: Optional[tuple[str, int]] = None) -> None:
+        self._rebuild_changes_list(selected)
+        # Qualquer mudanca na lista de alteracoes muda o resultado exportado.
+        self._schedule_preview_refresh()
+
+    def _rebuild_changes_list(self, selected: Optional[tuple[str, int]] = None) -> None:
         if selected is None:
             selected = self._selected_change()
 
@@ -2591,7 +3339,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item = QtWidgets.QListWidgetItem("Nenhuma alteração adicionada.")
             item.setData(QtCore.Qt.UserRole, None)
             item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEnabled)
-            item.setForeground(QtGui.QColor("#667085"))
+            item.setForeground(self.palette().color(QtGui.QPalette.Disabled, QtGui.QPalette.Text))
             self.changes_list.addItem(item)
             self._update_edit_context_state()
             return
@@ -2636,13 +3384,205 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.changes_list.setCurrentRow(row)
                 return
 
+    # ------------------------------------------------------------------
+    # Fila de candidatos (deteccoes aguardando conferencia)
+    # ------------------------------------------------------------------
+
+    def _on_auto_apply_toggled(self, checked: bool) -> None:
+        self.settings.setValue("auto_apply_recognition", bool(checked))
+        if checked:
+            self.statusBar().showMessage(
+                "Reconhecer página/PDF vai aplicar as substituições direto."
+            )
+        else:
+            self.statusBar().showMessage(
+                "Reconhecer página/PDF vai listar candidatos para você conferir antes de aplicar."
+            )
+
+    def _selected_candidate_index(self) -> Optional[int]:
+        item = self.candidates_list.currentItem()
+        if not item:
+            return None
+        data = item.data(QtCore.Qt.UserRole)
+        if data is None:
+            return None
+        idx = int(data)
+        return idx if 0 <= idx < len(self.candidates) else None
+
+    def _refresh_candidates_list(self, keep_row: Optional[int] = None) -> None:
+        previous = self._selected_candidate_index() if keep_row is None else keep_row
+        self._loading_ui = True
+        try:
+            self.candidates_list.clear()
+            self.candidates_label.setText(f"2 · Conferir ({len(self.candidates)})")
+            # Fila vazia e o estado normal: esconder a secao inteira devolve
+            # espaco vertical para o que importa.
+            self.candidates_section.setVisible(bool(self.candidates))
+            for idx, candidate in enumerate(self.candidates):
+                item = QtWidgets.QListWidgetItem(
+                    f"{idx + 1:03d} | pág {candidate.page_num + 1} | "
+                    f"{candidate.fen[:28]}{'...' if len(candidate.fen) > 28 else ''}"
+                )
+                item.setData(QtCore.Qt.UserRole, idx)
+                self.candidates_list.addItem(item)
+            if previous is not None and self.candidates:
+                self.candidates_list.setCurrentRow(min(previous, len(self.candidates) - 1))
+        finally:
+            self._loading_ui = False
+        self._update_candidate_buttons()
+        self._refresh_page_overlays()
+
+    def _update_candidate_buttons(self) -> None:
+        has_selection = self._selected_candidate_index() is not None
+        has_any = bool(self.candidates)
+        self.btn_apply_candidate.setEnabled(has_selection)
+        self.btn_discard_candidate.setEnabled(has_selection)
+        self.btn_apply_all_candidates.setEnabled(has_any)
+        self.btn_discard_all_candidates.setEnabled(has_any)
+
+    def _on_candidate_selected(
+        self,
+        current: Optional[QtWidgets.QListWidgetItem],
+        previous: Optional[QtWidgets.QListWidgetItem],
+    ) -> None:
+        del previous
+        self._update_candidate_buttons()
+        if self._loading_ui or current is None:
+            return
+        data = current.data(QtCore.Qt.UserRole)
+        if data is None:
+            return
+        self._focus_candidate(int(data))
+
+    def _on_candidate_double_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
+        data = item.data(QtCore.Qt.UserRole)
+        if data is not None:
+            self._focus_candidate(int(data))
+
+    def _focus_candidate(self, idx: int) -> None:
+        """Leva a pagina/selecao/posicao do candidato para o editor.
+
+        A previa passa a mostrar como aquele diagrama ficaria, sem que nada
+        tenha sido aplicado ao PDF ainda.
+        """
+        if not (0 <= idx < len(self.candidates)) or not self.pdf_service:
+            return
+        candidate = self.candidates[idx]
+        self.current_page = min(max(0, candidate.page_num), self.pdf_service.page_count - 1)
+        self._render_current_page()
+        if self.current_render:
+            rect_img = self.pdf_service.pdf_rect_to_image_rect(
+                self.current_page,
+                candidate.rect_pdf,
+                self.current_render.matrix,
+            )
+            self.page_widget.set_selection_rect(rect_img)
+        self._loading_ui = True
+        try:
+            self.board_editor.set_piece_placement(candidate.fen)
+            self.fen_edit.setText(candidate.fen)
+            self.fen_side_combo.setCurrentIndex(1 if candidate.side_to_move == "b" else 0)
+            self.fen_move_spin.setValue(max(1, int(candidate.fullmove_number)))
+        finally:
+            self._loading_ui = False
+        self._set_position_anchor(candidate.rect_pdf)
+        self._update_warnings(candidate.fen)
+        self._update_lichess_link()
+        self._update_edit_context_state()
+        self._schedule_preview_refresh(immediate=True)
+        self.statusBar().showMessage(
+            f"Candidato {idx + 1}/{len(self.candidates)} na página {candidate.page_num + 1}. "
+            "Confira a posição e clique em Aplicar."
+        )
+
+    def _apply_selected_candidate(self) -> None:
+        idx = self._selected_candidate_index()
+        if idx is None:
+            return
+        candidate = self.candidates[idx]
+        # Se o usuario corrigiu a posicao enquanto conferia, aplica o que esta
+        # na tela (o rascunho da previa), nao a deteccao original. So vale se o
+        # rascunho for mesmo deste candidato: navegar para outra pagina ou
+        # selecionar outra area nao pode sequestrar o Aplicar.
+        draft = self._draft_operation()
+        applied = candidate
+        if (
+            draft is not None
+            and draft.page_num == candidate.page_num
+            and self._rect_iou(draft.rect_pdf, candidate.rect_pdf) >= 0.40
+        ):
+            applied = draft
+        self.operations.append(applied)
+        del self.candidates[idx]
+        self._refresh_operations_list()
+        self._refresh_candidates_list(keep_row=idx)
+        self._select_change("operation", len(self.operations) - 1)
+        self._refresh_page_overlays()
+        self._commit_history("aplicar candidato")
+        self.statusBar().showMessage(
+            f"Candidato aplicado. Substituições: {len(self.operations)} | "
+            f"Candidatos restantes: {len(self.candidates)}"
+        )
+        if self.candidates:
+            self._focus_candidate(min(idx, len(self.candidates) - 1))
+
+    def _discard_selected_candidate(self) -> None:
+        idx = self._selected_candidate_index()
+        if idx is None:
+            return
+        del self.candidates[idx]
+        self._refresh_candidates_list(keep_row=idx)
+        self._commit_history("descartar candidato")
+        self.statusBar().showMessage(f"Candidato descartado. Restantes: {len(self.candidates)}")
+        if self.candidates:
+            self._focus_candidate(min(idx, len(self.candidates) - 1))
+        else:
+            self._schedule_preview_refresh(immediate=True)
+
+    def _apply_all_candidates(self) -> None:
+        if not self.candidates:
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Aplicar todos",
+            f"Aplicar {len(self.candidates)} candidato(s) sem conferir um a um?",
+        )
+        if answer != QtWidgets.QMessageBox.Yes:
+            return
+        self.operations.extend(self.candidates)
+        applied = len(self.candidates)
+        self.candidates = []
+        self._refresh_operations_list()
+        self._refresh_candidates_list()
+        self._refresh_page_overlays()
+        self._commit_history(f"aplicar {applied} candidato(s)")
+        self.statusBar().showMessage(f"{applied} candidato(s) aplicados. Total: {len(self.operations)}")
+
+    def _discard_all_candidates(self) -> None:
+        if not self.candidates:
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Descartar todos",
+            f"Descartar {len(self.candidates)} candidato(s)?",
+        )
+        if answer != QtWidgets.QMessageBox.Yes:
+            return
+        discarded = len(self.candidates)
+        self.candidates = []
+        self._refresh_candidates_list()
+        self._refresh_page_overlays()
+        self._schedule_preview_refresh(immediate=True)
+        self._commit_history(f"descartar {discarded} candidato(s)")
+        self.statusBar().showMessage("Candidatos descartados.")
+
     def _add_eraser_from_selection(self) -> None:
         if not self.current_render or not self.pdf_service:
             QtWidgets.QMessageBox.warning(self, "Sem PDF", "Abra um PDF primeiro.")
             return
         selection = self.page_widget.selection_rect()
         if not selection:
-            QtWidgets.QMessageBox.warning(self, "Sem selecao", "Selecione uma area para apagar.")
+            QtWidgets.QMessageBox.warning(self, "Sem seleção", "Selecione uma área para apagar.")
             return
         rect_pdf = self.pdf_service.image_rect_to_pdf_rect(
             self.current_page,
@@ -2654,50 +3594,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._select_change("eraser", len(self.erase_operations) - 1)
         self._refresh_page_overlays()
         self._update_edit_context_state()
+        self._commit_history("adicionar apagamento")
         self.statusBar().showMessage(f"Apagamento adicionado. Total: {len(self.erase_operations)}")
 
     def _refresh_erasers_list(self) -> None:
-        self.erasers_list.clear()
-        for idx, op in enumerate(self.erase_operations):
-            x0, y0, x1, y1 = op.rect_pdf
-            w = max(0.0, x1 - x0)
-            h = max(0.0, y1 - y0)
-            text = f"{idx + 1:03d} | pag {op.page_num + 1} | {w:.1f}x{h:.1f} pt"
-            item = QtWidgets.QListWidgetItem(text)
-            item.setData(QtCore.Qt.UserRole, idx)
-            self.erasers_list.addItem(item)
         self._refresh_changes_list()
         self._update_edit_context_state()
-
-    def _remove_selected_eraser(self) -> None:
-        item = self.erasers_list.currentItem()
-        if not item:
-            return
-        idx = int(item.data(QtCore.Qt.UserRole))
-        if 0 <= idx < len(self.erase_operations):
-            del self.erase_operations[idx]
-            self._refresh_erasers_list()
-            self._refresh_page_overlays()
-            self._update_edit_context_state()
-            self.statusBar().showMessage(f"Apagamento removido. Total: {len(self.erase_operations)}")
-
-    def _clear_erasers(self) -> None:
-        if not self.erase_operations:
-            return
-        answer = QtWidgets.QMessageBox.question(
-            self,
-            "Limpar apagamentos",
-            "Remover todos os apagamentos pendentes?",
-        )
-        if answer == QtWidgets.QMessageBox.Yes:
-            self.erase_operations.clear()
-            self._refresh_erasers_list()
-            self._refresh_page_overlays()
-            self._update_edit_context_state()
-
-    def _on_eraser_double_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
-        idx = int(item.data(QtCore.Qt.UserRole))
-        self._focus_eraser(idx)
 
     def _focus_eraser(self, idx: int) -> None:
         if not (0 <= idx < len(self.erase_operations)) or not self.pdf_service:
@@ -2723,9 +3625,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if self.operations:
             next_idx = min(idx, len(self.operations) - 1)
-            self._loading_ui = True
-            self.ops_list.setCurrentRow(next_idx)
-            self._loading_ui = False
+            self._set_current_operation(next_idx)
             self._focus_operation(next_idx)
             self._select_change("operation", next_idx)
         else:
@@ -2734,13 +3634,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._refresh_page_overlays()
         self._update_edit_context_state()
-        self.statusBar().showMessage(f"Substituicao removida. Total: {len(self.operations)}")
-
-    def _remove_selected_operation(self) -> None:
-        idx = self._selected_operation_index()
-        if idx is None:
-            return
-        self._remove_operation_at_index(idx)
+        self._commit_history("remover substituição")
+        self.statusBar().showMessage(f"Substituição removida. Total: {len(self.operations)}")
 
     def _remove_selected_change(self) -> None:
         selected = self._selected_change()
@@ -2756,6 +3651,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_page_overlays()
             if self.erase_operations:
                 self._select_change("eraser", min(idx, len(self.erase_operations) - 1))
+            self._commit_history("remover apagamento")
             self.statusBar().showMessage(f"Apagamento removido. Total: {len(self.erase_operations)}")
 
     def _remove_selected_fen_operation(self) -> None:
@@ -2769,14 +3665,15 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         answer = QtWidgets.QMessageBox.question(
             self,
-            "Limpar substituicoes",
-            "Remover todas as substituicoes pendentes?",
+            "Limpar substituições",
+            "Remover todas as substituições pendentes?",
         )
         if answer == QtWidgets.QMessageBox.Yes:
             self.operations.clear()
             self._refresh_operations_list()
             self._refresh_page_overlays()
             self._update_edit_context_state()
+            self._commit_history("limpar substituições")
 
     def _clear_changes(self) -> None:
         if not self.operations and not self.erase_operations:
@@ -2795,12 +3692,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_page_overlays()
         self.page_widget.clear_selection()
         self._update_edit_context_state()
-
-    def _on_operation_double_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
-        idx = int(item.data(QtCore.Qt.UserRole))
-        if not (0 <= idx < len(self.operations)):
-            return
-        self._focus_operation(idx)
+        self._commit_history("limpar alterações")
 
     def _save_output_pdf(self, auto_save_path: Optional[str] = None) -> None:
         if not self.current_pdf_path:
@@ -2813,66 +3705,105 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Nenhuma substituição ou apagamento foi adicionado.",
             )
             return
+        if self._export_worker is not None and self._export_worker.isRunning():
+            QtWidgets.QMessageBox.information(
+                self,
+                "Exportar PDF",
+                "Já existe uma exportação em andamento.",
+            )
+            return
 
         if auto_save_path:
             out_path = auto_save_path
+            if Path(out_path).exists():
+                answer = QtWidgets.QMessageBox.question(
+                    self,
+                    "Substituir arquivo",
+                    f"Já existe um arquivo em:\n{out_path}\n\nSubstituir?",
+                )
+                if answer != QtWidgets.QMessageBox.Yes:
+                    self.statusBar().showMessage("Exportação automática cancelada.")
+                    return
         else:
             out_path, _ = QtWidgets.QFileDialog.getSaveFileName(
                 self,
-                "Salvar PDF de saida",
+                "Salvar PDF de saída",
                 str(Path(self.current_pdf_path).with_name(Path(self.current_pdf_path).stem + "_hq.pdf")),
                 "PDF (*.pdf)",
             )
             if not out_path:
                 return
 
-        cursor_set = False
-        try:
-            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
-            cursor_set = True
-            apply_operations_to_pdf(
-                self.current_pdf_path,
-                out_path,
-                self.operations,
-                erase_operations=self.erase_operations,
-                whiteout=self.whiteout_check.isChecked(),
-                include_lichess_link=self.include_lichess_link_check.isChecked(),
-            )
-        except Exception as exc:
-            QtWidgets.QMessageBox.critical(self, "Erro ao exportar", str(exc))
-            return
-        finally:
-            if cursor_set:
-                QtWidgets.QApplication.restoreOverrideCursor()
+        # A gravacao roda num worker: um livro grande com centenas de diagramas
+        # levava dezenas de segundos com a janela congelada (Sprint 5.1).
+        progress = QtWidgets.QProgressDialog("Exportando PDF...", "", 0, 0, self)
+        progress.setWindowTitle("Exportar PDF")
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setCancelButton(None)  # `apply_operations_to_pdf` nao e interrompivel
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setValue(0)
+        self._export_progress = progress
 
-        QtWidgets.QMessageBox.information(self, "Concluido", f"PDF salvo em:\n{out_path}")
+        worker = ExportWorker(
+            self.current_pdf_path,
+            out_path,
+            self.operations,
+            erase_operations=self.erase_operations,
+            whiteout=self.whiteout_check.isChecked(),
+            include_lichess_link=self.include_lichess_link_check.isChecked(),
+            parent=self,
+        )
+        worker.done.connect(self._on_export_done)
+        worker.failed.connect(self._on_export_failed)
+        self._export_worker = worker
+        self.statusBar().showMessage(f"Exportando para {out_path}...")
+        worker.start()
+
+    def _finish_export(self) -> None:
+        if self._export_progress is not None:
+            self._export_progress.close()
+            self._export_progress = None
+        if self._export_worker is not None:
+            self._export_worker.wait()
+            self._export_worker.deleteLater()
+            self._export_worker = None
+
+    def _on_export_done(self, out_path: str) -> None:
+        self._finish_export()
+        self.statusBar().showMessage(f"PDF salvo em {out_path}")
+        QtWidgets.QMessageBox.information(self, "Concluído", f"PDF salvo em:\n{out_path}")
+
+    def _on_export_failed(self, message: str) -> None:
+        self._finish_export()
+        self.statusBar().showMessage("Falha ao exportar o PDF.")
+        QtWidgets.QMessageBox.critical(self, "Erro ao exportar", message)
 
     def _save_project_dialog(self) -> None:
         if not self.current_pdf_path:
             QtWidgets.QMessageBox.warning(self, "Sem PDF", "Abra um PDF antes de salvar projeto.")
             return
+        # Um autosave da sessao anterior nao serve de sugestao de nome: ele mora
+        # no diretorio interno do app, nao onde o usuario guarda os projetos.
+        suggested = self.project_path if self.project_path and not is_autosave_path(self.project_path) else ""
         project_path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Salvar projeto", self.project_path or "project_state.json", "JSON (*.json)"
+            self, "Salvar projeto", suggested or "project_state.json", "JSON (*.json)"
         )
         if not project_path:
             return
 
-        state = ProjectState(
-            source_pdf=self.current_pdf_path,
-            source_pdf_fingerprint=fingerprint_file(self.current_pdf_path),
-            operations=self.operations,
-            erase_operations=self.erase_operations,
-            study_positions=self.study_positions,
-            current_page=self.current_page,
-            include_lichess_link=self.include_lichess_link_check.isChecked(),
-            ocr_full_next_page=self.ocr_full_next_page,
-        )
+        state = self._current_project_state()
+        if state is None:
+            return
         try:
-            save_project_state(project_path, state)
+            write_project_atomically(project_path, state)
         except Exception as exc:
+            logger.exception("Falha ao salvar projeto em %s", project_path)
             QtWidgets.QMessageBox.critical(self, "Erro ao salvar projeto", str(exc))
             return
         self.project_path = project_path
+        self._autosave_dirty = False
         self._remember_last_project_path(project_path)
         self.statusBar().showMessage(f"Projeto salvo: {project_path}")
 
@@ -2888,8 +3819,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if show_dialogs:
                 QtWidgets.QMessageBox.warning(
                     self,
-                    "PDF nao encontrado",
-                    f"O PDF original nao existe:\n{state.source_pdf}",
+                    "PDF não encontrado",
+                    f"O PDF original não existe:\n{state.source_pdf}",
                 )
             return False
 
@@ -2897,6 +3828,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.operations = state.operations
         self.erase_operations = state.erase_operations
         self.study_positions = state.study_positions
+        self.candidates = list(getattr(state, "candidates", []))
+        self._position_anchor = None
         self.include_lichess_link_check.setChecked(bool(getattr(state, "include_lichess_link", True)))
         self.ocr_full_next_page = max(0, int(getattr(state, "ocr_full_next_page", 0)))
         self.current_page = min(
@@ -2908,11 +3841,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_operations_list()
         self._refresh_erasers_list()
         self._refresh_study_positions_list()
+        self._refresh_candidates_list()
         self._render_current_page()
+        # O projeto recem-carregado e a linha de base: nao da para desfazer
+        # "para tras" dele, e nada esta pendente de gravacao.
+        self._reset_history("carregar projeto")
+        self._autosave_dirty = False
+        self._start_autosave_timer()
 
         try:
             current_fp = fingerprint_file(state.source_pdf)
             if state.source_pdf_fingerprint and current_fp.get("sha256") != state.source_pdf_fingerprint.get("sha256"):
+                logger.warning(
+                    "Fingerprint divergente ao carregar %s (PDF: %s)", project_path, state.source_pdf
+                )
                 if show_dialogs:
                     QtWidgets.QMessageBox.warning(
                         self,
@@ -2920,8 +3862,14 @@ class MainWindow(QtWidgets.QMainWindow):
                         "O PDF atual difere do PDF usado quando o projeto foi salvo.",
                     )
         except Exception:
-            pass
+            logger.warning("Não foi possível conferir o fingerprint de %s", state.source_pdf, exc_info=True)
 
+        logger.info(
+            "Projeto carregado: %s (%d substituições, %d candidatos)",
+            project_path,
+            len(self.operations),
+            len(self.candidates),
+        )
         self.statusBar().showMessage(f"Projeto carregado: {project_path}")
         return True
 
@@ -2935,6 +3883,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 def main() -> None:
+    setup_logging()
+    logger.info("Chess PDF Editor iniciando (log em %s)", log_file_path() or "stderr")
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("Chess PDF Editor")
     win = MainWindow()

@@ -123,6 +123,7 @@ class SelectablePageWidget(QtWidgets.QLabel):
         self._operation_rects: list[QtCore.QRectF] = []
         self._eraser_rects: list[QtCore.QRectF] = []
         self._study_rects: list[QtCore.QRectF] = []
+        self._candidate_rects: list[QtCore.QRectF] = []
 
     def set_page_pixmap(self, pixmap: QtGui.QPixmap) -> None:
         self.setPixmap(pixmap)
@@ -152,6 +153,13 @@ class SelectablePageWidget(QtWidgets.QLabel):
 
     def set_study_rects(self, rects: list[tuple[float, float, float, float]]) -> None:
         self._study_rects = [
+            QtCore.QRectF(QtCore.QPointF(x0, y0), QtCore.QPointF(x1, y1)).normalized()
+            for (x0, y0, x1, y1) in rects
+        ]
+        self.update()
+
+    def set_candidate_rects(self, rects: list[tuple[float, float, float, float]]) -> None:
+        self._candidate_rects = [
             QtCore.QRectF(QtCore.QPointF(x0, y0), QtCore.QPointF(x1, y1)).normalized()
             for (x0, y0, x1, y1) in rects
         ]
@@ -234,6 +242,14 @@ class SelectablePageWidget(QtWidgets.QLabel):
             for rect in self._study_rects:
                 painter.drawRect(rect)
 
+        if self._candidate_rects:
+            # Deteccoes aguardando conferencia: roxo pontilhado.
+            pen = QtGui.QPen(QtGui.QColor(150, 70, 200), 2, QtCore.Qt.DotLine)
+            painter.setPen(pen)
+            painter.setBrush(QtGui.QColor(150, 70, 200, 30))
+            for rect in self._candidate_rects:
+                painter.drawRect(rect)
+
         if self._selection_rect is None:
             return
         pen = QtGui.QPen(QtGui.QColor(230, 40, 40), 2)
@@ -249,6 +265,99 @@ class SelectablePageWidget(QtWidgets.QLabel):
         x = min(max(0.0, point.x()), width)
         y = min(max(0.0, point.y()), height)
         return QtCore.QPointF(x, y)
+
+
+class BeforeAfterWidget(QtWidgets.QWidget):
+    """Miniaturas lado a lado do diagrama: como esta hoje x como vai ficar."""
+
+    def __init__(self, thumb_height: int = 150) -> None:
+        super().__init__()
+        self._thumb_height = max(80, int(thumb_height))
+        self._before_png: Optional[bytes] = None
+        self._after_png: Optional[bytes] = None
+
+        self.before_label = self._make_thumb_label()
+        self.after_label = self._make_thumb_label()
+        self.message_label = QtWidgets.QLabel("Selecione um diagrama para comparar.")
+        self.message_label.setWordWrap(True)
+        self.message_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.message_label.setStyleSheet("QLabel { color: palette(mid); padding: 12px; }")
+
+        self.thumbs = QtWidgets.QWidget()
+        thumbs_layout = QtWidgets.QHBoxLayout(self.thumbs)
+        thumbs_layout.setContentsMargins(0, 0, 0, 0)
+        thumbs_layout.setSpacing(10)
+        thumbs_layout.addLayout(self._make_column("Antes", self.before_label), 1)
+        thumbs_layout.addLayout(self._make_column("Depois", self.after_label), 1)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(self.message_label)
+        root.addWidget(self.thumbs)
+        self.thumbs.setVisible(False)
+
+    @staticmethod
+    def _make_column(title: str, label: QtWidgets.QLabel) -> QtWidgets.QVBoxLayout:
+        caption = QtWidgets.QLabel(title)
+        caption.setAlignment(QtCore.Qt.AlignCenter)
+        caption.setStyleSheet("QLabel { font-weight: 600; }")
+        column = QtWidgets.QVBoxLayout()
+        column.setSpacing(3)
+        column.addWidget(caption)
+        column.addWidget(label, 1)
+        return column
+
+    def _make_thumb_label(self) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel()
+        label.setAlignment(QtCore.Qt.AlignCenter)
+        label.setMinimumHeight(self._thumb_height)
+        label.setStyleSheet(
+            "QLabel { background-color: palette(base); border: 1px solid palette(mid); "
+            "border-radius: 4px; }"
+        )
+        label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+        return label
+
+    def set_message(self, message: str) -> None:
+        self._before_png = None
+        self._after_png = None
+        self.before_label.clear()
+        self.after_label.clear()
+        self.message_label.setText(message)
+        self.message_label.setVisible(True)
+        self.thumbs.setVisible(False)
+
+    def set_images(self, before_png: Optional[bytes], after_png: Optional[bytes]) -> None:
+        self._before_png = before_png
+        self._after_png = after_png
+        self.message_label.setVisible(False)
+        self.thumbs.setVisible(True)
+        self._apply_pixmap(self.before_label, before_png)
+        self._apply_pixmap(self.after_label, after_png)
+
+    def _apply_pixmap(self, label: QtWidgets.QLabel, png_bytes: Optional[bytes]) -> None:
+        if not png_bytes:
+            label.clear()
+            return
+        pixmap = QtGui.QPixmap()
+        if not pixmap.loadFromData(png_bytes, "PNG"):
+            label.clear()
+            return
+        available_width = max(48, label.width() - 6)
+        label.setPixmap(
+            pixmap.scaled(
+                available_width,
+                self._thumb_height - 6,
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation,
+            )
+        )
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        if self._before_png or self._after_png:
+            self._apply_pixmap(self.before_label, self._before_png)
+            self._apply_pixmap(self.after_label, self._after_png)
 
 
 class _CellButton(QtWidgets.QPushButton):
@@ -362,8 +471,12 @@ class BoardEditorWidget(QtWidgets.QWidget):
             selected = piece == self._active_piece
             bg = "#e8f1ff" if selected else "#ffffff"
             border = "#1f6feb" if selected else "#c8d0da"
+            # O fundo do botao e sempre claro (para as pecas aparecerem), entao o
+            # texto precisa de cor fixa escura: herdar do tema deixaria o "x" da
+            # casa vazia branco no branco no modo escuro.
             button.setStyleSheet(
-                f"QPushButton {{ background-color: {bg}; border: 2px solid {border}; "
+                f"QPushButton {{ background-color: {bg}; color: #1b1b1b; "
+                f"border: 2px solid {border}; "
                 "border-radius: 4px; font-size: 18px; font-weight: bold; }} "
                 "QPushButton:hover { border-color: #1f6feb; }"
             )
@@ -383,8 +496,9 @@ class BoardEditorWidget(QtWidgets.QWidget):
         light = "#f0d9b5"
         dark = "#b58863"
         bg = light if (row + col) % 2 == 0 else dark
+        # Cor de texto fixa: as casas tem cor de madeira em qualquer tema.
         return (
-            f"QPushButton {{ background-color: {bg}; border: none; "
+            f"QPushButton {{ background-color: {bg}; color: #101010; border: none; "
             "font-size: 22px; font-weight: bold; } "
             "QPushButton:hover { border: none; }"
         )
@@ -495,7 +609,7 @@ class StudyBoardWidget(QtWidgets.QWidget):
         self._selected_square = None
         self._legal_targets.clear()
         self._refresh()
-        self._emit_state_changed("Posicao de estudo carregada.")
+        self._emit_state_changed("Posição de estudo carregada.")
 
     def load_pgn_text(self, pgn_text: str) -> dict[int, dict[str, str]]:
         move_comments = self._game.load_pgn(pgn_text)
@@ -734,8 +848,9 @@ class StudyBoardWidget(QtWidgets.QWidget):
             bg = "#7fae6d" if is_dark else "#b8d89f"
         else:
             bg = "#b58863" if is_dark else "#f0d9b5"
+        # Idem: fundo de tabuleiro nao acompanha o tema, o texto tambem nao pode.
         return (
-            f"QPushButton {{ background-color: {bg}; border: none; "
+            f"QPushButton {{ background-color: {bg}; color: #101010; border: none; "
             "font-size: 24px; font-weight: bold; } "
             "QPushButton:hover { border: none; }"
         )

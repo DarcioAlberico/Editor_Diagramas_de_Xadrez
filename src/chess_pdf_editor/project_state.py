@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .types import EraseOperation, OverlayOperation, StudyPosition
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 APP_VERSION = "0.1.0"
 
 
@@ -40,6 +40,8 @@ class ProjectState:
     operations: list[OverlayOperation]
     erase_operations: list[EraseOperation] = field(default_factory=list)
     study_positions: list[StudyPosition] = field(default_factory=list)
+    # Deteccoes do OCR aguardando conferencia; viram `operations` ao serem aplicadas.
+    candidates: list[OverlayOperation] = field(default_factory=list)
     current_page: int = 0
     include_lichess_link: bool = True
     ocr_full_next_page: int = 0
@@ -73,28 +75,31 @@ def _load_study_move_comments(item: dict[str, object]) -> dict[str, dict[str, st
     return comments
 
 
+def _load_operation(item: dict[str, object]) -> OverlayOperation:
+    default_padding = float(item.get("whiteout_padding_pt", 0.5))
+    return OverlayOperation(
+        page_num=int(item["page_num"]),
+        rect_pdf=tuple(item["rect_pdf"]),
+        fen=str(item["fen"]),
+        side_to_move=str(item.get("side_to_move", "w")),
+        fullmove_number=max(1, int(item.get("fullmove_number", 1))),
+        source=str(item.get("source", "manual")),
+        confidence=item.get("confidence"),
+        whiteout_padding_pt=default_padding,
+        whiteout_padding_left_pt=float(item.get("whiteout_padding_left_pt", default_padding)),
+        whiteout_padding_top_pt=float(item.get("whiteout_padding_top_pt", default_padding)),
+        whiteout_padding_right_pt=float(item.get("whiteout_padding_right_pt", default_padding)),
+        whiteout_padding_bottom_pt=float(item.get("whiteout_padding_bottom_pt", default_padding)),
+        border_width_pt=float(item.get("border_width_pt", 0.0)),
+    )
+
+
 def load_project_state(path: str) -> ProjectState:
     with open(path, "r", encoding="utf-8") as fh:
         payload = json.load(fh)
 
-    ops = [
-        OverlayOperation(
-            page_num=int(item["page_num"]),
-            rect_pdf=tuple(item["rect_pdf"]),
-            fen=str(item["fen"]),
-            side_to_move=str(item.get("side_to_move", "w")),
-            fullmove_number=max(1, int(item.get("fullmove_number", 1))),
-            source=str(item.get("source", "manual")),
-            confidence=item.get("confidence"),
-            whiteout_padding_pt=float(item.get("whiteout_padding_pt", 0.5)),
-            whiteout_padding_left_pt=float(item.get("whiteout_padding_left_pt", item.get("whiteout_padding_pt", 0.5))),
-            whiteout_padding_top_pt=float(item.get("whiteout_padding_top_pt", item.get("whiteout_padding_pt", 0.5))),
-            whiteout_padding_right_pt=float(item.get("whiteout_padding_right_pt", item.get("whiteout_padding_pt", 0.5))),
-            whiteout_padding_bottom_pt=float(item.get("whiteout_padding_bottom_pt", item.get("whiteout_padding_pt", 0.5))),
-            border_width_pt=float(item.get("border_width_pt", 0.0)),
-        )
-        for item in payload.get("operations", [])
-    ]
+    ops = [_load_operation(item) for item in payload.get("operations", [])]
+    candidates = [_load_operation(item) for item in payload.get("candidates", [])]
     erase_ops = [
         EraseOperation(
             page_num=int(item["page_num"]),
@@ -123,6 +128,7 @@ def load_project_state(path: str) -> ProjectState:
         operations=ops,
         erase_operations=erase_ops,
         study_positions=study_positions,
+        candidates=candidates,
         current_page=int(payload.get("current_page", 0)),
         include_lichess_link=bool(payload.get("include_lichess_link", True)),
         ocr_full_next_page=max(0, int(payload.get("ocr_full_next_page", 0))),
