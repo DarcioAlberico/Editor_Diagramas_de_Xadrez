@@ -8,6 +8,7 @@ from typing import Callable, Optional
 import chess
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from . import local_ocr
 from .autosave import (
     DEFAULT_INTERVAL_SEC,
     MIN_INTERVAL_SEC,
@@ -15,10 +16,12 @@ from .autosave import (
     is_autosave_path,
     write_project_atomically,
 )
+from .feedback import export_training_samples
 from .fen import extract_piece_placement, normalize_piece_placement, validate_piece_placement
 from .history import ChangeHistory
 from .logging_config import get_logger, log_file_path, setup_logging
-from .ocr_api import OcrApiClient, OcrApiError, default_endpoint
+from .ocr_api import default_endpoint
+from .orientation import auto_orient
 from .pdf_service import (
     PdfService,
     RenderedPage,
@@ -26,6 +29,18 @@ from .pdf_service import (
     crop_from_rendered_page,
 )
 from .project_state import ProjectState, fingerprint_file, load_project_state
+from .recognition import (
+    DEFAULT_ENGINE_MODE,
+    ENGINE_LABELS,
+    ENGINE_LOCAL,
+    ENGINE_MODES,
+    ENGINE_REMOTE,
+    RecognitionError,
+    make_engine,
+    mode_uses_network,
+    normalize_mode,
+)
+from .report import export_report
 from .types import EraseOperation, OcrBoardResult, OverlayOperation, StudyPosition
 from .widgets import BeforeAfterWidget, BoardEditorWidget, SelectablePageWidget, StudyBoardWidget
 from .workers import BatchOcrWorker, ExportWorker
@@ -491,6 +506,32 @@ class MainWindow(QtWidgets.QMainWindow):
             f"({default_endpoint()}); a variável CHESS_OCR_ENDPOINT tem precedência sobre o padrão."
         )
         self.endpoint_edit.editingFinished.connect(self._on_endpoint_edited)
+
+        # Motor de reconhecimento (Sprint 7). O padrão é o híbrido: reconhece na
+        # máquina e só recorre ao serviço externo onde a confiança local ficar baixa.
+        self.engine_combo = QtWidgets.QComboBox()
+        for mode in ENGINE_MODES:
+            self.engine_combo.addItem(ENGINE_LABELS[mode], mode)
+        saved_engine = normalize_mode(
+            self.settings.value("recognition_engine", DEFAULT_ENGINE_MODE, str)
+        )
+        self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(saved_engine)))
+        self.engine_combo.currentIndexChanged.connect(lambda _index: self._on_engine_mode_changed())
+        self.engine_status_label = QtWidgets.QLabel("")
+        self.engine_status_label.setWordWrap(True)
+        self.engine_status_label.setStyleSheet(self._CONTEXT_STYLE)
+        self.local_model_edit = QtWidgets.QLineEdit(
+            (self.settings.value("local_model_path", "", str) or "").strip()
+        )
+        self.local_model_edit.setPlaceholderText(str(local_ocr.bundled_model_path()))
+        self.local_model_edit.setToolTip(
+            "Classificador local (.pt). Vazio usa o modelo distribuído com o app; a "
+            f"variável {local_ocr.MODEL_ENV_VAR} tem precedência."
+        )
+        self.local_model_edit.editingFinished.connect(self._on_local_model_edited)
+        self.btn_select_local_model = QtWidgets.QPushButton("Selecionar modelo...")
+        self.btn_select_local_model.clicked.connect(self._select_local_model)
+
         self.whiteout_check = QtWidgets.QCheckBox("Aplicar whiteout antes do overlay")
         self.whiteout_check.setChecked(True)
         self.whiteout_check.toggled.connect(lambda checked: self._schedule_preview_refresh(immediate=True))
@@ -586,6 +627,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_discard_all_candidates = QtWidgets.QPushButton("Descartar todos")
         self.btn_discard_all_candidates.clicked.connect(self._discard_all_candidates)
 
+        self.btn_snap = QtWidgets.QPushButton("Ajustar seleção à borda")
+        self.btn_snap.setToolTip(
+            "Encosta a seleção nas bordas reais do tabuleiro (Ctrl+B). "
+            "Precisa do motor local instalado."
+        )
+        self.btn_snap.clicked.connect(self._snap_selection_to_board)
         self.btn_ocr = QtWidgets.QPushButton("Reconhecer seleção")
         self.btn_ocr.clicked.connect(self._recognize_selection)
         self.btn_ocr_page = QtWidgets.QPushButton("Reconhecer página")
@@ -661,6 +708,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_rotate.clicked.connect(self.board_editor.rotate_clockwise)
         self.btn_flip = QtWidgets.QPushButton("Espelhar Vertical")
         self.btn_flip.clicked.connect(self.board_editor.flip_vertical)
+        self.btn_auto_orient = QtWidgets.QPushButton("Auto-orientar")
+        self.btn_auto_orient.setToolTip(
+            "Testa as 4 rotações e aplica a mais plausível (reis, peões e sentido do avanço)."
+        )
+        self.btn_auto_orient.clicked.connect(self._auto_orient_position)
         self.btn_clear_board = QtWidgets.QPushButton("Limpar Tabuleiro")
         self.btn_clear_board.clicked.connect(self.board_editor.clear_board)
 
@@ -668,10 +720,11 @@ class MainWindow(QtWidgets.QMainWindow):
         top_editor_layout = QtWidgets.QVBoxLayout(top_editor)
         top_editor_layout.addWidget(QtWidgets.QLabel("Editor de Tabuleiro"))
         top_editor_layout.addWidget(self.board_editor, 0, QtCore.Qt.AlignLeft)
-        controls = QtWidgets.QHBoxLayout()
-        controls.addWidget(self.btn_rotate)
-        controls.addWidget(self.btn_flip)
-        controls.addWidget(self.btn_clear_board)
+        controls = QtWidgets.QGridLayout()
+        controls.addWidget(self.btn_auto_orient, 0, 0, 1, 2)
+        controls.addWidget(self.btn_rotate, 1, 0)
+        controls.addWidget(self.btn_flip, 1, 1)
+        controls.addWidget(self.btn_clear_board, 2, 0, 1, 2)
         top_editor_layout.addLayout(controls)
         top_editor_layout.addStretch(1)
 
@@ -686,12 +739,14 @@ class MainWindow(QtWidgets.QMainWindow):
         ocr_tab_layout.addWidget(self.edit_context_label)
 
         ocr_tab_layout.addWidget(self._section_label("1 · Reconhecer"))
+        ocr_tab_layout.addWidget(self.btn_snap)
         ocr_tab_layout.addWidget(self.btn_ocr)
         ocr_actions = QtWidgets.QHBoxLayout()
         ocr_actions.addWidget(self.btn_ocr_page)
         ocr_actions.addWidget(self.btn_ocr_full)
         ocr_tab_layout.addLayout(ocr_actions)
         ocr_tab_layout.addWidget(self.auto_apply_check)
+        ocr_tab_layout.addWidget(self.engine_status_label)
 
         # A secao de conferencia so aparece quando ha o que conferir.
         self.candidates_section = QtWidgets.QWidget()
@@ -733,6 +788,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         ocr_advanced_layout = QtWidgets.QVBoxLayout()
         ocr_advanced_layout.addWidget(self.whiteout_check)
+        ocr_advanced_layout.addWidget(QtWidgets.QLabel("Motor de reconhecimento"))
+        ocr_advanced_layout.addWidget(self.engine_combo)
+        ocr_advanced_layout.addWidget(QtWidgets.QLabel("Modelo local (.pt)"))
+        model_layout = QtWidgets.QHBoxLayout()
+        model_layout.addWidget(self.local_model_edit, 1)
+        model_layout.addWidget(self.btn_select_local_model)
+        ocr_advanced_layout.addLayout(model_layout)
         ocr_advanced_layout.addWidget(QtWidgets.QLabel("Endpoint OCR"))
         ocr_advanced_layout.addWidget(self.endpoint_edit)
         ocr_advanced_layout.addWidget(QtWidgets.QLabel("Fonte Merida (.ttf/.otf)"))
@@ -883,6 +945,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_changes_list()
         self._refresh_candidates_list()
         self._update_edit_context_state()
+        self._update_engine_status_label()
         # A sessao restaurada (se houve) e a linha de base do historico.
         self._reset_history("sessão restaurada" if self.current_pdf_path else "inicio")
         self._start_autosave_timer()
@@ -1099,6 +1162,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.act_pdf_text_to_after = QtGui.QAction("Texto da seleção → comentário depois", self)
         self.act_pdf_text_to_after.triggered.connect(lambda: self._copy_pdf_text_to_study_comment("after"))
 
+        self.act_snap_selection = QtGui.QAction("Ajustar seleção à borda", self)
+        self.act_snap_selection.setShortcut(QtGui.QKeySequence("Ctrl+B"))
+        self.act_snap_selection.setToolTip(
+            "Encosta a seleção nas bordas reais do tabuleiro (Ctrl+B)"
+        )
+        self.act_snap_selection.triggered.connect(self._snap_selection_to_board)
+
+        self.act_auto_orient = QtGui.QAction("Auto-orientar posição", self)
+        self.act_auto_orient.setShortcut(QtGui.QKeySequence("Ctrl+Shift+R"))
+        self.act_auto_orient.triggered.connect(self._auto_orient_position)
+
+        self.act_export_report = QtGui.QAction("Exportar relatório...", self)
+        self.act_export_report.setShortcut(QtGui.QKeySequence("Ctrl+Shift+E"))
+        self.act_export_report.triggered.connect(self._export_report_dialog)
+
+        self.act_export_training = QtGui.QAction("Exportar correções para treino...", self)
+        self.act_export_training.setToolTip(
+            "Grava os diagramas corrigidos no formato do dataset que treina o motor local"
+        )
+        self.act_export_training.triggered.connect(self._export_training_samples_dialog)
+
         self.act_recognize_selection = QtGui.QAction("Reconhecer seleção", self)
         self.act_recognize_selection.triggered.connect(self._recognize_selection)
 
@@ -1121,6 +1205,8 @@ class MainWindow(QtWidgets.QMainWindow):
         file_menu.addAction(self.act_save_project)
         file_menu.addSeparator()
         file_menu.addAction(self.act_save_pdf)
+        file_menu.addAction(self.act_export_report)
+        file_menu.addAction(self.act_export_training)
         file_menu.addSeparator()
         file_menu.addAction("Sair", self.close)
 
@@ -1155,6 +1241,9 @@ class MainWindow(QtWidgets.QMainWindow):
         pdf_menu.addAction(self.act_toggle_preview)
 
         diagrams_menu = self.menuBar().addMenu("Diagramas")
+        diagrams_menu.addAction(self.act_snap_selection)
+        diagrams_menu.addAction(self.act_auto_orient)
+        diagrams_menu.addSeparator()
         diagrams_menu.addAction(self.act_recognize_selection)
         diagrams_menu.addAction(self.act_recognize_page)
         diagrams_menu.addAction(self.act_recognize_full)
@@ -1426,7 +1515,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
     # ------------------------------------------------------------------
-    # Configuracao do OCR
+    # Configuracao do reconhecimento (Sprint 7)
     # ------------------------------------------------------------------
 
     def _ocr_endpoint(self) -> Optional[str]:
@@ -1434,12 +1523,111 @@ class MainWindow(QtWidgets.QMainWindow):
         text = self.endpoint_edit.text().strip()
         return text or None
 
-    def _make_ocr_client(self) -> OcrApiClient:
-        return OcrApiClient(endpoint=self._ocr_endpoint())
+    def _local_model_path(self) -> Optional[str]:
+        text = self.local_model_edit.text().strip()
+        return text or None
+
+    def _engine_mode(self) -> str:
+        return normalize_mode(self.engine_combo.currentData())
+
+    def _make_engine(self):
+        return make_engine(
+            self._engine_mode(),
+            endpoint=self._ocr_endpoint(),
+            model_path=self._local_model_path(),
+        )
+
+    def _on_engine_mode_changed(self) -> None:
+        mode = self._engine_mode()
+        self.settings.setValue("recognition_engine", mode)
+        self._update_engine_status_label()
+        self.statusBar().showMessage(f"Motor de reconhecimento: {ENGINE_LABELS[mode]}")
+
+    def _update_engine_status_label(self) -> None:
+        """Diz, antes de clicar, se o motor local está pronto e o que sai da máquina."""
+        mode = self._engine_mode()
+        reason = local_ocr.unavailable_reason(self._local_model_path())
+        if reason and mode != ENGINE_REMOTE:
+            self.engine_status_label.setText(reason)
+            self.engine_status_label.setStyleSheet(f"color: {warning_text_color()};")
+            return
+        if mode == ENGINE_LOCAL:
+            text = "Nenhuma página sai desta máquina."
+        elif mode == ENGINE_REMOTE:
+            text = f"Todas as páginas são enviadas para {self._ocr_endpoint() or default_endpoint()}."
+        else:
+            text = (
+                "Reconhece localmente; envia ao serviço externo só as páginas em que a "
+                "confiança ficar abaixo de 0,80."
+            )
+        self.engine_status_label.setText(text)
+        self.engine_status_label.setStyleSheet(self._CONTEXT_STYLE)
+
+    def _select_local_model(self) -> None:
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Selecionar modelo local",
+            self.local_model_edit.text().strip() or str(local_ocr.bundled_model_path().parent),
+            "Modelo PyTorch (*.pt);;Todos os arquivos (*)",
+        )
+        if not file_path:
+            return
+        self.local_model_edit.setText(file_path)
+        self._on_local_model_edited()
+
+    def _on_local_model_edited(self) -> None:
+        self.settings.setValue("local_model_path", self.local_model_edit.text().strip())
+        self._update_engine_status_label()
+
+    def _confirm_remote_upload(self, scope: str, page_count: int) -> bool:
+        """Aviso explícito antes do primeiro envio de páginas para fora (§7.3).
+
+        O produto passou o MVP inteiro mandando o livro do usuário para um servidor de
+        terceiros sem dizer isso em lugar nenhum. Agora que existe alternativa local, a
+        pergunta é legítima — e só é feita uma vez, porque repeti-la a cada página
+        transformaria um aviso em ruído que ninguém lê.
+        """
+        mode = self._engine_mode()
+        if not mode_uses_network(mode):
+            return True
+        if bool(self.settings.value("remote_privacy_ack", False, bool)):
+            return True
+
+        endpoint = self._ocr_endpoint() or default_endpoint()
+        if mode == ENGINE_REMOTE:
+            what = f"{page_count} página(s) renderizada(s) do seu PDF serão enviadas"
+        else:
+            what = (
+                f"até {page_count} página(s) renderizada(s) do seu PDF podem ser enviadas "
+                "(só as que o motor local ler com confiança baixa)"
+            )
+
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Warning)
+        box.setWindowTitle("Enviar páginas para um serviço externo?")
+        box.setText(f"{scope}: {what} para <b>{endpoint}</b>.")
+        box.setInformativeText(
+            "Esse servidor é operado por terceiros e não é controlado por este aplicativo.\n\n"
+            "Para não enviar nada, escolha o motor «Somente local (offline)» em Avançado."
+        )
+        remember = QtWidgets.QCheckBox("Não perguntar de novo neste computador")
+        box.setCheckBox(remember)
+        box.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel)
+        box.setDefaultButton(QtWidgets.QMessageBox.Cancel)
+        box.button(QtWidgets.QMessageBox.Yes).setText("Enviar")
+        box.button(QtWidgets.QMessageBox.Cancel).setText("Cancelar")
+
+        if box.exec() != QtWidgets.QMessageBox.Yes:
+            self.statusBar().showMessage("Reconhecimento cancelado: nada foi enviado.")
+            return False
+        if remember.isChecked():
+            self.settings.setValue("remote_privacy_ack", True)
+        return True
 
     def _on_endpoint_edited(self) -> None:
         endpoint = self.endpoint_edit.text().strip()
         self.settings.setValue("ocr_endpoint", endpoint)
+        self._update_engine_status_label()
         if endpoint:
             self.statusBar().showMessage(f"Endpoint OCR: {endpoint}")
         else:
@@ -1623,6 +1811,9 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             selection = self.page_widget.selection_rect() if preserve_selection else None
             self.page_widget.set_page_pixmap(pixmap)
+            # O passo das setas é em pontos PDF; o widget precisa do zoom em vigor
+            # para converter. `matrix[0]` é o fator horizontal do render.
+            self.page_widget.set_points_scale(abs(render.matrix[0]) or 1.0)
             if selection is not None:
                 self.page_widget.set_selection_rect(selection)
         finally:
@@ -2088,12 +2279,27 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_edit_context_state()
             self._schedule_preview_refresh()
             return
-        x0, y0, x1, y1 = rect
-        self.statusBar().showMessage(
-            f"Seleção na imagem: x0={x0:.1f}, y0={y0:.1f}, x1={x1:.1f}, y1={y1:.1f}"
-        )
+        self.statusBar().showMessage(self._selection_status_text(rect))
         self._update_edit_context_state()
         self._schedule_preview_refresh()
+
+    def _selection_status_text(self, rect: tuple[float, float, float, float]) -> str:
+        """Tamanho da seleção em pontos PDF — a unidade do ajuste fino."""
+        if self.pdf_service and self.current_render:
+            try:
+                px0, py0, px1, py1 = self.pdf_service.image_rect_to_pdf_rect(
+                    self.current_page, rect, self.current_render.matrix
+                )
+            except Exception:
+                logger.debug("Falha ao converter a seleção para pontos", exc_info=True)
+            else:
+                return (
+                    f"Seleção: {px1 - px0:.2f} × {py1 - py0:.2f} pt em "
+                    f"({px0:.2f}, {py0:.2f}) · setas movem, Shift+setas 0,25 pt, "
+                    "Ctrl+setas redimensionam"
+                )
+        x0, y0, x1, y1 = rect
+        return f"Seleção na imagem: x0={x0:.1f}, y0={y0:.1f}, x1={x1:.1f}, y1={y1:.1f}"
 
     def _operation_index_at_image_point(self, x: float, y: float) -> Optional[int]:
         if not self.pdf_service or not self.current_render:
@@ -2764,6 +2970,168 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_current_operation(idx)
         self._update_lichess_link()
 
+    # ------------------------------------------------------------------
+    # Ajuste fino do diagrama (Sprint 6.2 e 6.3)
+    # ------------------------------------------------------------------
+
+    def _snap_selection_to_board(self) -> None:
+        """Encosta a seleção nas bordas do tabuleiro que estiver embaixo dela."""
+        if not self.current_render:
+            QtWidgets.QMessageBox.warning(self, "Sem PDF", "Abra um PDF antes de ajustar a seleção.")
+            return
+        selection = self.page_widget.selection_rect()
+        if not selection:
+            QtWidgets.QMessageBox.warning(
+                self, "Sem seleção", "Desenhe uma seleção em volta do diagrama."
+            )
+            return
+        # O ajuste precisa só do detector (OpenCV); o classificador pode faltar.
+        if not local_ocr.dependencies_available():
+            QtWidgets.QMessageBox.information(
+                self, "Ajuste indisponível", local_ocr.unavailable_reason()
+            )
+            return
+
+        cursor_set = False
+        try:
+            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+            cursor_set = True
+            # O ajuste só usa o detector por contorno: não carrega modelo, então
+            # funciona mesmo sem o classificador instalado.
+            from .local_ocr.engine import refine_rect
+
+            refined = refine_rect(self.current_render.image_png, selection)
+        except Exception as exc:
+            logger.warning("Falha ao ajustar a seleção", exc_info=True)
+            QtWidgets.QMessageBox.warning(self, "Falha ao ajustar", str(exc))
+            return
+        finally:
+            if cursor_set:
+                QtWidgets.QApplication.restoreOverrideCursor()
+
+        if refined is None:
+            self.statusBar().showMessage(
+                "Nenhuma borda de tabuleiro encontrada perto da seleção — nada foi alterado."
+            )
+            return
+
+        before = selection
+        self.page_widget.set_selection_rect(refined)
+        moved = max(abs(refined[i] - before[i]) for i in range(4))
+        self.statusBar().showMessage(
+            f"Seleção ajustada à borda do tabuleiro (maior correção: {moved:.1f} px)."
+        )
+        self._schedule_preview_refresh(immediate=True)
+
+    def _auto_orient_position(self) -> None:
+        """Testa as 4 rotações e aplica a mais plausível."""
+        piece_placement = self.board_editor.piece_placement()
+        try:
+            result = auto_orient(piece_placement)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Auto-orientar", f"Posição inválida: {exc}")
+            return
+
+        if not result.changed:
+            detail = "; ".join(result.best.reasons) if result.best.reasons else ""
+            self.statusBar().showMessage(
+                "A orientação atual já é a mais plausível"
+                + (f" ({detail})." if detail else ".")
+            )
+            return
+
+        self.board_editor.set_piece_placement(result.piece_placement)
+        message = f"Posição girada {result.rotation}° (vantagem {result.margin:.1f})."
+        if result.ambiguous:
+            message += " Margem apertada — confira antes de aplicar."
+        self.statusBar().showMessage(message)
+
+    def _export_report_dialog(self) -> None:
+        """Relatório de alterações em CSV ou JSON (§6.4)."""
+        if not (self.operations or self.erase_operations or self.candidates):
+            QtWidgets.QMessageBox.information(
+                self, "Relatório", "Não há alterações para relatar."
+            )
+            return
+
+        suggested = "relatorio.csv"
+        if self.current_pdf_path:
+            suggested = str(Path(self.current_pdf_path).with_suffix("")) + "_relatorio.csv"
+        file_path, selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Exportar relatório de alterações",
+            suggested,
+            "CSV (*.csv);;JSON (*.json)",
+        )
+        if not file_path:
+            return
+        # O diálogo do Qt não acrescenta extensão em todas as plataformas, e o formato
+        # do relatório é decidido por ela.
+        if not Path(file_path).suffix:
+            file_path += ".json" if "json" in (selected_filter or "").lower() else ".csv"
+
+        try:
+            rows = export_report(
+                file_path,
+                operations=self.operations,
+                erase_operations=self.erase_operations,
+                candidates=self.candidates,
+                source_pdf=self.current_pdf_path,
+                extra={"motor": self._engine_mode()},
+            )
+        except Exception as exc:
+            logger.exception("Falha ao exportar relatório para %s", file_path)
+            QtWidgets.QMessageBox.critical(self, "Relatório", f"Falha ao exportar: {exc}")
+            return
+
+        with_warnings = sum(1 for row in rows if row.avisos)
+        self.statusBar().showMessage(
+            f"Relatório gravado: {file_path} ({len(rows)} linha(s), {with_warnings} com aviso)."
+        )
+
+    def _export_training_samples_dialog(self) -> None:
+        """Manda as correções desta sessão para o dataset de treino (§6.5)."""
+        if not self.operations or not self.pdf_service:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Correções para treino",
+                "Não há substituições confirmadas para exportar.",
+            )
+            return
+
+        destination = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "Pasta do dataset (recebe samples/ e labels.csv)",
+            self.settings.value("training_export_dir", "", str) or "",
+        )
+        if not destination:
+            return
+        self.settings.setValue("training_export_dir", destination)
+
+        cursor_set = False
+        try:
+            QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+            cursor_set = True
+            exported = export_training_samples(
+                destination,
+                self.pdf_service,
+                self.operations,
+                source_pdf=self.current_pdf_path,
+            )
+        except Exception as exc:
+            logger.exception("Falha ao exportar amostras de treino para %s", destination)
+            QtWidgets.QMessageBox.critical(self, "Correções para treino", f"Falha: {exc}")
+            return
+        finally:
+            if cursor_set:
+                QtWidgets.QApplication.restoreOverrideCursor()
+
+        skipped = len(self.operations) - len(exported)
+        message = f"{len(exported)} diagrama(s) exportado(s) para {destination}."
+        if skipped:
+            message += f" {skipped} ignorado(s) (região não renderizável)."
+        self.statusBar().showMessage(message)
+
     def _on_board_changed(self, piece_placement: str) -> None:
         if self._loading_ui:
             return
@@ -2817,15 +3185,23 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Sem seleção", "Selecione uma região da página.")
             return
 
-        client = self._make_ocr_client()
+        if not self._confirm_remote_upload("Reconhecer seleção", 1):
+            return
 
         cursor_set = False
         try:
+            engine = self._make_engine()
             crop_png = crop_from_rendered_page(self.current_render.image_png, selection)
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
             cursor_set = True
-            prediction = client.predict(crop_png, filename="selection.png")
-        except OcrApiError as exc:
+            # A seleção já é o tabuleiro: se o detector não achar contorno, o motor
+            # local lê a imagem inteira em vez de devolver "nada encontrado".
+            prediction = engine.predict(
+                crop_png,
+                filename="selection.png",
+                assume_whole_image=True,
+            )
+        except RecognitionError as exc:
             QtWidgets.QMessageBox.warning(self, "Falha OCR", str(exc))
             return
         except Exception as exc:
@@ -2874,16 +3250,19 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Sem PDF", "Abra um PDF antes de rodar OCR.")
             return
 
-        client = self._make_ocr_client()
+        if not self._confirm_remote_upload("Reconhecer página", 1):
+            return
+
         cursor_set = False
         try:
+            engine = self._make_engine()
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
             cursor_set = True
-            prediction = client.predict(
+            prediction = engine.predict(
                 self.current_render.image_png,
                 filename=f"page_{self.current_page + 1}.png",
             )
-        except OcrApiError as exc:
+        except RecognitionError as exc:
             QtWidgets.QMessageBox.warning(self, "Falha OCR", str(exc))
             return
         except Exception as exc:
@@ -3053,6 +3432,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if start_page < 0 or start_page >= total_pages:
             start_page = 0
         remaining_pages = total_pages - start_page
+        if not self._confirm_remote_upload("Detectar no PDF", remaining_pages):
+            return
         if start_page > 0:
             self.statusBar().showMessage(
                 f"OCR em lote retomando da página {start_page + 1}/{total_pages}..."
@@ -3103,6 +3484,8 @@ class MainWindow(QtWidgets.QMainWindow):
             endpoint=self._ocr_endpoint(),
             zoom=2.0,
             parent=self,
+            engine_mode=self._engine_mode(),
+            model_path=self._local_model_path(),
         )
         worker.progress.connect(self._on_batch_ocr_progress)
         worker.page_done.connect(self._on_batch_ocr_page_done)

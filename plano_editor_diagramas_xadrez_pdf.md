@@ -1,6 +1,6 @@
 # Plano de Implementação (Skill): Editor de Diagramas de Xadrez em PDF
 
-**Versão:** 1.5 (não travar e não perder trabalho)  
+**Versão:** 1.6 (precisão, e sem depender de servidor de terceiros)  
 **Status:** MVP entregue → endurecimento para Beta  
 **Stack alvo:** Python 3.10+ (rodando em 3.13)  
 **Última revisão:** 2026-08-08  
@@ -25,24 +25,29 @@ Technique*, 898 páginas). O que existe hoje:
 | **Fila de conferência dos candidatos do OCR** | ✅ **novo — ver §23** |
 | Projeto/checkpoint versionado (`schema_version=8`) | ✅ pronto |
 | Modo Estudo (PGN, variantes, comentários por lance) | ✅ pronto (`study`) |
-| **Workers em segundo plano (OCR em lote / exportação)** | ✅ **novo — ver §25.1** |
-| **Undo/redo no modo edição** | ✅ **novo — ver §25.2** |
-| **Autosave do projeto** | ✅ **novo — ver §25.3** |
-| **CI com `pytest`** | ✅ **novo — ver §25.4** |
-| Logs estruturados em arquivo | ✅ novo (`logging_config`) |
-| Detecção 100% local (OpenCV/PyTorch) | ❌ não implementado — o OCR é remoto |
+| Workers em segundo plano (OCR em lote / exportação) | ✅ pronto — ver §25.1 |
+| Undo/redo no modo edição | ✅ pronto — ver §25.2 |
+| Autosave do projeto | ✅ pronto — ver §25.3 |
+| CI com `pytest` | ✅ pronto — ver §25.4 |
+| Logs estruturados em arquivo | ✅ pronto (`logging_config`) |
+| **Alças e setas para ajustar a seleção** | ✅ **novo — ver §26.1** |
+| **Snap da seleção à borda do tabuleiro** | ✅ **novo — ver §26.2** |
+| **Auto-orientação da posição** | ✅ **novo — ver §26.3** |
+| **Relatório de alterações (CSV/JSON)** | ✅ **novo — ver §26.4** |
+| **Detecção 100% local (OpenCV + PyTorch)** | ✅ **novo — ver §27** |
+| **Motor híbrido: local primeiro, remoto como reforço** | ✅ **novo — ver §27.3** |
+| **Aviso antes de enviar páginas para fora** | ✅ **novo — ver §27.4** |
+| **Correções realimentando o dataset de treino** | ✅ **novo — ver §27.5** |
 | Empacotamento (executável Windows) | ❌ pendente |
 
-**Desvio relevante em relação ao plano original:** o reconhecimento não usa o
-pipeline OpenCV + PyTorch descrito nas §5 e §6. Ele delega para um endpoint HTTP
-externo (`helpman.komtera.lt/chessocr`). Isso acelerou muito o MVP, mas traz três
-consequências que precisam de decisão explícita (ver §22.1):
+**O desvio da §5/§6 foi fechado.** Até a versão 1.5 o reconhecimento existia só
+como chamada HTTP para `helpman.komtera.lt/chessocr`, com três consequências:
+privacidade (o livro inteiro ia para terceiros), disponibilidade (sem internet não
+havia reconhecimento) e custo (898 páginas = 898 requisições).
 
-1. **Privacidade:** "Detectar no PDF" envia *todas as páginas renderizadas* do
-   livro para um servidor de terceiros.
-2. **Disponibilidade:** sem internet (ou com o endpoint fora do ar) o
-   reconhecimento automático simplesmente não funciona.
-3. **Custo/tempo:** 898 páginas = 898 requisições HTTP sequenciais na thread da UI.
+Agora o pipeline OpenCV + PyTorch das §5 e §6 existe e é o **padrão**; o endpoint
+remoto continua disponível e escolhível, mas como reforço. Ver §27 para o que foi
+construído e §27.2 para de onde veio o modelo treinado.
 
 ---
 
@@ -514,28 +519,32 @@ Beta (meta):
 - Extras da §22.4 que vinham junto: endpoint do OCR centralizado e persistido,
   `confidence` preenchida, `QSettings` injetável, logs estruturados
 
-### Próximo — Sprint 6: precisão e ajuste fino
+**Sprint 6 — precisão e ajuste fino (2026-08-08)** ✅ — ver §26
+- Alças de redimensionamento, deslocamento por arrasto e setas do teclado
+- Snap da seleção à borda real do tabuleiro
+- Auto-orientação por plausibilidade da posição
+- Relatório de alterações em CSV/JSON
 
-1. **Manipular a seleção sem redesenhar**: alças de redimensionamento e
-   deslocamento por setas do teclado (passo de 0,25 pt com Shift).
-2. **Alinhamento automático da bbox** ao diagrama detectado (snap às bordas do
-   tabuleiro por projeção de linhas).
-3. **Auto-orientação**: testar 4 rotações e escolher a de maior plausibilidade.
-4. **Relatório de alterações** (CSV/JSON) com página, bbox, FEN, origem e avisos.
+**Sprint 7 — independência do OCR remoto (2026-08-08)** ✅ — ver §27
+- Detector local de diagramas (OpenCV) e classificador das 64 casas (PyTorch)
+- Motor híbrido: local primeiro, remoto como reforço das leituras inseguras
+- Aviso explícito antes do primeiro envio de páginas para servidor externo
+- Correções do usuário exportáveis para o dataset que treina o classificador
 
-### Sprint 7: independência do OCR remoto
+### Próximo — Sprint 8: empacotamento e distribuição
 
-1. Detector local de diagramas (OpenCV: Hough + "gridness") como *primeira*
-   passada — barato, offline, e reduz drasticamente as chamadas HTTP.
-2. Classificador local das 64 casas (§6) usado quando o detector local acha um
-   tabuleiro; endpoint remoto vira reforço opcional, não dependência.
-3. Aviso explícito na UI antes do primeiro envio de páginas para servidor externo.
-
-### Sprint 8: empacotamento e distribuição
-
-1. Executável Windows (PyInstaller/Nuitka) com assets embutidos.
+1. Executável Windows (PyInstaller/Nuitka) com assets embutidos — incluindo o
+   `.pt` do classificador e as bibliotecas nativas de OpenCV e torch.
 2. Migrações explícitas de `project_state.json` entre versões de schema.
 3. Documentação de desenvolvimento no README.
+
+### Sprint 9: o que o Sprint 7 destravou
+
+1. **Modo "revisar pendências"** (§22.5): agora que a confiança é real e vem por
+   casa, dá para montar a fila só com os diagramas inseguros.
+2. **Dividir `app.py`** (§22.3), que continua concentrando UI e orquestração.
+3. **Galeria de diagramas do livro** (§22.5), viável em minutos por livro com o
+   reconhecimento local.
 
 ---
 
@@ -647,9 +656,7 @@ Esta seção registra melhorias identificadas na revisão do projeto em 2026-05-
   - Criar script de build reproduzível.
   - Validar execução em máquina limpa sem ambiente de desenvolvimento.
 
-- [ ] **Melhorar relatório de processamento**
-  - Exportar CSV/JSON com página, bbox, FEN, origem da operação, confiança e avisos.
-  - Útil para auditoria e comparação entre versões do OCR.
+- [x] **Melhorar relatório de processamento** — feito no Sprint 6, ver §26.4.
 
 - [ ] **Documentar fluxo de desenvolvimento**
   - Adicionar seção no README com:
@@ -976,13 +983,13 @@ síncrona e isolada em `PdfService`, então a mudança é local.
 
 ### 22.1 Decisões que precisam do dono do produto
 
-- [ ] **Política de privacidade do OCR em lote.**
-  `Detectar no PDF` envia todas as páginas para um servidor de terceiros. Definir:
-  aviso explícito na primeira execução? modo offline obrigatório? lista de
-  endpoints confiáveis?
+- [x] **Política de privacidade do OCR em lote.** Decidido: aviso explícito antes
+  do primeiro envio, com a contagem de páginas e o destino nomeados, e opção de
+  não perguntar de novo. Modo `Somente local` disponível para não enviar nada.
+  Ver §27.4.
 
-- [ ] **Dependência de rede.** Decidir se o detector local (Sprint 7) entra ou se
-  o produto assume o endpoint remoto como requisito.
+- [x] **Dependência de rede.** Decidido: o detector local entra e vira o padrão; o
+  endpoint remoto permanece como reforço opcional, não requisito. Ver §27.3.
 
 ### 22.2 Corrigidos nesta revisão
 
@@ -1018,9 +1025,7 @@ síncrona e isolada em `PdfService`, então a mudança é local.
 
 - [x] **CI com `pytest`** — feito no Sprint 5, ver §25.4.
 
-- [ ] **Ajuste fino da seleção.** Não há como mover ou redimensionar um retângulo
-  já desenhado — só apagar e redesenhar. Alças + setas do teclado resolvem, e
-  agora fazem ainda mais sentido porque o efeito é visível ao vivo.
+- [x] **Ajuste fino da seleção** — feito no Sprint 6, ver §26.1 e §26.2.
 
 - [ ] **Dividir `app.py`.** O arquivo passou de 3.700 linhas e concentra UI, OCR,
   estado, estudo, prévia e exportação (separação sugerida na §19.1). O Sprint 5
@@ -1430,3 +1435,317 @@ outro PDF faz falhar exatamente um teste cada — o correspondente.
   já está isolada em `PdfService` e a mudança é local.
 - `apply_operations_to_pdf` não é interrompível, então a exportação não tem
   botão Cancelar — só a barra indeterminada.
+
+---
+
+## 26) Sprint 6 — precisão e ajuste fino (implementado em 2026-08-08)
+
+### 26.1 A seleção virou um objeto vivo
+
+Até aqui só existia "arrastar do zero". Corrigir um recorte 2 pt torto exigia
+apagar e redesenhar a seleção inteira — e com a prévia ao vivo isso ficou pior,
+porque cada redesenho pisca o diagrama todo.
+
+`SelectablePageWidget` agora distingue três gestos no mesmo clique:
+
+| Onde o botão desce | O que acontece |
+|---|---|
+| Sobre uma alça | redimensiona por aquele lado/canto |
+| Dentro da seleção | desloca o retângulo inteiro |
+| Fora da seleção | começa uma seleção nova (comportamento antigo) |
+
+São 8 alças; as de borda somem quando o lado fica abaixo de 34 px, senão elas
+cobririam as de canto. A tolerância de clique (11 px) é maior que o desenho
+(8 px), porque acertar a alça não pode ser questão de sorte.
+
+**O clique parado continua sendo clique.** Clicar dentro de uma seleção existente
+sempre emitiu `point_clicked`, que é o que foca a substituição naquele ponto. Um
+deslocamento de menos de 10 px continua contando como clique — senão o gesto de
+focar teria sumido junto com a novidade.
+
+**Teclado.** Setas deslocam 1 pt, Shift+setas 0,25 pt, Ctrl+setas redimensionam.
+O passo é em **pontos PDF**, não em pixels de tela: o widget recebe o zoom em
+vigor (`set_points_scale`) e converte, então "uma seta" significa a mesma coisa em
+qualquer ampliação. Deslocar contra a margem não encolhe o retângulo — o diagrama
+tem tamanho fixo e encolher ao encostar seria perder o ajuste feito.
+
+**O detalhe que exigiu cuidado.** `←`/`→` já eram atalhos de janela (página
+anterior/próxima), e atalho dispara **antes** do `keyPressEvent`. Sem tratar
+`ShortcutOverride` as setas nunca chegariam à seleção. O widget aceita o override
+somente quando há seleção — sem seleção, as setas continuam sendo da navegação.
+
+### 26.2 Snap da seleção à borda do tabuleiro
+
+`Ajustar seleção à borda` (Ctrl+B) expande a seleção em 30%, roda o detector local
+naquele recorte e devolve a borda real do tabuleiro. A margem existe porque a
+seleção à mão costuma cortar *para dentro* do diagrama: sem folga não haveria como
+crescer até a borda verdadeira.
+
+Duas escolhas de projeto:
+
+- **Não usa o classificador.** `refine_rect` é função de módulo, não método do
+  reconhecedor, justamente para funcionar numa instalação que tem OpenCV mas ainda
+  não tem o `.pt` do classificador. Há teste que quebra se alguém carregar o
+  modelo nesse caminho.
+- **Não achou borda ⇒ não mexe.** Ajustar a seleção para um lugar arbitrário seria
+  pior que não fazer nada; a barra de status diz que nada mudou.
+
+Medido em 7 diagramas de dois livros reais, partindo de seleções deslocadas e
+encolhidas de 4 a 10%: o retângulo devolvido pelo recorte é **idêntico ao pixel**
+ao que a detecção da página inteira encontra para o mesmo diagrama, em ~40 ms. Ou
+seja, o resultado é a borda do tabuleiro e não a seleção que o originou — o que o
+usuário percebe clicando duas vezes e nada se mexendo.
+
+### 26.3 Auto-orientação
+
+`orientation.py` pontua as quatro rotações e aplica a mais plausível. Todos os
+critérios são **independentes do lado a jogar**, porque um diagrama de livro não
+carrega essa informação e o app preenche "brancas" por padrão — qualquer regra que
+dependesse disso estaria pontuando o preenchimento, não a posição:
+
+| Critério | Peso | O que separa |
+|---|---|---|
+| Exatamente 1 rei de cada cor | ±3,0 | leitura quebrada |
+| Peão na 1ª/8ª fila | −2,0 cada | **90° e 270°** |
+| Sentido do avanço dos peões | ±3,0 | **0° e 180°** |
+| Contagem de peões/peças | −2,0 por excesso | leitura quebrada |
+
+O sentido dos peões é o único critério que decide entre 0° e 180°: girar uma
+posição legal 180° a mantém legal, com a mesma contagem de reis e de peças. Os
+outros são principalmente **eliminatórios**.
+
+Sem peão de alguma cor o sinal mais forte não tem o que dizer; nesse caso o
+resultado sai marcado como ambíguo e a barra de status pede conferência em vez de
+fingir certeza. Empate mantém a orientação atual: girar à toa assusta.
+
+O módulo é puro — só `fen.py` e listas —, então o botão funciona numa instalação
+sem torch e sem OpenCV. Quando o motor local está disponível ele tem a sua própria
+escolha de orientação, que olha os **pixels** (§27.2) e é melhor.
+
+### 26.4 Relatório de alterações
+
+`report.py` grava uma linha por alteração em CSV (planilha) ou JSON (diff entre
+processamentos). Além da geometria, as três colunas que faltavam para auditar:
+
+- **origem** (`manual`, `ocr-page`, `local-candidato`…): diz se um humano olhou;
+- **confiança**, quando o motor reportou — vazio continua vazio, inventar número
+  seria pior;
+- **avisos** de validação da FEN, que é o que faz uma linha valer revisão.
+
+A geometria sai em pontos PDF *e* em largura × altura: um diagrama com 2 pt de
+diferença entre os lados é o sintoma de bbox torta, e isso não se enxerga lendo
+x0/x1. O CSV vai com BOM (`utf-8-sig`), senão o Excel em português abre
+"substituição" como "substituiÃ§Ã£o".
+
+O JSON carrega ainda `resumo` (contagens, confiança mínima e média, quantos sem
+confiança) e o **motor** que produziu aquele processamento — sem isso, comparar
+dois relatórios não diria qual configuração gerou cada um.
+
+---
+
+## 27) Sprint 7 — reconhecimento local (implementado em 2026-08-08)
+
+### 27.1 O que estava em jogo
+
+O produto inteiro dependia de `helpman.komtera.lt`. Um livro de 898 páginas eram
+898 requisições HTTP, o livro do usuário viajava para um servidor de terceiros, e
+sem internet o reconhecimento automático simplesmente não existia.
+
+### 27.2 De onde veio o modelo (e por que não treinar do zero)
+
+O plano previa gerar dataset sintético e treinar uma ResNet18/MobileNetV3. Ao
+começar, o dono do produto apontou um projeto próprio já existente —
+**ChessVisionOFF_Puro** — com o problema resolvido e medido:
+
+- **3.290 tabuleiros reais rotulados** (`data/labels.csv`), com splits fixos;
+- **classificador CNN treinado**, `cnn-gray-64-linear`, métrica 0,9869;
+- detector por contorno + `_board_pattern_score`, já ajustado em 6 livros;
+- decodificação sujeita às regras do xadrez e escolha de orientação por diagrama.
+
+Treinar do zero, aqui, produziria algo pior por construção: dataset sintético não
+tem o halftone, o papel amarelado nem as figurinas alemãs que aquele conjunto tem.
+Então o Sprint 7 **integrou** em vez de reimplementar.
+
+**Validação antes de adotar** (torch 2.13, numpy 2.5, OpenCV 5.0 — versões bem mais
+novas que as do projeto de origem):
+
+| Medição | Resultado |
+|---|---|
+| Split de teste, 60 tabuleiros | **59/60 exatos** |
+| Tempo por tabuleiro | 60 ms (CPU, sem CUDA) |
+| Detecção em 4 páginas do Aagaard | 12/12 diagramas, bbox correta |
+
+O código vive em `local_ocr/_vendor/`, cópia fiel do commit `ee308dd`, com a
+proveniência registrada em `_vendor/__init__.py`. Regra: **não editar**. Correção
+vai no projeto de origem e volta como recópia, para `diff` continuar sendo a forma
+de saber o que mudou. A única divergência deliberada está no fim de `config.py`, e
+está marcada como tal.
+
+Vendorizar em vez de depender do pacote: o editor precisa rodar numa máquina que
+não tem o ChessVisionOFF_Puro instalado — inclusive no executável do Sprint 8.
+
+### 27.3 O motor híbrido
+
+Todo o app fala com **um** contrato, que já existia e nasceu do serviço remoto:
+
+```text
+predict(image_png, filename) -> OcrPrediction   # caixas normalizadas 0–1
+```
+
+É isso que permitiu trocar o motor sem tocar em GUI, worker de lote ou fila de
+candidatos. Três implementações:
+
+```text
+local     só a máquina. Nada sai daqui.
+remote    só o serviço externo. O comportamento de antes, intacto.
+hybrid    local primeiro; o remoto reforça as leituras inseguras.   ← padrão
+```
+
+**A confiança reportada é a `min_confidence`, não a média.** ~77% das casas de um
+diagrama são vazias e triviais, então a média fica ~0,97 mesmo num tabuleiro com
+erro. A casa mais insegura é o que separa acerto de erro — e é ela que decide se o
+remoto é chamado (limiar 0,80, o mesmo portão de exportação do projeto de origem).
+
+**Reforço é por tabuleiro, não por página.** Quando o remoto responde, só as
+leituras inseguras são substituídas; a **geometria continua a do detector local**,
+que trabalha na resolução do render, enquanto o remoto devolve a caixa normalizada
+e arredondada. Um tabuleiro que só o remoto viu é acrescentado.
+
+Degradação, nos dois sentidos:
+
+| Situação | O que acontece |
+|---|---|
+| Sem torch/OpenCV, modo híbrido | cai para remoto, em silêncio (é o padrão de fábrica) |
+| Sem torch/OpenCV, modo local | **recusa** — pedir offline e ganhar rede seria quebra de contrato |
+| Local falha em uma página | aquela página vai para o remoto |
+| Rede falha durante o reforço | mantém a leitura local; jogá-la fora seria pior |
+
+**Desempenho medido**, mesmo livro de 898 páginas, zoom 2,0, CPU sem CUDA:
+
+| Etapa | Tempo |
+|---|---|
+| Carga do modelo (uma vez por lote) | 47 ms |
+| Render da página | 222 ms |
+| Detecção + classificação de todos os diagramas da página | 345 ms |
+| **Total por página** | **567 ms** |
+| **Livro inteiro, offline** | **~8,5 min** |
+
+O worker de lote constrói o motor **dentro da sua própria thread** e chama
+`warm_up()` antes da primeira página — senão a barra de progresso ficaria parada em
+"página 1" sem explicação enquanto o modelo carrega.
+
+### 27.4 Aviso antes de enviar páginas para fora
+
+O produto passou o MVP inteiro mandando o livro para terceiros sem dizer isso em
+lugar nenhum. Agora que existe alternativa local, a pergunta é legítima.
+
+O aviso nomeia **o destino** e **quantas páginas**, e distingue os dois modos:
+`remoto` diz "serão enviadas", `híbrido` diz "podem ser enviadas (só as que o
+motor local ler com confiança baixa)". Tem caixa "não perguntar de novo neste
+computador" — repetir a cada página transformaria o aviso em ruído que ninguém lê.
+O botão padrão é **Cancelar**.
+
+No modo `Somente local` o aviso não aparece, porque não há o que avisar.
+
+Fora do diálogo, um rótulo permanente na aba OCR diz, **antes** de qualquer
+clique, o que aquele modo faz com as páginas — e, quando o motor local não está
+disponível, por quê.
+
+### 27.5 As correções voltam para o treino
+
+Toda vez que alguém conserta uma casa, produz o dado mais caro que existe neste
+domínio: um diagrama real, no estilo de impressão de um livro real, com a posição
+correta ao lado. Até aqui esse dado morria no `project_state.json`.
+
+`Exportar correções para treino...` grava no formato que o projeto de origem
+consome direto — `samples/board_*.png` (800×800) e linhas acrescentadas ao
+`labels.csv`. Dois cuidados:
+
+- **O recorte sai do PDF a 300 DPI**, não do preview em zoom 2,0: treinar em
+  imagem já degradada por ampliação seria ensinar o defeito.
+- **Acrescenta, nunca reescreve** o `labels.csv` — o arquivo de destino tem
+  milhares de linhas rotuladas à mão.
+
+O retreino continua sendo trabalho do projeto de origem, que é onde estão os
+splits, as métricas e o histórico de experimentos.
+
+### 27.6 Dependências opcionais
+
+`torch`, `torchvision`, `opencv-python-headless` e `numpy` entraram como extra
+`local`, não como dependência base: sem eles o app continua abrindo e usa o motor
+remoto, que é o comportamento que existia antes.
+
+```bash
+pip install -e ".[local]"
+```
+
+`opencv-python-headless` e não `opencv-python` porque este último embute o próprio
+Qt e conflita com o PySide6 no Windows.
+
+### 27.7 Cobertura de teste
+
+De 123 para **222 testes** (~20 s no total).
+
+`tests/test_selection_handles.py` (14) — alças e teclado, sem app:
+- arrastar canto redimensiona e o canto oposto fica parado;
+- arrastar o meio desloca; encostar na margem **não** encolhe;
+- **o clique parado dentro da seleção continua emitindo `point_clicked`**;
+- passo do teclado em pontos PDF, acompanhando o zoom;
+- **o `ShortcutOverride` só é reivindicado quando há seleção** — senão as setas
+  continuam navegando entre páginas.
+
+`tests/test_orientation.py` (12) — as quatro rotações:
+- toda rotação de uma posição real é revertida;
+- 90°/270° perdem por peão na 1ª/8ª fila; 0°/180° se separam pelo sentido;
+- **posição sem peões sai marcada como ambígua**, não como certeza;
+- empate mantém a orientação atual.
+
+`tests/test_report.py` (10) — CSV e JSON:
+- avisos de validação chegam à linha; **FEN quebrada vira aviso, não exceção**;
+- confiança ausente é célula vazia, não a string "None";
+- o CSV sai com BOM (o teste do Excel em português).
+
+`tests/test_recognition.py` (17) — a política do híbrido, com dublês:
+- **leitura confiante nunca toca a rede**;
+- só os tabuleiros inseguros são substituídos, e **a geometria continua a local**;
+- confiança ausente conta como insegura;
+- falha de rede mantém o local; falha do local cai para o remoto; as duas levantam;
+- **modo local recusa em vez de usar rede em silêncio**.
+
+`tests/test_local_ocr.py` (17) — o motor de verdade, com diagramas reais do split
+de teste (pulam sem as dependências opcionais):
+- as FENs saem corretas, e a confiança reportada é a da pior casa;
+- **qualquer requisição HTTP no caminho local falha o teste**;
+- página só com texto devolve vazio; dois diagramas na página são ambos achados;
+- o snap converge para a mesma borda a partir de seleções diferentes e é estável
+  ao ser aplicado duas vezes;
+- **o snap não carrega o classificador** (o teste quebra se carregar).
+
+`tests/test_app_engine.py` (21) — no app real, offscreen:
+- o aviso nomeia destino e contagem; **cancelar não reconhece nada**;
+- "não perguntar de novo" persiste; sem a caixa, pergunta de novo;
+- **o modo local nunca pergunta**; o híbrido pergunta porque pode enviar;
+- a escolha de motor sobrevive a fechar e reabrir, e **chega ao worker de lote**;
+- auto-orientar gira, sincroniza a FEN e não mexe no que já está de pé;
+- o relatório registra o motor que o produziu.
+
+`tests/test_feedback.py` (8) — exportação para treino:
+- recorte 800×800 e cabeçalho idênticos aos do dataset de origem;
+- **a segunda exportação acrescenta, não substitui**;
+- operação fora do intervalo de páginas é pulada, não fatal.
+
+A CI ganhou um segundo job (`pytest-local`, Ubuntu) que instala o extra `local` e
+**falha explicitamente se o motor local não ficar disponível** — sem isso os 17
+testes do motor pulariam sozinhos e um skip silencioso passaria por verde.
+
+### 27.8 Pendente deste sprint
+
+- O reconhecimento de **seleção** e de **página** continua síncrono na thread da
+  UI. Com o motor local são ~350 ms, aceitável; com o remoto era e continua sendo
+  a latência da rede. O lote é que roda em worker.
+- O modelo embutido (8,8 MB) está versionado no repositório. Para o executável do
+  Sprint 8 isso é o que se quer; para o repositório, vale reavaliar se ele deveria
+  vir de release em vez de commit.
+- Diagrama impresso do ponto de vista das pretas continua não resolvido: ali as
+  peças estão desenhadas para cima e o que muda é o mapeamento casa→índice, não os
+  pixels — girar a imagem estragaria a leitura. Herdado do projeto de origem.

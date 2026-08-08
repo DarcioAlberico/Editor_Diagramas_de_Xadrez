@@ -35,7 +35,11 @@ def _install_fake_batch_ocr(
     rect_pdf=DIAGRAM_RECT,
     delay_sec: float = 0.0,
 ):
-    """Troca o cliente HTTP *dentro do worker* por um dublê determinístico.
+    """Troca o motor de reconhecimento *dentro do worker* por um dublê determinístico.
+
+    O ponto de troca é `workers.make_engine`, e não a classe do cliente HTTP: desde o
+    Sprint 7 o worker escolhe entre local, remoto e híbrido, e o teste não quer nenhum
+    dos três — quer um motor que responde sempre a mesma coisa, sem rede e sem modelo.
 
     `delay_sec` simula a latência do serviço real. Sem ela um lote de N páginas
     termina antes do teste conseguir cancelar, e o teste passaria sem nunca ter
@@ -60,17 +64,19 @@ def _install_fake_batch_ocr(
     )
     threads_used: list[object] = []
 
-    class _FakeClient:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
+    class _FakeEngine:
+        name = "fake"
 
-        def predict(self, image_bytes, filename="board.png"):
+        def uses_network(self) -> bool:
+            return False
+
+        def predict(self, image_bytes, filename="board.png", assume_whole_image=False):
             threads_used.append(QtCore.QThread.currentThread())
             if delay_sec:
                 _time.sleep(delay_sec)
             return OcrPrediction(request_id="fake", status=200, message=None, results=[result])
 
-    monkeypatch.setattr(workers_module, "OcrApiClient", _FakeClient)
+    monkeypatch.setattr(workers_module, "make_engine", lambda *a, **k: _FakeEngine())
     return threads_used
 
 
@@ -424,6 +430,7 @@ def test_restored_autosave_reopens_the_work(main_window, qapp, tmp_path, no_moda
 def test_the_ocr_endpoint_survives_the_session(main_window, tmp_path) -> None:
     from chess_pdf_editor import app as app_module
     from chess_pdf_editor.ocr_api import default_endpoint
+    from chess_pdf_editor.recognition import ENGINE_REMOTE, make_engine
 
     assert main_window.endpoint_edit.text() == default_endpoint()
 
@@ -435,14 +442,17 @@ def test_the_ocr_endpoint_survives_the_session(main_window, tmp_path) -> None:
     reopened = app_module.MainWindow(settings=settings)
     try:
         assert reopened.endpoint_edit.text() == "https://interno/predict"
-        assert reopened._make_ocr_client().endpoints == ["https://interno/predict"]
+        engine = make_engine(ENGINE_REMOTE, endpoint=reopened._ocr_endpoint())
+        assert engine._client.endpoints == ["https://interno/predict"]
     finally:
         reopened.close()
 
 
 def test_an_empty_endpoint_falls_back_to_the_default_chain(main_window) -> None:
     from chess_pdf_editor.ocr_api import DEFAULT_ENDPOINTS
+    from chess_pdf_editor.recognition import ENGINE_REMOTE, make_engine
 
     main_window.endpoint_edit.setText("   ")
     assert main_window._ocr_endpoint() is None
-    assert main_window._make_ocr_client().endpoints == list(DEFAULT_ENDPOINTS)
+    engine = make_engine(ENGINE_REMOTE, endpoint=main_window._ocr_endpoint())
+    assert engine._client.endpoints == list(DEFAULT_ENDPOINTS)

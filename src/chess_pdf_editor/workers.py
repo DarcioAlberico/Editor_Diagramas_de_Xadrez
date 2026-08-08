@@ -22,8 +22,8 @@ from typing import Optional, Sequence
 from PySide6 import QtCore
 
 from .logging_config import get_logger
-from .ocr_api import OcrApiClient, OcrApiError
 from .pdf_service import PdfService, apply_operations_to_pdf
+from .recognition import DEFAULT_ENGINE_MODE, RecognitionError, make_engine
 from .types import EraseOperation, OverlayOperation, Rect
 
 logger = get_logger("workers")
@@ -66,6 +66,9 @@ class BatchOcrWorker(QtCore.QThread):
         endpoint: Optional[str] = None,
         zoom: float = 2.0,
         parent: Optional[QtCore.QObject] = None,
+        engine_mode: str = DEFAULT_ENGINE_MODE,
+        model_path: Optional[str] = None,
+        engine_factory: Optional[object] = None,
     ) -> None:
         super().__init__(parent)
         self._pdf_path = str(pdf_path)
@@ -75,6 +78,13 @@ class BatchOcrWorker(QtCore.QThread):
         self._zoom = float(zoom)
         self._cancel_requested = False
         self._next_page = int(start_page)
+        self._engine_mode = str(engine_mode)
+        self._model_path = model_path
+        # O motor é construído dentro de `run()`, na thread do worker: um modelo
+        # PyTorch carregado na thread da UI e usado aqui atravessaria a fronteira que
+        # o contrato deste módulo existe para não atravessar. O `engine_factory` é a
+        # porta de entrada dos testes, que injetam um dublê sem rede nem modelo.
+        self._engine_factory = engine_factory
 
     def cancel(self) -> None:
         """Pede parada. O worker termina a pagina corrente e sai."""
@@ -85,8 +95,23 @@ class BatchOcrWorker(QtCore.QThread):
         """Pagina onde retomar (util depois de um cancelamento)."""
         return self._next_page
 
+    def _build_engine(self):
+        if self._engine_factory is not None:
+            return self._engine_factory()
+        engine = make_engine(
+            self._engine_mode,
+            endpoint=self._endpoint,
+            model_path=self._model_path,
+        )
+        # Pagar a carga do modelo agora, e não na primeira página: senão a barra de
+        # progresso fica parada em "página 1" por um segundo sem explicação.
+        warm = getattr(engine, "warm_up", None)
+        if callable(warm):
+            warm()
+        return engine
+
     def run(self) -> None:  # pragma: no cover - exercitado via teste de integracao
-        client = OcrApiClient(endpoint=self._endpoint)
+        client = self._build_engine()
         total = max(0, self._end_page - self._start_page)
         canceled = False
         service: Optional[PdfService] = None
@@ -117,13 +142,13 @@ class BatchOcrWorker(QtCore.QThread):
     def _process_page(
         self,
         service: PdfService,
-        client: OcrApiClient,
+        client,
         page_num: int,
     ) -> list[BoardDetection]:
         rendered = service.render_page(page_num, zoom=self._zoom)
         try:
             prediction = client.predict(rendered.image_png, filename=f"page_{page_num + 1}.png")
-        except OcrApiError as exc:
+        except RecognitionError as exc:
             raise RuntimeError(str(exc)) from exc
 
         if not prediction.results:

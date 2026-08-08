@@ -70,6 +70,11 @@ def main_window(qapp, tmp_path):
     from chess_pdf_editor.pdf_service import clear_board_render_cache
 
     settings = QtCore.QSettings(str(tmp_path / "settings.ini"), QtCore.QSettings.IniFormat)
+    # O aviso de privacidade do Sprint 7 usa um QMessageBox de instancia (precisa de
+    # checkbox), que o `no_modals` nao alcanca: ele so troca os metodos estaticos. Sem
+    # esta chave o `exec()` bloquearia a suite para sempre. Quem testa o proprio aviso
+    # limpa a chave e usa a fixture `privacy_prompt`.
+    settings.setValue("remote_privacy_ack", True)
     clear_board_render_cache()
 
     window = app_module.MainWindow(settings=settings)
@@ -130,3 +135,36 @@ def no_modals(monkeypatch):
         monkeypatch.setattr(QtWidgets.QMessageBox, name, staticmethod(_record(name)))
     monkeypatch.setattr(QtWidgets.QMessageBox, "question", staticmethod(_record("question")))
     return shown
+
+
+@pytest.fixture
+def privacy_prompt(monkeypatch):
+    """Intercepta o aviso de envio para servidor externo (Sprint 7.3).
+
+    Ele e um `QMessageBox` de instancia, porque precisa do checkbox "nao perguntar de
+    novo" — entao nao da para neutraliza-lo trocando um metodo estatico. Aqui o
+    `exec()` e substituido por uma funcao que registra o que foi mostrado e devolve a
+    resposta programada.
+
+    Uso: `privacy_prompt.answer = QMessageBox.Cancel` antes de disparar a acao;
+    `privacy_prompt.shown` tem os textos exibidos.
+    """
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    class _Prompt:
+        def __init__(self) -> None:
+            self.answer = QtWidgets.QMessageBox.Yes
+            self.remember = False
+            self.shown: list[str] = []
+
+    prompt = _Prompt()
+
+    def _exec(box_self):
+        prompt.shown.append(f"{box_self.windowTitle()}|{box_self.text()}|{box_self.informativeText()}")
+        checkbox = box_self.checkBox()
+        if checkbox is not None:
+            checkbox.setChecked(prompt.remember)
+        return prompt.answer
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "exec", _exec)
+    return prompt

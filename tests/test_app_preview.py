@@ -5,7 +5,6 @@ isolamento de preferencias, autosave e logs.
 """
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 
@@ -180,14 +179,16 @@ def _install_fake_ocr(monkeypatch, window, fen: str = FEN, rect_pdf=DIAGRAM_RECT
         height=(y1 - y0) / render.height_px,
     )
 
-    class _FakeClient:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
+    class _FakeEngine:
+        name = "fake"
 
-        def predict(self, image_bytes, filename="board.png"):
+        def uses_network(self) -> bool:
+            return False
+
+        def predict(self, image_bytes, filename="board.png", assume_whole_image=False):
             return OcrPrediction(request_id="fake", status=200, message=None, results=[result])
 
-    monkeypatch.setattr(app_module, "OcrApiClient", _FakeClient)
+    monkeypatch.setattr(app_module, "make_engine", lambda *a, **k: _FakeEngine())
 
 
 def test_recognition_queues_candidates_when_auto_apply_is_off(main_window, tmp_path, monkeypatch) -> None:

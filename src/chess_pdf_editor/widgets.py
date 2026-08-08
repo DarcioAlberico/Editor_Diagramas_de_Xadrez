@@ -110,16 +110,46 @@ class SelectablePageWidget(QtWidgets.QLabel):
     selection_changed = QtCore.Signal(object)
     point_clicked = QtCore.Signal(object)
 
+    #: Alças desenhadas em volta da seleção (Sprint 6.1).
+    _HANDLE_KEYS = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
+    _HANDLE_SIZE = 8.0
+    #: Tolerância de clique — maior que o desenho, senão acertar a alça vira sorte.
+    _HANDLE_HIT = 11.0
+    #: Abaixo disso só as alças de canto cabem sem se sobrepor.
+    _MIN_EDGE_HANDLES_PX = 34.0
+    _CURSORS = {
+        "nw": QtCore.Qt.SizeFDiagCursor,
+        "se": QtCore.Qt.SizeFDiagCursor,
+        "ne": QtCore.Qt.SizeBDiagCursor,
+        "sw": QtCore.Qt.SizeBDiagCursor,
+        "n": QtCore.Qt.SizeVerCursor,
+        "s": QtCore.Qt.SizeVerCursor,
+        "e": QtCore.Qt.SizeHorCursor,
+        "w": QtCore.Qt.SizeHorCursor,
+    }
+    #: Passo das setas do teclado, em pontos PDF (Shift = passo fino).
+    STEP_PT = 1.0
+    FINE_STEP_PT = 0.25
+
     def __init__(self) -> None:
         super().__init__()
         self.setAlignment(QtCore.Qt.AlignTop | QtCore.Qt.AlignLeft)
         self.setMouseTracking(True)
         self.setBackgroundRole(QtGui.QPalette.Base)
         self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        # Sem foco de teclado as setas nunca chegariam aqui.
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
 
         self._selection_rect: Optional[QtCore.QRectF] = None
         self._drag_start: Optional[QtCore.QPointF] = None
         self._dragging = False
+        # Modo do arrasto em curso: "new" | "move" | "resize".
+        self._drag_mode: Optional[str] = None
+        self._active_handle: Optional[str] = None
+        self._rect_at_press: Optional[QtCore.QRectF] = None
+        # Pixels de tela por ponto PDF: converte o passo do teclado (em pt) para
+        # o espaço em que este widget trabalha.
+        self._px_per_pt = 2.0
         self._operation_rects: list[QtCore.QRectF] = []
         self._eraser_rects: list[QtCore.QRectF] = []
         self._study_rects: list[QtCore.QRectF] = []
@@ -130,10 +160,23 @@ class SelectablePageWidget(QtWidgets.QLabel):
         self.setFixedSize(pixmap.size())
         self.clear_selection()
 
+    def set_points_scale(self, px_per_pt: float) -> None:
+        """Zoom em vigor, para o passo do teclado ser em pontos PDF de verdade."""
+        try:
+            value = float(px_per_pt)
+        except (TypeError, ValueError):
+            return
+        if value > 0:
+            self._px_per_pt = value
+
     def clear_selection(self) -> None:
         self._selection_rect = None
         self._drag_start = None
         self._dragging = False
+        self._drag_mode = None
+        self._active_handle = None
+        self._rect_at_press = None
+        self.unsetCursor()
         self.update()
         self.selection_changed.emit(None)
 
@@ -177,35 +220,146 @@ class SelectablePageWidget(QtWidgets.QLabel):
         self.update()
         self.selection_changed.emit(self.selection_rect())
 
+    # ------------------------------------------------------------------
+    # Ajuste fino da seleção (Sprint 6.1)
+    # ------------------------------------------------------------------
+    #
+    # Antes só existia "arrastar do zero": corrigir um recorte 2 pt torto exigia
+    # apagar e redesenhar a seleção inteira. Agora o retângulo é um objeto vivo —
+    # alças para redimensionar, corpo para deslocar, setas para o ajuste fino.
+
+    def _handle_centers(self) -> dict[str, QtCore.QPointF]:
+        if self._selection_rect is None:
+            return {}
+        r = self._selection_rect.normalized()
+        cx = (r.left() + r.right()) / 2.0
+        cy = (r.top() + r.bottom()) / 2.0
+        centers = {
+            "nw": QtCore.QPointF(r.left(), r.top()),
+            "ne": QtCore.QPointF(r.right(), r.top()),
+            "se": QtCore.QPointF(r.right(), r.bottom()),
+            "sw": QtCore.QPointF(r.left(), r.bottom()),
+        }
+        # Numa seleção minúscula as alças de borda cobririam as de canto.
+        if r.width() >= self._MIN_EDGE_HANDLES_PX:
+            centers["n"] = QtCore.QPointF(cx, r.top())
+            centers["s"] = QtCore.QPointF(cx, r.bottom())
+        if r.height() >= self._MIN_EDGE_HANDLES_PX:
+            centers["w"] = QtCore.QPointF(r.left(), cy)
+            centers["e"] = QtCore.QPointF(r.right(), cy)
+        return centers
+
+    def _handle_at(self, point: QtCore.QPointF) -> Optional[str]:
+        tolerance = self._HANDLE_HIT
+        best: Optional[str] = None
+        best_distance = tolerance
+        for key, center in self._handle_centers().items():
+            distance = max(abs(point.x() - center.x()), abs(point.y() - center.y()))
+            if distance <= best_distance:
+                best = key
+                best_distance = distance
+        return best
+
+    def _resized_rect(self, handle: str, base: QtCore.QRectF, point: QtCore.QPointF) -> QtCore.QRectF:
+        left, top, right, bottom = base.left(), base.top(), base.right(), base.bottom()
+        if "w" in handle:
+            left = point.x()
+        if "e" in handle:
+            right = point.x()
+        if "n" in handle:
+            top = point.y()
+        if "s" in handle:
+            bottom = point.y()
+        return QtCore.QRectF(QtCore.QPointF(left, top), QtCore.QPointF(right, bottom)).normalized()
+
+    def _moved_rect(self, base: QtCore.QRectF, dx: float, dy: float) -> QtCore.QRectF:
+        """Desloca mantendo o tamanho: encostar na borda não encolhe a seleção."""
+        moved = QtCore.QRectF(base)
+        moved.translate(dx, dy)
+        if self.pixmap() is not None:
+            max_x = max(0.0, float(self.pixmap().width() - 1) - moved.width())
+            max_y = max(0.0, float(self.pixmap().height() - 1) - moved.height())
+            moved.moveLeft(min(max(0.0, moved.left()), max_x))
+            moved.moveTop(min(max(0.0, moved.top()), max_y))
+        return moved
+
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() != QtCore.Qt.LeftButton or self.pixmap() is None:
             return super().mousePressEvent(event)
+        self.setFocus(QtCore.Qt.MouseFocusReason)
         p = self._clamp_point(event.position())
         self._drag_start = p
-        self._selection_rect = QtCore.QRectF(p, p)
         self._dragging = True
+
+        if self._selection_rect is not None:
+            handle = self._handle_at(p)
+            if handle is not None:
+                self._drag_mode = "resize"
+                self._active_handle = handle
+                self._rect_at_press = QtCore.QRectF(self._selection_rect)
+                self.update()
+                return
+            if self._selection_rect.normalized().contains(p):
+                self._drag_mode = "move"
+                self._active_handle = None
+                self._rect_at_press = QtCore.QRectF(self._selection_rect)
+                self.setCursor(QtCore.Qt.ClosedHandCursor)
+                self.update()
+                return
+
+        self._drag_mode = "new"
+        self._active_handle = None
+        self._rect_at_press = None
+        self._selection_rect = QtCore.QRectF(p, p)
         self.update()
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         if not self._dragging or self._drag_start is None:
+            self._update_hover_cursor(event.position())
             return super().mouseMoveEvent(event)
+
         p = self._clamp_point(event.position())
-        self._selection_rect = QtCore.QRectF(self._drag_start, p).normalized()
+        if self._drag_mode == "resize" and self._rect_at_press is not None and self._active_handle:
+            self._selection_rect = self._resized_rect(self._active_handle, self._rect_at_press, p)
+        elif self._drag_mode == "move" and self._rect_at_press is not None:
+            self._selection_rect = self._moved_rect(
+                self._rect_at_press,
+                p.x() - self._drag_start.x(),
+                p.y() - self._drag_start.y(),
+            )
+        else:
+            self._selection_rect = QtCore.QRectF(self._drag_start, p).normalized()
         self.update()
         self.selection_changed.emit(self.selection_rect())
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() != QtCore.Qt.LeftButton or not self._dragging:
             return super().mouseReleaseEvent(event)
+        mode = self._drag_mode
         self._dragging = False
-        if self._selection_rect and self._drag_start is not None:
+        self._drag_mode = None
+        self._active_handle = None
+        self._rect_at_press = None
+        self.unsetCursor()
+
+        if mode in ("new", "move") and self._selection_rect and self._drag_start is not None:
             p = self._clamp_point(event.position())
             dx = p.x() - self._drag_start.x()
             dy = p.y() - self._drag_start.y()
+            is_short_distance = (dx * dx + dy * dy) <= (10.0 * 10.0)
+            # Arrastar dentro de uma seleção existente é deslocamento; só o
+            # clique parado continua valendo como "focar o que está aqui".
+            if mode == "move":
+                if is_short_distance:
+                    self.point_clicked.emit((p.x(), p.y()))
+                    self.clear_selection()
+                    return
+                self.update()
+                self.selection_changed.emit(self.selection_rect())
+                return
             r = self._selection_rect.normalized()
             # Trata como clique mesmo com pequeno tremor/arrasto curto.
             is_short_drag = (r.width() <= 18.0 and r.height() <= 18.0)
-            is_short_distance = (dx * dx + dy * dy) <= (10.0 * 10.0)
             if is_short_drag or is_short_distance:
                 self.point_clicked.emit((p.x(), p.y()))
                 self.clear_selection()
@@ -213,6 +367,66 @@ class SelectablePageWidget(QtWidgets.QLabel):
         if self._selection_rect and (self._selection_rect.width() < 2 or self._selection_rect.height() < 2):
             self.clear_selection()
             return
+        self.update()
+        self.selection_changed.emit(self.selection_rect())
+
+    def _update_hover_cursor(self, position: QtCore.QPointF) -> None:
+        if self._selection_rect is None:
+            self.unsetCursor()
+            return
+        handle = self._handle_at(position)
+        if handle is not None:
+            self.setCursor(self._CURSORS[handle])
+        elif self._selection_rect.normalized().contains(position):
+            self.setCursor(QtCore.Qt.OpenHandCursor)
+        else:
+            self.unsetCursor()
+
+    # -- teclado -------------------------------------------------------
+
+    _ARROW_DELTAS = {
+        QtCore.Qt.Key_Left: (-1.0, 0.0),
+        QtCore.Qt.Key_Right: (1.0, 0.0),
+        QtCore.Qt.Key_Up: (0.0, -1.0),
+        QtCore.Qt.Key_Down: (0.0, 1.0),
+    }
+
+    def _handles_key(self, event: QtGui.QKeyEvent) -> bool:
+        return self._selection_rect is not None and event.key() in self._ARROW_DELTAS
+
+    def event(self, event: QtCore.QEvent) -> bool:
+        # `←`/`→` são atalhos de janela (navegar página). Sem aceitar o
+        # ShortcutOverride, o atalho dispararia antes do keyPressEvent e as setas
+        # nunca chegariam à seleção. Só interceptamos quando há o que mover.
+        if event.type() == QtCore.QEvent.ShortcutOverride and self._handles_key(event):
+            event.accept()
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if not self._handles_key(event):
+            return super().keyPressEvent(event)
+
+        modifiers = event.modifiers()
+        step_pt = self.FINE_STEP_PT if modifiers & QtCore.Qt.ShiftModifier else self.STEP_PT
+        step_px = max(0.05, step_pt * self._px_per_pt)
+        dx, dy = self._ARROW_DELTAS[event.key()]
+        base = QtCore.QRectF(self._selection_rect).normalized()
+
+        if modifiers & QtCore.Qt.ControlModifier:
+            # Ctrl redimensiona pela borda inferior-direita; mover e redimensionar
+            # com o mesmo passo mantém o ajuste previsível.
+            grown = QtCore.QRectF(
+                base.left(),
+                base.top(),
+                max(2.0, base.width() + dx * step_px),
+                max(2.0, base.height() + dy * step_px),
+            )
+            self._selection_rect = self._clamp_rect(grown)
+        else:
+            self._selection_rect = self._moved_rect(base, dx * step_px, dy * step_px)
+
+        event.accept()
         self.update()
         self.selection_changed.emit(self.selection_rect())
 
@@ -257,6 +471,21 @@ class SelectablePageWidget(QtWidgets.QLabel):
         painter.setBrush(QtGui.QColor(255, 0, 0, 40))
         painter.drawRect(self._selection_rect)
 
+        # Alças: branco com contorno escuro para aparecer sobre página clara ou
+        # sobre o próprio diagrama.
+        half = self._HANDLE_SIZE / 2.0
+        painter.setPen(QtGui.QPen(QtGui.QColor(120, 20, 20), 1))
+        painter.setBrush(QtGui.QColor(255, 255, 255, 235))
+        for center in self._handle_centers().values():
+            painter.drawRect(
+                QtCore.QRectF(
+                    center.x() - half,
+                    center.y() - half,
+                    self._HANDLE_SIZE,
+                    self._HANDLE_SIZE,
+                )
+            )
+
     def _clamp_point(self, point: QtCore.QPointF) -> QtCore.QPointF:
         if self.pixmap() is None:
             return point
@@ -265,6 +494,15 @@ class SelectablePageWidget(QtWidgets.QLabel):
         x = min(max(0.0, point.x()), width)
         y = min(max(0.0, point.y()), height)
         return QtCore.QPointF(x, y)
+
+    def _clamp_rect(self, rect: QtCore.QRectF) -> QtCore.QRectF:
+        r = rect.normalized()
+        if self.pixmap() is None:
+            return r
+        return QtCore.QRectF(
+            self._clamp_point(r.topLeft()),
+            self._clamp_point(r.bottomRight()),
+        ).normalized()
 
 
 class BeforeAfterWidget(QtWidgets.QWidget):

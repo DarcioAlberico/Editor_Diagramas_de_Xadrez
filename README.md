@@ -3,7 +3,7 @@
 Aplicacao desktop para:
 - abrir PDF;
 - selecionar diagramas de xadrez;
-- reconhecer posicao por OCR (API);
+- reconhecer a posicao **na propria maquina** (ou por API, ou os dois);
 - editar/corrigir no tabuleiro;
 - substituir no PDF local com overlay HQ;
 - salvar/carregar projeto de trabalho.
@@ -26,6 +26,17 @@ Opcional para render vetorial de melhor qualidade:
 ```powershell
 pip install cairosvg
 ```
+
+Opcional (recomendado) para o **reconhecimento local**, sem depender de servidor:
+
+```powershell
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install -e ".[local]"
+```
+
+Sem esses pacotes o app continua funcionando e usa o servico externo. Com eles,
+`Detectar no PDF` roda offline em ~0,6 s por pagina. Veja
+[Motor de reconhecimento](#motor-de-reconhecimento).
 
 Opcional para usar fonte Merida no diagrama exportado:
 
@@ -113,7 +124,39 @@ O estilo (`Padding`, `Borda`) usado pelo lote e o que estava configurado quando
 voce clicou: mudar no meio da execucao nao faz metade dos diagramas sair
 diferente da outra metade.
 
-## Endpoint do OCR
+## Motor de reconhecimento
+
+Em `OCR` > `Avancado` > `Motor de reconhecimento` voce escolhe entre tres modos, e
+a escolha e lembrada entre sessoes:
+
+| Modo | O que faz | O que sai da maquina |
+|---|---|---|
+| **Local primeiro, remoto como reforco** (padrao) | reconhece localmente e so consulta o servico externo nas paginas em que a confianca ficar abaixo de 0,80 | so essas paginas |
+| **Somente local (offline)** | tudo na sua maquina | **nada** |
+| **Somente remoto** | comportamento das versoes anteriores | todas as paginas |
+
+Logo acima do botao `Reconhecer`, um rotulo diz qual e a situacao atual — inclusive
+quando o motor local nao esta instalado, e por que.
+
+**Antes do primeiro envio** para o servico externo o app pergunta, dizendo o
+destino e quantas paginas estao em jogo. Marque `Nao perguntar de novo neste
+computador` para nao ver mais o aviso. No modo `Somente local` ele nunca aparece.
+
+Desempenho medido num livro de 898 paginas, CPU sem placa de video: **0,57 s por
+pagina** (0,22 s de render + 0,35 s de deteccao e classificacao), ou ~8,5 min para
+o livro inteiro sem tocar a rede.
+
+### Modelo local
+
+O classificador vem em `models/piece_classifier.pt`. Para apontar outro, use
+`OCR` > `Avancado` > `Modelo local (.pt)` ou a variavel `CHESS_LOCAL_MODEL`.
+
+O modelo e o detector vem do projeto **ChessVisionOFF_Puro** (3.290 diagramas
+reais rotulados). O codigo esta em `src/chess_pdf_editor/local_ocr/_vendor/` como
+copia fiel — **nao edite ali**: correcoes vao no projeto de origem e voltam como
+recopia.
+
+### Endpoint do OCR
 
 O padrao aparece em `OCR` > `Avancado` > `Endpoint OCR` e a sua escolha e
 lembrada entre sessoes. Deixe o campo vazio para voltar ao padrao.
@@ -125,8 +168,51 @@ $env:CHESS_OCR_ENDPOINT = "https://meu-servidor/predict"
 $env:CHESS_OCR_TIMEOUT  = "60"
 ```
 
-Quando o servico informa a confianca da deteccao, o valor e guardado junto da
-substituicao no projeto.
+A confianca da deteccao e guardada junto da substituicao no projeto. No motor
+local ela e a confianca da **pior casa** do tabuleiro, nao a media — a media fica
+alta mesmo com erro, porque ~77% das casas sao vazias e triviais.
+
+## Ajustar a selecao sem redesenhar
+
+O retangulo desenhado na pagina pode ser corrigido no lugar:
+
+- **arraste uma alca** (cantos e bordas) para redimensionar;
+- **arraste o meio** para deslocar o retangulo inteiro;
+- **setas do teclado** deslocam 1 pt; com `Shift`, 0,25 pt; com `Ctrl`,
+  redimensionam. O passo e sempre em pontos do PDF, qualquer que seja o zoom.
+
+As setas so pertencem a selecao quando existe uma e o visor esta em foco; sem
+selecao elas continuam virando pagina.
+
+**`Ajustar selecao a borda` (Ctrl+B)** encosta a selecao nas bordas reais do
+tabuleiro. Precisa das dependencias do motor local (so o detector — nao carrega o
+classificador). Se nao encontrar borda nenhuma, nada e alterado.
+
+## Auto-orientar a posicao
+
+`Auto-orientar` (Ctrl+Shift+R), no editor de tabuleiro, testa as 4 rotacoes e
+aplica a mais plausivel — usando contagem de reis, peoes na 1ª/8ª fila e o sentido
+do avanco dos peoes. Se a escolha for apertada, a barra de status avisa para voce
+conferir. Quando a posicao ja esta de pe, nada muda.
+
+## Relatorio de alteracoes
+
+`Arquivo` > `Exportar relatorio...` (Ctrl+Shift+E) grava uma linha por alteracao em
+**CSV** (para abrir na planilha e ordenar por confianca) ou **JSON** (para
+comparar dois processamentos). Cada linha tem pagina, bbox em pontos, largura x
+altura, FEN, origem da deteccao, confianca e os avisos de validacao.
+
+O JSON traz ainda um resumo (contagens, confianca minima e media) e qual motor
+produziu aquele processamento.
+
+## Correcoes para treino
+
+`Arquivo` > `Exportar correcoes para treino...` grava os diagramas que voce
+corrigiu no formato do dataset que treina o motor local: `samples/*.png` (800x800,
+recortados do PDF a 300 DPI) e linhas acrescentadas a `labels.csv`.
+
+O arquivo de destino nunca e sobrescrito, so acrescentado. O retreino em si
+acontece no projeto ChessVisionOFF_Puro, onde estao os splits e as metricas.
 
 ## Prévia ao vivo do resultado
 
@@ -250,10 +336,17 @@ python scripts/collect_project_labels.py --projects .\project_state.json --image
 ```text
 src/chess_pdf_editor/
   app.py              # GUI principal (janela, modos, previa ao vivo)
-  widgets.py          # viewer selecionavel, editor de tabuleiro, antes/depois
+  widgets.py          # viewer selecionavel (alcas/teclado), editor, antes/depois
   pdf_service.py      # render, previa e overlay no PDF
+  recognition.py      # escolha do motor: local, remoto ou hibrido
+  local_ocr/          # reconhecimento local (detector + classificador)
+    engine.py         #   adaptador para o contrato de OCR do app + snap
+    _vendor/          #   copia fiel do ChessVisionOFF_Puro — nao editar
   ocr_api.py          # cliente da API OCR (endpoint/timeout/confianca)
   workers.py          # OCR em lote e exportacao em segundo plano
+  orientation.py      # auto-orientacao por plausibilidade da posicao
+  report.py           # relatorio de alteracoes em CSV/JSON
+  feedback.py         # correcoes exportadas para o dataset de treino
   history.py          # pilha de desfazer/refazer do modo Edicao
   autosave.py         # caminho e gravacao atomica do autosave
   logging_config.py   # log em arquivo com rotacao
@@ -261,6 +354,8 @@ src/chess_pdf_editor/
   renderer.py         # render do diagrama (PDF/PNG)
   study.py            # arvore de lances/variantes do modo Estudo
   project_state.py    # persistencia de checkpoint
+models/
+  piece_classifier.pt # classificador das 64 casas usado pelo motor local
 ```
 
 ## Testes
@@ -274,8 +369,13 @@ configuracao temporario, entao nao abrem janelas nem alteram suas preferencias.
 O autosave e o log tambem sao redirecionados para um diretorio temporario, entao
 a suite nao escreve nada em `%LOCALAPPDATA%`.
 
+Os testes do motor local (`tests/test_local_ocr.py`) pulam sozinhos quando as
+dependencias opcionais nao estao instaladas.
+
 A suite roda automaticamente em push e pull request (GitHub Actions, Windows e
-Ubuntu) — veja `.github/workflows/tests.yml`.
+Ubuntu) — veja `.github/workflows/tests.yml`. Um segundo job instala o extra
+`local` e falha se o motor local nao ficar disponivel, para um skip silencioso nao
+passar por verde.
 
 ## Logs
 
@@ -290,7 +390,7 @@ leva direto ate ele. `CHESS_PDF_EDITOR_LOG_DIR` muda o destino e
 
 ## Observacoes
 
-- O OCR e usado para acelerar reconhecimento, mas o fluxo principal de substituicao e local.
+- O reconhecimento roda localmente por padrao; o servico externo e reforco, nao requisito.
 - O fallback de renderizacao funciona sem `cairosvg`.
 - `Padding whiteout` por lado (esq/topo/dir/base) e `Borda` sao salvos por substituicao no projeto.
 - `Apagamentos` sao salvos separadamente e aplicados antes dos overlays.
