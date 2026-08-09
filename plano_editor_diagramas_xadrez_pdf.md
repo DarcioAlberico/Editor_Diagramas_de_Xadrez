@@ -541,9 +541,9 @@ Beta (meta):
 ### Sprint 9: o que o Sprint 7 destravou
 
 1. **Modo "revisar pendências"** ✅ — ver §29.
-2. **Dividir `app.py`** (§22.3), que continua concentrando UI e orquestração.
+2. **Dividir `app.py`** ✅ — ver §30.
 3. **Galeria de diagramas do livro** (§22.5), viável em minutos por livro com o
-   reconhecimento local.
+   reconhecimento local. — próximo
 
 ---
 
@@ -1016,10 +1016,7 @@ síncrona e isolada em `PdfService`, então a mudança é local.
 
 - [x] **Ajuste fino da seleção** — feito no Sprint 6, ver §26.1 e §26.2.
 
-- [ ] **Dividir `app.py`.** O arquivo passou de 3.700 linhas e concentra UI, OCR,
-  estado, estudo, prévia e exportação (separação sugerida na §19.1). O Sprint 5
-  já extraiu `workers`, `history`, `autosave` e `logging_config` para módulos
-  próprios; o que sobrou em `app.py` é a UI e a orquestração.
+- [x] **Dividir `app.py`** — feito no Sprint 9.2, ver §30.
 
 ### 22.4 Prioridade média
 
@@ -1905,3 +1902,67 @@ o filtro.
 
 Verificado por mutação: fazer as ações em massa ignorarem o filtro derruba
 exatamente os três testes de segurança, e nenhum outro.
+
+---
+
+## 30) Sprint 9.2 — divisão do `app.py` (implementado em 2026-08-08)
+
+### 30.1 O que era
+
+4.500 linhas concentrando janela, reconhecimento, fila de candidatos, modo Estudo,
+prévia, tema e exportação. Item de **prioridade alta** desde a revisão de
+2026-05-17 (§19.1), adiado três sprints porque sempre havia coisa mais urgente — e
+porque um refactor grande num arquivo desses só é seguro com a suíte que o Sprint 5
+e o 7 construíram. Com 267 testes cobrindo o comportamento, ficou seguro.
+
+### 30.2 O resultado
+
+| Módulo | Linhas | O que é |
+|---|---|---|
+| `app.py` | **2.687** | janela: composição, modos, prévia, projeto, exportação |
+| `ocr_workflow.py` | 717 | reconhecimento, lote e fila de candidatos |
+| `study_workflow.py` | 459 | posições de estudo do PDF e comentários por lance |
+| `study_panel.py` | 287 | o painel de estudo em si |
+| `theme.py` | 67 | cores semânticas e QSS reutilizado |
+
+`app.py` perdeu 40% do tamanho sem que uma linha de comportamento mudasse.
+
+### 30.3 Mixin, e por quê
+
+`study_panel.py` e `theme.py` saíram como módulos normais: não conhecem a janela.
+
+Os dois blocos grandes, não. Eles mexem em quase tudo que a janela tem —
+`self.operations`, `self.candidates`, o visor, a prévia, o histórico de desfazer, a
+barra de status, uma dúzia de widgets. As opções eram:
+
+1. **Classe com a janela como colaborador**: o mesmo acoplamento, com uma
+   indireção a mais e um diff que reescreve cada `self.x` em `self.window.x`.
+2. **Reescrever o fluxo** para reduzir o acoplamento de verdade: é a solução certa
+   a longo prazo, e é uma mudança de comportamento disfarçada de organização —
+   exatamente o que não se quer num arquivo com este histórico.
+3. **Mixin**: move o código de arquivo sem mover nada de lugar semanticamente.
+
+Escolhido o 3. `MainWindow` continua sendo uma classe só em tempo de execução, e a
+extração é recorte-e-cola verificável. Cada mixin lista, num comentário, o que
+espera encontrar na janela — não é contrato executável, é o que um leitor precisa
+saber antes de mexer ali.
+
+Isso não é o fim da linha: com os blocos isolados em arquivos próprios, dá para
+reduzir o acoplamento de verdade um método por vez, sem um big bang.
+
+### 30.4 Como se sabe que nada se perdeu
+
+- **Contagem de métodos**: 187 antes, 187 depois (123 na janela + 28 + 36 nos
+  mixins), sem colisão de nome entre eles.
+- **267 testes passando**, os mesmos de antes, incluindo os 16 de GUI que
+  constroem a `MainWindow` de verdade.
+- **`--self-test`** do Sprint 8, que constrói a janela e carrega o classificador.
+- Uma armadilha real encontrada no caminho: `_set_study_comment_summary` chamava
+  `MainWindow._study_comment_sort_key` pelo nome da classe. Fora da `MainWindow`
+  isso vira import circular; passou a apontar para o próprio mixin.
+
+### 30.5 O que ficou para trás de propósito
+
+`_open_study_dialog`, `_is_study_mode`, `_load_operation_into_study` e
+`_study_position_index_at_image_point` continuam em `app.py`: são pequenos, estão
+intercalados com código da janela e movê-los fragmentaria o diff sem reduzir nada.

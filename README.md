@@ -352,7 +352,11 @@ python scripts/collect_project_labels.py --projects .\project_state.json --image
 
 ```text
 src/chess_pdf_editor/
-  app.py              # GUI principal (janela, modos, previa ao vivo)
+  app.py              # janela principal: composicao, modos, previa ao vivo
+  ocr_workflow.py     # mixin: reconhecimento, lote e fila de candidatos
+  study_workflow.py   # mixin: posicoes de estudo do PDF e comentarios por lance
+  study_panel.py      # painel de estudo (nao conhece a janela)
+  theme.py            # cores semanticas e QSS reutilizado
   widgets.py          # viewer selecionavel (alcas/teclado), editor, antes/depois
   pdf_service.py      # render, previa e overlay no PDF
   recognition.py      # escolha do motor: local, remoto ou hibrido
