@@ -1758,9 +1758,12 @@ testes do motor pulariam sozinhos e um skip silencioso passaria por verde.
 - O modelo embutido (8,8 MB) está versionado no repositório. Para o executável do
   Sprint 8 isso é o que se quer; para o repositório, vale reavaliar se ele deveria
   vir de release em vez de commit.
-- Diagrama impresso do ponto de vista das pretas continua não resolvido: ali as
-  peças estão desenhadas para cima e o que muda é o mapeamento casa→índice, não os
-  pixels — girar a imagem estragaria a leitura. Herdado do projeto de origem.
+- Diagrama impresso do ponto de vista das pretas: **medido e reavaliado no Sprint
+  9.14, ver §42**. No nível do app está resolvido — `auto_orient` recupera o giro de
+  180° pela FEN, sem tocar nos pixels. O que ficou decidido em contrário foi o *aviso
+  automático*: a heurística erra com confiança em estudo de peão avançado (§42.2 tem o
+  contraexemplo, tirado de um diagrama real), então a orientação segue sendo comando
+  manual — agora reversível pelo mesmo atalho.
 
 ---
 
@@ -3025,3 +3028,94 @@ nos dois sentidos.
 O teste da altura prende **1.100**, e não afirma nada sobre 900 — congelar o defeito
 seria transformá-lo em requisito. Quem acrescentar 200 px de painel acima de
 `Adicionar substituição` quebra o teste.
+
+---
+
+## 42) Sprint 9.14 — auto-orientar reversível, e o aviso que não foi feito (2026-08-09)
+
+A §27.8 registra que "diagrama impresso do ponto de vista das pretas continua não
+resolvido". Este sprint foi medir isso — e o resultado mudou o plano.
+
+### 42.1 O que a medição mostrou
+
+Primeiro, a boa notícia: no nível do app **está resolvido**. `auto_orient` recupera a
+posição girada de 180° com folga, quando há peão dos dois lados:
+
+| Caso girado 180° | Recuperado? | Margem |
+|---|---|---|
+| abertura italiana | sim | 6,0 |
+| final de torres | sim | 3,0 |
+| posição inicial | sim | 6,0 |
+| final sem peões | **não** | 0,0 — e marcado `ambiguous` |
+
+O último não é falha escondida: sem peão dos dois lados o sinal mais forte não tem o
+que dizer, e a §26.3 já previa isso — a margem zero e o `ambiguous=True` **dizem** que
+a ferramenta não sabe.
+
+Então o plano era o passo natural: avisar automaticamente quando a posição parecer de
+cabeça para baixo, e mandar para a fila de revisão como a §37 faz com posição
+impossível. Antes disso, medir o falso positivo.
+
+### 42.2 O falso positivo que matou o aviso automático
+
+Em 12 posições **de pé**, uma sai como "girar 180°" com margem 2,5 — e não é marcada
+ambígua. Ela não é sintética: é `board_1.png`, um diagrama de livro real do dataset de
+teste.
+
+```text
+3k4/3P4/8/7K/P6p/5p1P/1p1R4/1r6
+```
+
+É uma corrida de promoção mútua. Os peões brancos estão em d7, a4, h3 e os pretos em
+h4, f3, b2 — ou seja, **já passaram uns pelos outros**. A heurística compara a média
+das filas e conclui, com confiança, que o diagrama está invertido.
+
+E não há limiar que separe: os acertos legítimos medem 3,0 a 6,0, este erro mede 2,5.
+Calibrar um corte em quatro pontos de dados seria inventar precisão.
+
+Livro de xadrez é cheio de estudo de peão avançado. Um aviso baseado nesse sinal
+gritaria "parece invertido" em cima de leituras corretas — e, pior, convidaria o
+usuário a **estragar** uma leitura certa. Mandar isso para a fila de revisão encheria
+a fila com o que não tem problema, que é o modo de falha que a §37.3 tomou o cuidado
+de evitar.
+
+**Decisão: o aviso automático não entra.** A orientação continua sendo um comando que o
+usuário dispara e cujo resultado ele olha.
+
+### 42.3 O que entrou, por causa disso
+
+Se o comando pode errar com confiança, duas coisas passam a ser obrigatórias.
+
+**Voltar tem de ser fácil.** Antes não era: `Auto-orientar` girava, e apertar de novo
+respondia "a orientação atual já é a mais plausível" e não fazia nada — desfazer exigia
+dois cliques manuais de `Rotacionar 90°`. Agora o mesmo `Ctrl+Shift+R` desfaz, desde
+que a posição não tenha mudado desde o giro. Se mudou, o desfazer é abandonado em vez
+de apagar a edição do usuário.
+
+**A evidência tem de aparecer.** Os motivos (`peões apontam o sentido oposto (+2,5
+filas)`) eram mostrados só quando **nada** girava — faltavam justamente quando o
+usuário precisa julgar a decisão. Agora vêm na mensagem do giro, junto do caminho de
+volta. É o que faz alguém com um estudo de promoção reconhecer o próprio caso.
+
+### 42.4 Cobertura de teste
+
+`tests/test_auto_orient_undo.py` (9).
+
+O ponto cego está preso em teste com o diagrama real: `rotation == 180`,
+`ambiguous is False`. Se uma versão futura da heurística passar a acertar este caso, o
+teste falha e avisa que a decisão da §42.2 pode ser revista. E o par dele garante que o
+ponto cego não invalidou a ferramenta: o diagrama genuinamente virado continua sendo
+recuperado, com margem maior.
+
+Reversibilidade: apertar de novo desfaz; girar → desfazer → girar chega no mesmo lugar;
+editar depois de girar abandona o desfazer em vez de apagar a edição; posição já de pé
+não é tocada; e sem giro anterior não há o que desfazer.
+
+Mensagem: diz o ângulo, **em que se baseou** e como voltar.
+
+Duas notas de honestidade de teste, das mutações:
+
+- desfazer "por cima" da edição do usuário derruba o teste certo;
+- tirar a limpeza explícita do estado de desfazer **não** derruba nada — a chamada
+  seguinte o descarta de todo modo. A linha fica por clareza, e o docstring do teste
+  diz isso em vez de alegar uma garantia que não existe.

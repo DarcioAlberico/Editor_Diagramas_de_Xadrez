@@ -124,6 +124,9 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self._syncing_fen_tab = False
         self._syncing_study_positions = False
         self._last_ocr_result: Optional[OcrBoardResult] = None
+        # (posicao antes, posicao aplicada) do ultimo `Auto-orientar`, para o mesmo
+        # atalho poder desfazer uma decisao que a heuristica errou (§42).
+        self._auto_orient_undo: Optional[tuple[str, str]] = None
         self.study_dialog: Optional[StudyDialog] = None
         self.gallery_dialog: Optional[GalleryDialog] = None
         self.project_diff_dialog: Optional[QtWidgets.QDialog] = None
@@ -2813,8 +2816,30 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self._schedule_preview_refresh(immediate=True)
 
     def _auto_orient_position(self) -> None:
-        """Testa as 4 rotações e aplica a mais plausível."""
+        """Testa as 4 rotações e aplica a mais plausível. Repetir desfaz (§42).
+
+        A heurística pode errar **com confiança**: um estudo de promoção mútua, em que
+        os peões dos dois lados já passaram uns pelos outros, é lido como de cabeça
+        para baixo com margem folgada (§42.1 tem o exemplo, tirado de um diagrama de
+        livro real). Então o comando tem de ser reversível pelo mesmo atalho, e tem de
+        mostrar em que se baseou — o motivo diz "peões apontam o sentido oposto", que é
+        exatamente o que faz o usuário reconhecer o próprio caso.
+        """
         piece_placement = self.board_editor.piece_placement()
+
+        # Segundo toque, com a posição intacta desde o primeiro: desfaz.
+        if self._auto_orient_undo is not None:
+            previous, applied = self._auto_orient_undo
+            if piece_placement == applied:
+                self._auto_orient_undo = None
+                self.board_editor.set_piece_placement(previous)
+                self.statusBar().showMessage(
+                    "Auto-orientação desfeita: a posição voltou como estava."
+                )
+                return
+            # Mexeu na posição depois de girar: o desfazer perdeu o sentido.
+            self._auto_orient_undo = None
+
         try:
             result = auto_orient(piece_placement)
         except Exception as exc:
@@ -2830,9 +2855,15 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             return
 
         self.board_editor.set_piece_placement(result.piece_placement)
-        message = f"Posição girada {result.rotation}° (vantagem {result.margin:.1f})."
+        self._auto_orient_undo = (piece_placement, result.piece_placement)
+        message = f"Posição girada {result.rotation}° (vantagem {result.margin:.1f})"
+        # Os motivos apareciam só quando *nada* girava — ou seja, faltavam justamente
+        # quando o usuário precisa julgar se a decisão foi boa.
+        reasons = "; ".join(result.runner_up.reasons or result.best.reasons)
+        message += f" — {reasons}." if reasons else "."
         if result.ambiguous:
-            message += " Margem apertada — confira antes de aplicar."
+            message += " Margem apertada, confira antes de aplicar."
+        message += " Ctrl+Shift+R de novo desfaz."
         self.statusBar().showMessage(message)
 
     def _export_report_dialog(self) -> None:

@@ -262,8 +262,19 @@ classificador). Se nao encontrar borda nenhuma, nada e alterado.
 
 `Auto-orientar` (Ctrl+Shift+R), no editor de tabuleiro, testa as 4 rotacoes e
 aplica a mais plausivel — usando contagem de reis, peoes na 1ª/8ª fila e o sentido
-do avanco dos peoes. Se a escolha for apertada, a barra de status avisa para voce
-conferir. Quando a posicao ja esta de pe, nada muda.
+do avanco dos peoes. Quando a posicao ja esta de pe, nada muda.
+
+A barra de status diz o angulo **e em que a decisao se baseou** (por exemplo, `peoes
+apontam o sentido oposto (+2,5 filas)`), porque essa e a informacao que permite a voce
+discordar. **Apertar Ctrl+Shift+R de novo desfaz o giro**, desde que voce nao tenha
+mexido na posicao no meio — se mexeu, o desfazer e abandonado em vez de apagar sua
+edicao.
+
+O desfazer existe por um motivo concreto: a heuristica **erra com confianca** numa
+familia que livro de xadrez tem de sobra — o estudo em que os peoes dos dois lados ja
+passaram uns pelos outros. Nessas posicoes ela le o diagrama como invertido sem marcar
+a escolha como apertada. E tambem por isso o app **nao** avisa sozinho que um diagrama
+"parece invertido": o aviso gritaria em cima de leituras corretas.
 
 ## Relatorio de alteracoes
 
