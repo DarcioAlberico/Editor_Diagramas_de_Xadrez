@@ -48,6 +48,7 @@ from .recognition import (
 from .report import export_report
 from .study_panel import StudyDialog, StudyPanel
 from .study_workflow import StudyWorkflowMixin
+from .style_batch import StyleBatchDialog, StyleProposal, count_affected
 from .theme import (
     CONTEXT_STYLE,
     PRIMARY_BUTTON_STYLE,
@@ -450,6 +451,17 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.op_border_spin.valueChanged.connect(self._on_operation_style_changed)
         self.apply_style_all_check = QtWidgets.QCheckBox("Aplicar em todas as substituições")
         self.apply_style_all_check.setChecked(True)
+        self.apply_style_all_check.setToolTip(
+            "Ligado, mexer no padding ou na borda reescreve o estilo de todas as "
+            "substituições na hora. Para ver o efeito no livro antes de decidir, use "
+            "«Experimentar em todas...»."
+        )
+        self.btn_style_batch = QtWidgets.QPushButton("Experimentar em todas...")
+        self.btn_style_batch.setToolTip(
+            "Grade de miniaturas com o estilo atual e o proposto, em diagramas de "
+            "todo o livro. Nada muda até você aplicar."
+        )
+        self.btn_style_batch.clicked.connect(self._open_style_batch_dialog)
         self.lichess_link_label = QtWidgets.QLabel()
         self.lichess_link_label.setTextFormat(QtCore.Qt.RichText)
         self.lichess_link_label.setTextInteractionFlags(QtCore.Qt.TextBrowserInteraction)
@@ -621,6 +633,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         appearance_grid.addWidget(self.include_lichess_link_check, 6, 0, 1, 2)
         appearance_grid.addWidget(self.erase_coordinates_check, 7, 0, 1, 2)
         appearance_grid.addWidget(self.apply_style_all_check, 8, 0, 1, 2)
+        appearance_grid.addWidget(self.btn_style_batch, 9, 0, 1, 2)
         whiteout_tab_layout.addWidget(
             self._make_collapsible_group("Ajustes avançados", appearance_grid, checked=False)
         )
@@ -804,7 +817,12 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             target.setStyleSheet(self._PRIMARY_BUTTON_STYLE)
 
     def _update_edit_context_state(self) -> None:
-        if not hasattr(self, "edit_context_label") or not hasattr(self, "act_save_pdf"):
+        if (
+            not hasattr(self, "edit_context_label")
+            or not hasattr(self, "act_save_pdf")
+            # Criada mais tarde que `act_save_pdf`, junto da galeria.
+            or not hasattr(self, "act_style_batch")
+        ):
             return
 
         has_pdf = bool(self.pdf_service and self.current_render)
@@ -831,6 +849,8 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.btn_add_eraser.setEnabled(has_selection)
         self.btn_remove.setEnabled(self._selected_change() is not None)
         self.btn_clear.setEnabled(bool(self.operations or self.erase_operations))
+        self.btn_style_batch.setEnabled(has_pdf and bool(self.operations))
+        self.act_style_batch.setEnabled(has_pdf and bool(self.operations))
         self.act_save_pdf.setEnabled(has_changes)
         self.act_recognize_selection.setEnabled(has_selection)
         self.act_recognize_page.setEnabled(has_pdf)
@@ -1036,6 +1056,12 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.act_export_report.setShortcut(QtGui.QKeySequence("Ctrl+Shift+E"))
         self.act_export_report.triggered.connect(self._export_report_dialog)
 
+        self.act_style_batch = QtGui.QAction("Experimentar estilo em todas...", self)
+        self.act_style_batch.setToolTip(
+            "Grade com o estilo atual e o proposto em diagramas de todo o livro"
+        )
+        self.act_style_batch.triggered.connect(self._open_style_batch_dialog)
+
         self.act_gallery = QtGui.QAction("Galeria de diagramas", self)
         self.act_gallery.setShortcut(QtGui.QKeySequence("Ctrl+G"))
         self.act_gallery.setToolTip(
@@ -1109,6 +1135,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
 
         diagrams_menu = self.menuBar().addMenu("Diagramas")
         diagrams_menu.addAction(self.act_gallery)
+        diagrams_menu.addAction(self.act_style_batch)
         diagrams_menu.addSeparator()
         diagrams_menu.addAction(self.act_snap_selection)
         diagrams_menu.addAction(self.act_auto_orient)
@@ -2473,6 +2500,82 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         # Cada passo do spinbox emite um sinal; um commit por passo encheria o
         # historico de estados intermediarios que ninguem quer desfazer um a um.
         self._style_history_timer.start()
+
+    def _current_style_proposal(self) -> StyleProposal:
+        pad_left, pad_top, pad_right, pad_bottom = self._current_whiteout_padding()
+        return StyleProposal(
+            padding_left_pt=pad_left,
+            padding_top_pt=pad_top,
+            padding_right_pt=pad_right,
+            padding_bottom_pt=pad_bottom,
+            border_width_pt=float(self.op_border_spin.value()),
+        )
+
+    def _open_style_batch_dialog(self) -> None:
+        """Experimenta um estilo no livro inteiro antes de aplicá-lo (§36)."""
+        if not self.pdf_service or not self.current_pdf_path:
+            QtWidgets.QMessageBox.information(
+                self, "Estilo em lote", "Abra um PDF para experimentar o estilo."
+            )
+            return
+        if not self.operations:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Estilo em lote",
+                "Nenhuma substituição salva. Adicione ao menos uma para comparar estilos.",
+            )
+            return
+
+        dialog = StyleBatchDialog(
+            self.current_pdf_path,
+            self.operations,
+            erase_operations=self.erase_operations,
+            whiteout=self.whiteout_check.isChecked(),
+            include_lichess_link=self.include_lichess_link_check.isChecked(),
+            erase_coordinates=self.erase_coordinates_check.isChecked(),
+            proposal=self._current_style_proposal(),
+            parent=self,
+        )
+        try:
+            accepted = dialog.exec() == QtWidgets.QDialog.Accepted
+            proposal = dialog.proposal()
+        finally:
+            dialog.stop_worker()
+        if not accepted:
+            self.statusBar().showMessage("Estilo em lote cancelado: nada mudou.")
+            return
+        self._apply_style_to_all(proposal)
+
+    def _apply_style_to_all(self, proposal: StyleProposal) -> None:
+        affected = count_affected(self.operations, proposal)
+        if affected == 0:
+            self.statusBar().showMessage(
+                "Estilo em lote: as substituições já estavam com esse estilo."
+            )
+            return
+        for op in self.operations:
+            proposal.apply_in_place(op)
+        # Os spinboxes do painel passam a mostrar o que foi aplicado. `_loading_ui`
+        # impede que cada `setValue` reentre em `_on_operation_style_changed` e
+        # reaplique o mesmo estilo N vezes, cada uma pedindo um commit.
+        self._loading_ui = True
+        try:
+            self.pad_left_spin.setValue(proposal.padding_left_pt)
+            self.pad_top_spin.setValue(proposal.padding_top_pt)
+            self.pad_right_spin.setValue(proposal.padding_right_pt)
+            self.pad_bottom_spin.setValue(proposal.padding_bottom_pt)
+            self.op_border_spin.setValue(proposal.border_width_pt)
+        finally:
+            self._loading_ui = False
+        self._refresh_operations_list()
+        self._refresh_page_overlays()
+        self._schedule_preview_refresh(immediate=True)
+        # Uma entrada só no histórico: desfazer devolve o estilo de todas de uma
+        # vez, que é como o usuário pensa na ação que acabou de tomar.
+        self._commit_history("Estilo de todas as substituições")
+        self.statusBar().showMessage(
+            f"Estilo aplicado em {affected} de {len(self.operations)} substituição(ões)."
+        )
 
     def _on_fen_operation_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
         if self._syncing_fen_tab:

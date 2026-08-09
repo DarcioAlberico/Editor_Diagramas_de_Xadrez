@@ -254,6 +254,30 @@ As miniaturas sao renderizadas fora da thread da interface e vao aparecendo na
 grade; fechar a janela no meio cancela o trabalho. Medido num livro real: ~128 ms
 por diagrama (44 diagramas em 5,6 s).
 
+## Experimentar um estilo no livro inteiro
+
+`Aplicar em todas as substituicoes` (aba `Aparencia`) esta ligado por padrao: mexer
+no padding ou na borda reescreve o estilo de **todas** as substituicoes na hora.
+Voce ve o efeito na pagina aberta; nas outras, nao.
+
+`Diagramas` > `Experimentar estilo em todas...` — ou o botao `Experimentar em
+todas...` na aba `Aparencia` — abre uma grade onde cada celula tem o **estilo atual
+a esquerda e o proposto a direita**, em diagramas de todo o livro:
+
+- os spinboxes da janela ajustam a proposta, e a grade se atualiza sozinha;
+- **nada muda** enquanto a janela esta aberta. O botao diz quantas substituicoes
+  seriam afetadas de verdade (`Aplicar em 37 de 42`), e `Aplicar (nada muda)` quando
+  a proposta e igual ao que ja esta salvo;
+- aplicar vale para **todas** as substituicoes do livro e cabe num unico Ctrl+Z.
+
+Livro grande nao entra inteiro na grade: ela mostra uma amostra de 24 diagramas
+**espalhados pelo livro** — nao os 24 primeiros, que num livro costumam ser todos do
+mesmo capitulo — e diz na tela quantos de quantos.
+
+A grade serve para pegar problema grosso: borda que encostou no texto, padding que
+comeu a legenda, diagrama fora do padrao dos outros. Para acertar fracao de ponto
+num diagrama, a previa ao vivo continua sendo a ferramenta.
+
 ## Coordenadas do diagrama original
 
 O diagrama do livro quase sempre traz as coordenadas impressas em volta do

@@ -547,6 +547,7 @@ Beta (meta):
 5. **Exportação interrompível** ✅ — ver §33.
 6. **A interface cabendo na tela** ✅ — ver §34.
 7. **Comparação "cortina"** ✅ — ver §35.
+8. **Estilo em lote com prévia** ✅ — ver §36.
 
 ---
 
@@ -1054,9 +1055,10 @@ Ordenadas por (valor percebido ÷ esforço):
    esforço baixo se confirmou: são dois `RenderedPage` do mesmo tamanho, e nenhum
    render novo entrou.
 
-2. **Aplicar estilo por lote com pré-visualização** — hoje
-   `Aplicar em todas as substituições` muda tudo às cegas; com a prévia, mostrar
-   uma grade de miniaturas "depois" de N diagramas antes de confirmar.
+2. ~~**Aplicar estilo por lote com pré-visualização**~~ — feito no Sprint 9.8, ver
+   §36. Metade do item já estava pronta sem que ninguém anotasse: como o estilo é
+   aplicado na hora, a galeria (item 3) já mostrava o estilo atual em todo o livro.
+   O que faltava era o **antes de confirmar**, e foi isso que entrou.
 
 3. ~~**Galeria de diagramas do livro**~~ — feito no Sprint 9.3, ver §31.
 
@@ -2381,3 +2383,115 @@ largura para qualquer caractere. Os rótulos `antes`/`depois` foram conferidos p
 posição e por tamanho de caixa, não por forma de glifo — a inspeção visual das
 letras precisa de uma máquina com fontes. O dimensionamento da caixa não depende
 disso.
+
+---
+
+## 36) Sprint 9.8 — estilo em lote com prévia (implementado em 2026-08-09)
+
+Item 2 da §22.5. Ao abrir o código, o item já não era o que a §22.5 descrevia — e
+vale registrar a correção, porque ela mudou o que foi construído.
+
+### 36.1 Metade do item já estava pronta, por acidente
+
+A §22.5 pedia "mostrar uma grade de miniaturas «depois» de N diagramas antes de
+confirmar". Metade disso a **galeria do Sprint 9.3 já dava**: como o estilo é
+aplicado na hora, o `Ctrl+G` mostra o resultado do estilo atual em todo o livro. A
+galeria foi o item 3 da mesma lista e resolveu parte do item 2 sem que ninguém
+anotasse.
+
+O que continuava faltando é o **antes de confirmar**: experimentar um estilo, ver o
+efeito no livro e só então aceitar ou desistir. Hoje não há como — `Aplicar em
+todas as substituições` está ligado por padrão e reescreve tudo a cada passo de
+spinbox. Reversível pelo Ctrl+Z desde o Sprint 5.2, mas cego na hora de decidir.
+
+Então este sprint construiu o que faltava, não o que estava escrito.
+
+### 36.2 Duas versões do resultado, não original contra resultado
+
+A comparação aqui não é a da galeria. A galeria responde "o que este livro tinha
+aqui?", então o lado esquerdo é a página crua. Aqui os dois lados são **resultado**:
+o estilo salvo hoje contra o estilo proposto.
+
+Isso entrou como um parâmetro no `GalleryWorker`, e não como um segundo worker:
+
+| `before_operations` | Lado "antes" | Quem usa |
+|---|---|---|
+| ausente | página crua do PDF | galeria (§31) |
+| presente | página com *aquelas* operações | estilo em lote |
+
+Um worker só, então o contrato de thread do Sprint 5.1 (documento próprio aberto
+do caminho do arquivo, nada de `fitz` cruzando a fronteira), o cancelamento, a
+ordenação por página que faz o cache de prévia acertar e o progresso vêm todos de
+graça.
+
+### 36.3 A proposta não toca em nada
+
+`StyleProposal` é o padding por lado e a borda, sem dono. Tem dois caminhos, e a
+diferença entre eles importa:
+
+- `applied_to(op)` devolve **cópia** — é a prévia, e propor não pode alterar o que
+  está salvo;
+- `apply_in_place(op)` **muta** — é o commit, e tem de mutar: os outros painéis
+  guardam a mesma referência da operação, então trocar o objeto os deixaria
+  exibindo a versão velha.
+
+`whiteout_padding_pt`, o campo legado anterior ao padding por lado, continua sendo
+a média dos quatro — ele sobrevive no formato do projeto salvo, e deixá-lo
+desalinhado geraria um `project_state.json` inconsistente. Há teste.
+
+`count_affected` existe para o botão não mentir: aplicar o estilo que já está lá
+não é mudança, e o botão diz `Aplicar (nada muda)` em vez de prometer trabalho.
+
+### 36.4 Amostra espalhada, e dita em voz alta
+
+A grade re-renderiza a cada ajuste dos spinboxes. Renderizar 312 pares por ajuste
+seria inútil — ninguém compara 312 miniaturas para escolher um padding. A grade
+mostra **24 diagramas espalhados pelo livro**.
+
+Espalhados, e não os 24 primeiros: os primeiros diagramas de um livro são todos do
+mesmo capítulo, com o mesmo enquadramento, e a variedade que interessa está
+distribuída. A amostra inclui sempre o primeiro e o último.
+
+E o recorte é dito na tela — `Amostra de 24 de 312 substituições, espalhadas pelo
+livro` — porque um recorte silencioso se lê como "conferi tudo".
+
+### 36.5 Miniatura de 190 px, não as 150 da galeria
+
+Medido olhando: a 150 px, um diagrama de 160 pt dá ~2 px por ponto, e uma mudança
+de 1 pt de padding é invisível. A galeria pergunta "que diagrama é este?"; aqui a
+pergunta é "esta borda encostou no texto?". Com `THUMB_ZOOM` = 2.0 o recorte chega
+com ~320 px, então 190 continua sendo redução — sem serrilhado.
+
+Fica registrado o limite honesto da ferramenta: a grade pega **problema grosso**
+(borda no texto, padding comendo a legenda, diagrama fora do padrão). Fração de
+ponto num diagrama é trabalho da prévia ao vivo, e continua sendo.
+
+### 36.6 Um Ctrl+Z, não trezentos
+
+Aplicar restiliza todas as substituições e chama `_commit_history` **uma vez**, com
+o rótulo `Estilo de todas as substituições`. É como o usuário pensa na ação que
+acabou de tomar. Ao sincronizar os spinboxes do painel com o que foi aplicado,
+`_loading_ui` impede que cada `setValue` reentre em `_on_operation_style_changed` e
+reaplique o mesmo estilo N vezes, cada uma pedindo o seu commit.
+
+### 36.7 Cobertura de teste
+
+`tests/test_style_batch.py` (23). Antes deste sprint o caminho de
+`Aplicar em todas as substituições` **não tinha um único teste** — a mutação em
+massa era a parte menos coberta do modo edição.
+
+Sem Qt: a proposta (cópia não muta o original, mutação no lugar preserva o objeto,
+média do campo legado, contagem do que muda de fato) e a amostragem (livro curto
+inteiro, livro longo espalhado alcançando o fim, sem repetição, limites 0/1/vazio).
+
+Com Qt: a grade mostra de fato dois renders diferentes quando o estilo difere — e,
+o par disso, **iguais byte a byte quando a proposta é o estilo que já está lá**, que
+é o que prova que a diferença vem do estilo e não de o "antes" ser outro tipo de
+render. Mais: aplicar escreve em todas e sincroniza os spinboxes; é um commit só, e
+desfazer devolve o estilo anterior; aplicar o que já está lá não commita; o comando
+fica desligado sem PDF ou sem substituição; cancelar não muda nada; aceitar aplica
+o que a janela propôs.
+
+A mutação que importa foi conferida à mão: ignorar `before_operations` no worker
+derruba o teste dos dois lados iguais — e nenhum teste da galeria, que é o
+comportamento que ela deve manter.

@@ -138,8 +138,17 @@ class GalleryWorker(QtCore.QThread):
         whiteout: bool = True,
         include_lichess_link: bool = True,
         erase_coordinates: bool = False,
+        before_operations: Optional[Sequence[OverlayOperation]] = None,
         parent: Optional[QtCore.QObject] = None,
     ) -> None:
+        """`before_operations` troca o que é o lado "antes".
+
+        Sem ele o "antes" é a página crua do PDF, que é a pergunta da galeria
+        ("o que este livro tinha aqui?"). Com ele o "antes" é a página já
+        substituída com *aquele* conjunto de operações, o que permite comparar
+        duas versões do resultado em vez de original contra resultado — é o que o
+        estilo em lote precisa (§36).
+        """
         super().__init__(parent)
         self._pdf_path = str(pdf_path)
         self._items = list(items)
@@ -147,6 +156,9 @@ class GalleryWorker(QtCore.QThread):
         self._operations = [replace(op) for op in operations]
         self._candidates = [replace(op) for op in candidates]
         self._erase_operations = [replace(op) for op in erase_operations]
+        self._before_operations = (
+            None if before_operations is None else [replace(op) for op in before_operations]
+        )
         self._whiteout = bool(whiteout)
         self._include_lichess_link = bool(include_lichess_link)
         self._erase_coordinates = bool(erase_coordinates)
@@ -163,6 +175,11 @@ class GalleryWorker(QtCore.QThread):
             by_page: dict[int, list[OverlayOperation]] = defaultdict(list)
             for op in self._operations:
                 by_page[op.page_num].append(op)
+            before_by_page: Optional[dict[int, list[OverlayOperation]]] = None
+            if self._before_operations is not None:
+                before_by_page = defaultdict(list)
+                for op in self._before_operations:
+                    before_by_page[op.page_num].append(op)
             erases_by_page: dict[int, list[EraseOperation]] = defaultdict(list)
             for erase in self._erase_operations:
                 erases_by_page[erase.page_num].append(erase)
@@ -173,7 +190,9 @@ class GalleryWorker(QtCore.QThread):
                     canceled = True
                     break
                 try:
-                    before, after = self._render_pair(service, item, by_page, erases_by_page)
+                    before, after = self._render_pair(
+                        service, item, by_page, erases_by_page, before_by_page
+                    )
                 except Exception as exc:
                     logger.warning(
                         "Falha ao renderizar miniatura da página %d", item.page_num + 1, exc_info=True
@@ -196,9 +215,22 @@ class GalleryWorker(QtCore.QThread):
         item: GalleryItem,
         by_page: dict[int, list[OverlayOperation]],
         erases_by_page: dict[int, list[EraseOperation]],
+        before_by_page: Optional[dict[int, list[OverlayOperation]]] = None,
     ) -> tuple[bytes, bytes]:
         rect = _expanded_rect(item.rect_pdf)
-        before = service.render_region(item.page_num, THUMB_ZOOM, rect)
+        if before_by_page is None:
+            before = service.render_region(item.page_num, THUMB_ZOOM, rect)
+        else:
+            before = service.render_region_with_operations(
+                item.page_num,
+                THUMB_ZOOM,
+                rect,
+                list(before_by_page.get(item.page_num, ())),
+                erase_operations=erases_by_page.get(item.page_num, []),
+                whiteout=self._whiteout,
+                include_lichess_link=self._include_lichess_link,
+                erase_coordinates=self._erase_coordinates,
+            )
 
         page_ops = list(by_page.get(item.page_num, ()))
         if item.kind == KIND_CANDIDATE and 0 <= item.index < len(self._candidates):
