@@ -42,6 +42,7 @@ O `scripts/build_exe.py` roda o executável gerado com `--self-test` no fim, ent
 uma exclusão errada aparece como falha de build — foi assim que as quatro acima
 foram pegas.
 """
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_dynamic_libs
@@ -49,13 +50,27 @@ from PyInstaller.utils.hooks import collect_dynamic_libs
 SPEC_DIR = Path(SPECPATH).resolve()
 ROOT = SPEC_DIR.parent
 
+# Variante "light" (§44): mesmo app, sem o motor local. Ligada pelo
+# `scripts/build_exe.py --light`, que exporta esta variável antes de chamar o
+# PyInstaller. O bundle leva um marcador para se reconhecer em tempo de execução —
+# sem ele o app diria "instale com pip" a quem só tem o `.exe`.
+LIGHT = os.environ.get("CHESS_PDF_EDITOR_LIGHT", "") == "1"
+
 APP_NAME = "ChessPdfEditor"
+DIST_NAME = "ChessPdfEditor-lite" if LIGHT else APP_NAME
 
 # (origem no disco, destino dentro do bundle). O destino espelha o repositório
 # porque é assim que `resources.asset_roots()` procura.
-datas = [
-    (str(ROOT / "models" / "piece_classifier.pt"), "models"),
-]
+datas = []
+if not LIGHT:
+    datas.append((str(ROOT / "models" / "piece_classifier.pt"), "models"))
+
+# O marcador de variante é gerado no diretório de build, não versionado: ele
+# descreve *este* build.
+_marker = Path(workpath) / "build_variant.txt"
+_marker.parent.mkdir(parents=True, exist_ok=True)
+_marker.write_text("light" if LIGHT else "full", encoding="utf-8")
+datas.append((str(_marker), "."))
 
 for optional in (
     ROOT / "assets" / "piece_images",
@@ -65,19 +80,24 @@ for optional in (
         datas.append((str(optional), str(Path("assets") / optional.name)))
 
 # PyMuPDF e OpenCV carregam bibliotecas nativas que o analisador estático não vê.
-binaries = collect_dynamic_libs("fitz") + collect_dynamic_libs("cv2")
+binaries = collect_dynamic_libs("fitz")
+if not LIGHT:
+    binaries += collect_dynamic_libs("cv2")
 
 hiddenimports = [
-    # Importado dentro de uma função (`MobileNetClassifier.__init__`), então o
-    # analisador estático não o alcança pela árvore de imports.
-    "torchvision.models",
     # `local_ocr.engine` importa tudo tarde, de propósito, para o app abrir sem
     # as dependências opcionais instaladas.
     "chess_pdf_editor.local_ocr.engine",
-    "chess_pdf_editor.local_ocr._vendor.inference",
-    "chess_pdf_editor.local_ocr._vendor.board_detection",
-    "chess_pdf_editor.local_ocr._vendor.decode",
 ]
+if not LIGHT:
+    hiddenimports += [
+        # Importado dentro de uma função (`MobileNetClassifier.__init__`), então o
+        # analisador estático não o alcança pela árvore de imports.
+        "torchvision.models",
+        "chess_pdf_editor.local_ocr._vendor.inference",
+        "chess_pdf_editor.local_ocr._vendor.board_detection",
+        "chess_pdf_editor.local_ocr._vendor.decode",
+    ]
 
 excludes = [
     # Ferramentas de desenvolvimento e treino: nada disso roda na inferência.
@@ -100,6 +120,18 @@ excludes = [
     "PySide6.QtQuick",
     "PySide6.QtQml",
 ]
+
+if LIGHT:
+    # O que a variante existe para não carregar. Aqui a regra do cabeçalho sobre
+    # `sys.modules` **não** se aplica: não se está enxugando o motor local, está-se
+    # deixando ele de fora inteiro. O auto-teste do executável confirma a ausência,
+    # em vez de confirmar a presença (§44.4).
+    excludes += [
+        "torch",
+        "torchvision",
+        "cv2",
+        "chess_pdf_editor.local_ocr._vendor",
+    ]
 
 a = Analysis(
     [str(ROOT / "scripts" / "run_app.py")],
@@ -144,5 +176,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name=APP_NAME,
+    name=DIST_NAME,
 )

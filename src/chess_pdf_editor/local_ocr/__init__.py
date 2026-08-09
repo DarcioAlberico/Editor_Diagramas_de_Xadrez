@@ -85,6 +85,17 @@ def available(preferred_model: Optional[str] = None) -> bool:
 def unavailable_reason(preferred_model: Optional[str] = None) -> str:
     """Frase pronta para a UI. Vazia quando está tudo disponível."""
     if not dependencies_available():
+        from ..resources import is_light_build
+
+        if is_light_build():
+            # Mandar quem recebeu um `.exe` rodar `pip install` é conselho que não
+            # dá para seguir: essa máquina não tem Python (§44.3). Nesta variante a
+            # ausência é a distribuição, não um problema de instalação.
+            return (
+                "Motor local indisponível: esta versão do app foi distribuída sem o "
+                "reconhecimento local, para caber num download menor. Use o serviço "
+                "externo em Avançado, ou baixe a versão completa."
+            )
         return (
             "Motor local indisponível: faltam as dependências opcionais. "
             "Instale com `pip install -e .[local]` "

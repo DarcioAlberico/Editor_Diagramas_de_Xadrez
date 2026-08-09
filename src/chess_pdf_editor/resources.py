@@ -68,6 +68,36 @@ def asset_roots() -> Iterator[Path]:
         yield resolved
 
 
+#: Nome do arquivo que o `.spec` põe no bundle para ele saber o que é (§44).
+VARIANT_FILE = "build_variant.txt"
+VARIANT_FULL = "full"
+VARIANT_LIGHT = "light"
+
+
+def build_variant() -> str:
+    """`light` num executável distribuído sem o motor local; `full` no resto.
+
+    Rodando do código-fonte é sempre `full`: ali "sem motor local" quer dizer
+    "instale as dependências opcionais", que é conselho que funciona. Dentro de um
+    `.exe` light não funciona — quem recebeu o executável não tem Python — e é por
+    isso que o bundle precisa dizer qual dos dois ele é, em vez de a ausência do
+    torch ser adivinhada.
+    """
+    root = bundle_root()
+    if root is None:
+        return VARIANT_FULL
+    marker = root / VARIANT_FILE
+    try:
+        value = marker.read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        return VARIANT_FULL
+    return VARIANT_LIGHT if value == VARIANT_LIGHT else VARIANT_FULL
+
+
+def is_light_build() -> bool:
+    return build_variant() == VARIANT_LIGHT
+
+
 def find_asset(*relative_parts: str) -> Path | None:
     """Primeiro caminho existente para `relative_parts` entre as raízes conhecidas."""
     for root in asset_roots():

@@ -1865,8 +1865,9 @@ procedimento para mudar o schema do projeto salvo.
   nesta máquina. Só instalar num Windows sem Python responde isso.
 - **Instalador.** Hoje a entrega é uma pasta de 719 MB; falta um `.msi`/Inno Setup
   e assinatura de código (sem ela o SmartScreen avisa).
-- **Tamanho.** 719 MB é quase todo torch. Um build "leve" sem motor local (só
-  remoto) caberia em ~200 MB, se houver demanda por download menor.
+- ~~**Tamanho.**~~ Feito no Sprint 9.16, ver §44: `build_exe.py --light` gera um
+  pacote de **193 MB** (contra 719 MB) em 1,1 min. A estimativa de ~200 MB estava
+  certa.
 - O modelo de 8,4 MB está versionado no repositório. Para o executável isso é o
   que se quer; para o repositório, vale reavaliar se deveria vir de release.
 
@@ -3178,3 +3179,96 @@ A exceção segue subindo — quem chama é que decide o que fazer com a falha.
 Mutações conferidas à mão: tirar o `_flush_to_disk` derruba o teste de ordem; trocar o
 `except BaseException` por algo que não pega `OSError` derruba os dois testes de
 limpeza.
+
+---
+
+## 44) Sprint 9.16 — a variante light do executável (2026-08-09)
+
+Pendência da §28.4: *"719 MB é quase todo torch. Um build 'leve' sem motor local (só
+remoto) caberia em ~200 MB, se houver demanda por download menor."*
+
+Construído e medido, as duas variantes lado a lado:
+
+| Variante | Tamanho | Tempo de build |
+|---|---|---|
+| completa | **719 MB** | vários minutos |
+| light | **193 MB** | **1,1 min** |
+
+A estimativa de ~200 MB estava certa. O tempo caiu junto, o que é efeito colateral
+bem-vindo: iterar no empacotamento deixa de custar um café.
+
+### 44.1 O bundle precisa saber o que ele é
+
+A tentação era deduzir a variante da ausência do torch. Não serve, e o motivo é uma
+mensagem: `unavailable_reason()` dizia
+
+> Motor local indisponível: faltam as dependências opcionais. Instale com
+> `pip install -e .[local]`
+
+Para quem clonou o repositório isso é conselho útil. Para quem recebeu um `.exe` é
+**impossível de seguir** — aquela máquina não tem Python, e nunca vai ter. Deduzir a
+ausência não distingue os dois casos.
+
+Então o `.spec` grava um marcador (`build_variant.txt`) dentro do bundle, e
+`resources.build_variant()` o lê. Fora do bundle a resposta é sempre `full`, porque no
+código-fonte "faltam dependências" é exatamente o diagnóstico certo. Marcador ilegível
+também cai em `full`: errar para "completo" faz o app pedir uma instalação, e errar para
+o outro lado faria ele afirmar que a distribuição não tem o motor quando ela tem.
+
+Na variante light a frase passa a ser "esta versão foi distribuída sem o reconhecimento
+local, para caber num download menor. Use o serviço externo".
+
+### 44.2 O auto-teste do build checa o contrato invertido
+
+O `--self-test` da §28.2 existe para provar que o executável **acha** o classificador e
+os assets dentro de si. Numa variante light isso se inverte: a mesma checagem tem de
+provar que torch, OpenCV e o `.pt` **não** estão lá. Um "download menor" que saiu com
+500 MB de torch dentro é um build falho, e sem essa checagem ele passaria verde.
+
+A construção da janela continua valendo nas duas — é o que prova que o app abre.
+
+### 44.3 O que o próprio auto-teste pegou
+
+A primeira execução do build light terminou verde, e a saída dizia:
+
+```text
+variante: light
+motor local ausente, como esperado: ...
+janela construída; motor padrão: hybrid
+```
+
+`hybrid` é o padrão do app desde o Sprint 7 e é o padrão certo — reconhece na máquina e
+só recorre à rede onde a confiança cai. Num pacote **sem** motor local ele é uma promessa
+que o executável não pode cumprir: o primeiro uso encontraria "motor local indisponível".
+
+Daí `recognition.default_engine_mode()`: em bundle light o padrão é `remote`, o único
+que funciona ali. Vale só para o **padrão** — escolha salva do usuário continua ganhando,
+e há teste para isso. Reconstruído, o executável agora diz `motor padrão: remote`.
+
+Vale registrar como o defeito apareceu: não por teste, mas por **ler a saída** de um
+build que tinha passado. O `--self-test` imprime o motor padrão desde o Sprint 8, e essa
+linha nunca tinha significado nada até existir uma variante em que ela significa.
+
+### 44.4 Cobertura de teste
+
+`tests/test_build_variant.py` (13). Não testam empacotamento — isso só um build de
+verdade prova, e é o que o `--light` faz ao rodar o `--self-test` do `.exe` gerado.
+Testam o que **muda de comportamento** quando o bundle se declara light:
+
+- rodando do código-fonte é sempre `full`, e bundle sem marcador (gerado antes desta
+  variante existir) também;
+- o marcador é lido com tolerância a caixa e espaço, e um marcador ilegível cai em
+  `full`;
+- a light adota `remote` como padrão, e a escolha salva do usuário ganha do padrão;
+- a light **não** manda ninguém rodar `pip install`, e o código-fonte continua mandando;
+- as duas variantes não compartilham pasta em `dist/` (uma sobrescreveria a outra, e a
+  comparação de tamanho ficaria impossível);
+- o nome da variável de ambiente combina entre o script e o `.spec` — se divergirem,
+  `--light` construiria silenciosamente o pacote completo, que é o modo de falha mais
+  caro deste sprint.
+
+### 44.5 O que continua pendente da §28.4
+
+Instalador (`.msi`/Inno Setup), assinatura de código e validação em máquina Windows sem
+Python. Os três dependem de coisas que não existem nesta máquina — respectivamente o
+Inno Setup, um certificado e a própria máquina limpa.

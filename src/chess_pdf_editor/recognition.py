@@ -40,6 +40,21 @@ ENGINE_HYBRID = "hybrid"
 ENGINE_MODES = (ENGINE_HYBRID, ENGINE_LOCAL, ENGINE_REMOTE)
 DEFAULT_ENGINE_MODE = ENGINE_HYBRID
 
+
+def default_engine_mode() -> str:
+    """Modo a usar quando o usuário ainda não escolheu.
+
+    O padrão é o híbrido, que reconhece na máquina e só recorre ao serviço externo
+    onde a confiança fica baixa. Numa distribuição **light** (§44) esse padrão seria
+    uma promessa que o executável não pode cumprir: ele saiu sem o motor local de
+    propósito. Ali o padrão é o remoto — o único que funciona naquele pacote.
+
+    Vale só para o padrão: escolha salva do usuário continua ganhando.
+    """
+    from .resources import is_light_build
+
+    return ENGINE_REMOTE if is_light_build() else DEFAULT_ENGINE_MODE
+
 ENGINE_LABELS = {
     ENGINE_HYBRID: "Local primeiro, remoto como reforço",
     ENGINE_LOCAL: "Somente local (offline)",

@@ -43,7 +43,7 @@ from .project_state import (
     load_project_state_with_report,
 )
 from .recognition import (
-    DEFAULT_ENGINE_MODE,
+    default_engine_mode,
     ENGINE_LABELS,
     ENGINE_LOCAL,
     ENGINE_MODES,
@@ -239,7 +239,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         for mode in ENGINE_MODES:
             self.engine_combo.addItem(ENGINE_LABELS[mode], mode)
         saved_engine = normalize_mode(
-            self.settings.value("recognition_engine", DEFAULT_ENGINE_MODE, str)
+            self.settings.value("recognition_engine", default_engine_mode(), str)
         )
         self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(saved_engine)))
         self.engine_combo.currentIndexChanged.connect(lambda _index: self._on_engine_mode_changed())
@@ -3744,36 +3744,57 @@ def self_test() -> int:
     import tempfile
     import time
 
-    from .resources import asset_roots, is_frozen
+    from .resources import asset_roots, build_variant, is_frozen, is_light_build
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     problems: list[str] = []
 
     print(f"congelado: {is_frozen()}")
+    print(f"variante: {build_variant()}")
     print("raízes de assets:")
     for root in asset_roots():
         print(f"  - {root}")
 
-    model = local_ocr.default_model_path()
-    if model is None:
-        problems.append(f"classificador não encontrado ({local_ocr.unavailable_reason()})")
-    else:
-        print(f"classificador: {model}")
-
-    if not local_ocr.dependencies_available():
-        # A razão importa: num bundle, "ausente" quase sempre quer dizer "excluído
-        # por engano no .spec", e o nome do módulo que falhou é o que aponta qual.
-        problems.append(local_ocr.unavailable_reason())
-    elif model is not None:
-        # Carregar os pesos de verdade é o que prova que o torch empacotado e o
-        # `.pt` empacotado funcionam **juntos**. Só importar torch não prova.
-        started = time.perf_counter()
-        try:
-            local_ocr.get_recognizer().warm_up()
-        except Exception as exc:
-            problems.append(f"o classificador não carregou: {exc}")
+    if is_light_build():
+        # O contrato da variante light é o **oposto** do da completa, então o
+        # auto-teste checa o oposto: torch ou o classificador presentes aqui
+        # significam que a exclusão do `.spec` não pegou, e o download "menor" saiu
+        # com as centenas de MB que ele existe para não ter (§44.4). A construção da
+        # janela, logo abaixo, continua valendo — é o que prova que o app abre.
+        if local_ocr.dependencies_available():
+            problems.append(
+                "build light, mas as dependências do motor local estão no bundle — "
+                "a exclusão do .spec não pegou"
+            )
         else:
-            print(f"classificador carregado em {(time.perf_counter() - started) * 1000:.0f} ms")
+            print(f"motor local ausente, como esperado: {local_ocr.unavailable_reason()}")
+        bundled = local_ocr.bundled_model_path()
+        if bundled.is_file():
+            problems.append(f"build light, mas o classificador veio no bundle: {bundled}")
+    else:
+        model = local_ocr.default_model_path()
+        if model is None:
+            problems.append(f"classificador não encontrado ({local_ocr.unavailable_reason()})")
+        else:
+            print(f"classificador: {model}")
+
+        if not local_ocr.dependencies_available():
+            # A razão importa: num bundle, "ausente" quase sempre quer dizer
+            # "excluído por engano no .spec", e o nome do módulo que falhou é o que
+            # aponta qual.
+            problems.append(local_ocr.unavailable_reason())
+        elif model is not None:
+            # Carregar os pesos de verdade é o que prova que o torch empacotado e o
+            # `.pt` empacotado funcionam **juntos**. Só importar torch não prova.
+            started = time.perf_counter()
+            try:
+                local_ocr.get_recognizer().warm_up()
+            except Exception as exc:
+                problems.append(f"o classificador não carregou: {exc}")
+            else:
+                print(
+                    f"classificador carregado em {(time.perf_counter() - started) * 1000:.0f} ms"
+                )
 
     try:
         with tempfile.TemporaryDirectory(prefix="chess-pdf-selftest-") as scratch:

@@ -700,7 +700,31 @@ Sai em `dist/ChessPdfEditor/`. E `--onedir`, nao `--onefile`: com torch e Qt
 dentro, o `--onefile` extrairia ~2 GB a cada abertura.
 
 Opcoes: `--check` (so confere), `--no-clean` (reaproveita `build/`),
-`--skip-smoke`.
+`--skip-smoke`, `--light`.
+
+#### Build leve (sem reconhecimento local)
+
+```powershell
+python scripts/build_exe.py --light
+```
+
+Mesmo app, **sem** o motor local — nem torch, nem OpenCV, nem o classificador. Sai em
+`dist/ChessPdfEditor-lite/`, e cada variante fica na sua pasta.
+
+| Variante | Tamanho | Build |
+|---|---|---|
+| completa | 719 MB | varios minutos |
+| light | **193 MB** | **1,1 min** |
+
+O reconhecimento nessa variante usa o **servico externo**, e ela ja abre com o motor
+`Somente remoto` selecionado — o padrao hibrido precisaria do motor local que ela nao
+tem. A mensagem de indisponibilidade tambem muda: em vez de mandar rodar `pip install`
+(impossivel para quem so tem o `.exe`), ela explica que a versao foi distribuida sem o
+reconhecimento local e aponta o servico externo.
+
+O `--self-test` roda nas duas, checando o contrato de cada uma: na completa, que o
+classificador **esta** no bundle e carrega; na light, que ele e o torch **nao** estao —
+um "download menor" que saiu com 500 MB de torch dentro e um build falho.
 
 ### Codigo de terceiros
 
