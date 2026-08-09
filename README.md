@@ -139,6 +139,11 @@ esta escondido. O titulo da secao mostra `(N incertos de M)`.
   o ponto de retomada;
 - fechar a janela durante um lote e seguro: o app cancela e espera o worker sair.
 
+A exportacao tambem tem `Cancelar`, e a barra conta **paginas alteradas** (num
+livro de 898 paginas com 60 diagramas, o total e 60). Cancelar significa
+**nenhum arquivo**: a gravacao e o ultimo passo, entao interromper nao deixa PDF
+pela metade — e um arquivo exportado antes fica intacto.
+
 O estilo (`Padding`, `Borda`) usado pelo lote e o que estava configurado quando
 voce clicou: mudar no meio da execucao nao faz metade dos diagramas sair
 diferente da outra metade.

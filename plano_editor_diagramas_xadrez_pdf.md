@@ -1416,8 +1416,7 @@ outro PDF faz falhar exatamente um teste cada — o correspondente.
 - O render de prévia continua síncrono na UI. Medido em 119 ms num livro de 1120
   páginas (§21.6), então não incomoda; se algum PDF patológico fugir disso, a API
   já está isolada em `PdfService` e a mudança é local.
-- `apply_operations_to_pdf` não é interrompível, então a exportação não tem
-  botão Cancelar — só a barra indeterminada.
+- ~~`apply_operations_to_pdf` não é interrompível~~ — feito no Sprint 9.5, ver §33.
 
 ---
 
@@ -2146,3 +2145,60 @@ Detalhe que a asserção precisou aprender: o PDF exportado **não** fica sem te
 depois do apagamento, porque o diagrama que inserimos é vetorial com a fonte
 Merida, que mapeia as peças em letras ASCII (§22.2). O teste olha o que sobrou
 fora do tabuleiro, não a página inteira.
+
+---
+
+## 33) Sprint 9.5 — exportação interrompível (implementado em 2026-08-08)
+
+Pendência aberta desde o Sprint 5 (§25.7): a exportação rodava em worker, mas
+`apply_operations_to_pdf` era uma caixa-preta sem ponto de parada. O diálogo
+mostrava uma barra indeterminada e **nenhum botão** — quem mandasse exportar um
+livro de 300 diagramas por engano esperava até o fim.
+
+### 33.1 Onde o cancelamento acontece
+
+`should_cancel` é consultado **entre páginas**, e mais uma vez antes de gravar.
+Duas decisões dentro disso:
+
+- **Nunca no meio de uma página.** Parar ali deixaria metade das substituições
+  daquela página aplicadas, e o resultado seria um estado que nenhum modo do app
+  produz de propósito.
+- **Cancelar significa nenhum arquivo.** A gravação é o último passo, então
+  interromper antes dela não deixa nada no disco — e, se já existia um PDF
+  exportado antes, ele fica intacto. É por isso que o cancelamento é uma exceção
+  (`ExportCanceled`) e não um retorno silencioso: quem chama tem de saber que
+  não há arquivo para anunciar.
+
+A segunda checagem, imediatamente antes do `doc.save`, existe porque gravar um
+livro grande também demora: chegar até ali não obriga o usuário a esperar.
+
+### 33.2 A barra passou a dizer a verdade
+
+O progresso conta **páginas alteradas**, não páginas do livro. Num livro de 898
+páginas com 60 diagramas, o total é 60 — que é o trabalho que de fato existe.
+Contar 898 faria a barra ficar parada em 93% do caminho sem nada acontecendo.
+
+### 33.3 Efeito colateral no fechamento
+
+`closeEvent` esperava até 15 s pela exportação, sem poder pedir nada. Agora
+cancela primeiro e espera só o resto da página corrente.
+
+### 33.4 Cobertura de teste
+
+`tests/test_export_cancel.py` (10):
+- o progresso conta páginas alteradas, apagamentos incluídos;
+- **cancelar não escreve arquivo nenhum**;
+- **um PDF exportado antes fica intacto** quando a reexportação é cancelada;
+- a parada é entre páginas, e a mensagem diz em qual;
+- no app: o diálogo tem botão de cancelar, a exportação normal grava o arquivo, e
+  **fechar a janela cancela a exportação em curso**.
+
+O teste de cancelamento pela interface admite a corrida de propósito: num PDF de
+teste minúsculo a exportação pode terminar antes do clique. O que ele exige é que
+não haja meio-termo — ou o arquivo existe e a mensagem diz "salvo", ou não existe
+e a mensagem diz "cancelada, nenhum arquivo foi gravado".
+
+Verificado por mutação: desligar a checagem no laço derruba exatamente o teste da
+parada antecipada. Os outros continuam passando — e devem mesmo, porque a garantia
+de "nenhum arquivo" sobrevive pela checagem final. As duas cobrem coisas
+diferentes.

@@ -22,7 +22,7 @@ from typing import Optional, Sequence
 from PySide6 import QtCore
 
 from .logging_config import get_logger
-from .pdf_service import PdfService, apply_operations_to_pdf
+from .pdf_service import ExportCanceled, PdfService, apply_operations_to_pdf
 from .recognition import DEFAULT_ENGINE_MODE, RecognitionError, make_engine
 from .types import EraseOperation, OverlayOperation, Rect
 
@@ -189,6 +189,10 @@ class ExportWorker(QtCore.QThread):
     done = QtCore.Signal(str)
     #: mensagem de erro
     failed = QtCore.Signal(str)
+    #: paginas alteradas ja gravadas, total
+    progress = QtCore.Signal(int, int)
+    #: a exportacao foi interrompida a pedido; nenhum arquivo foi gravado
+    canceled = QtCore.Signal()
 
     def __init__(
         self,
@@ -211,6 +215,11 @@ class ExportWorker(QtCore.QThread):
         self._whiteout = bool(whiteout)
         self._include_lichess_link = bool(include_lichess_link)
         self._erase_coordinates = bool(erase_coordinates)
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        """Pede parada. A exportacao para na proxima pagina e nao grava nada."""
+        self._cancel_requested = True
 
     def run(self) -> None:  # pragma: no cover - exercitado via teste de integracao
         try:
@@ -222,7 +231,13 @@ class ExportWorker(QtCore.QThread):
                 whiteout=self._whiteout,
                 include_lichess_link=self._include_lichess_link,
                 erase_coordinates=self._erase_coordinates,
+                should_cancel=lambda: self._cancel_requested,
+                on_progress=self.progress.emit,
             )
+        except ExportCanceled:
+            logger.info("Exportacao cancelada pelo usuario: %s", self._output_pdf)
+            self.canceled.emit()
+            return
         except Exception as exc:
             logger.exception("Falha ao exportar %s", self._output_pdf)
             self.failed.emit(str(exc))

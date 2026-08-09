@@ -1068,8 +1068,13 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                 self._ocr_worker.terminate()
                 self._ocr_worker.wait(1000)
             self._ocr_worker = None
-        if self._export_worker is not None and not self._export_worker.wait(15000):
-            logger.warning("Exportação ainda em andamento no fechamento")
+        if self._export_worker is not None:
+            # Desde que a exportação é interrompível, fechar a janela não precisa
+            # mais esperar um livro inteiro terminar de gravar: pede parada e
+            # espera só o resto da página corrente.
+            self._export_worker.cancel()
+            if not self._export_worker.wait(15000):
+                logger.warning("Exportação ainda em andamento no fechamento")
         self._export_worker = None
 
         # Autosave final: fechar a janela nunca pode custar o trabalho da sessao.
@@ -2834,14 +2839,16 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
 
         # A gravacao roda num worker: um livro grande com centenas de diagramas
         # levava dezenas de segundos com a janela congelada (Sprint 5.1).
-        progress = QtWidgets.QProgressDialog("Exportando PDF...", "", 0, 0, self)
+        progress = QtWidgets.QProgressDialog("Exportando PDF...", "Cancelar", 0, 0, self)
         progress.setWindowTitle("Exportar PDF")
         progress.setWindowModality(QtCore.Qt.WindowModal)
-        progress.setCancelButton(None)  # `apply_operations_to_pdf` nao e interrompivel
         progress.setMinimumDuration(0)
+        # O ciclo de vida do dialogo e nosso: ele so fecha quando o worker
+        # confirmar que terminou, senao um cancelamento deixaria a thread orfa.
         progress.setAutoClose(False)
         progress.setAutoReset(False)
         progress.setValue(0)
+        progress.canceled.connect(self._cancel_export)
         self._export_progress = progress
 
         worker = ExportWorker(
@@ -2856,9 +2863,24 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         )
         worker.done.connect(self._on_export_done)
         worker.failed.connect(self._on_export_failed)
+        worker.canceled.connect(self._on_export_canceled)
+        worker.progress.connect(self._on_export_progress)
         self._export_worker = worker
         self.statusBar().showMessage(f"Exportando para {out_path}...")
         worker.start()
+
+    def _cancel_export(self) -> None:
+        if self._export_worker is not None:
+            self._export_worker.cancel()
+        if self._export_progress is not None:
+            self._export_progress.setLabelText("Cancelando a exportação...")
+
+    def _on_export_progress(self, done: int, total: int) -> None:
+        if self._export_progress is None:
+            return
+        self._export_progress.setMaximum(max(1, total))
+        self._export_progress.setValue(done)
+        self._export_progress.setLabelText(f"Exportando PDF... página {done} de {total}")
 
     def _finish_export(self) -> None:
         if self._export_progress is not None:
@@ -2873,6 +2895,12 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self._finish_export()
         self.statusBar().showMessage(f"PDF salvo em {out_path}")
         QtWidgets.QMessageBox.information(self, "Concluído", f"PDF salvo em:\n{out_path}")
+
+    def _on_export_canceled(self) -> None:
+        self._finish_export()
+        # Sem modal: o usuário acabou de clicar em Cancelar e sabe o que pediu.
+        # A frase importante é a de que nada foi gravado.
+        self.statusBar().showMessage("Exportação cancelada. Nenhum arquivo foi gravado.")
 
     def _on_export_failed(self, message: str) -> None:
         self._finish_export()

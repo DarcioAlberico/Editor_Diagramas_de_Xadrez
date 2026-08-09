@@ -6,7 +6,7 @@ import threading
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Callable, Iterable, Optional, Sequence
 from urllib.parse import quote
 
 import fitz  # type: ignore
@@ -732,6 +732,10 @@ def apply_page_operations(
             _insert_lichess_link_below_diagram(page, rect, op)
 
 
+class ExportCanceled(RuntimeError):
+    """A exportação foi interrompida a pedido. Nenhum arquivo foi gravado."""
+
+
 def apply_operations_to_pdf(
     input_pdf: str,
     output_pdf: str,
@@ -741,7 +745,20 @@ def apply_operations_to_pdf(
     whiteout_margin_pt: float = 0.5,
     include_lichess_link: bool = True,
     erase_coordinates: bool = False,
+    should_cancel: Optional[Callable[[], bool]] = None,
+    on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> None:
+    """Grava o PDF de saída com todas as alterações aplicadas.
+
+    `should_cancel` é consultado **entre páginas**: interromper no meio de uma
+    página deixaria metade das substituições dela aplicadas, e a gravação é o
+    último passo, então cancelar significa **nenhum arquivo** — nunca um PDF pela
+    metade no lugar de um bom. Por isso a exceção, e não um retorno silencioso.
+
+    `on_progress(feitas, total)` conta páginas alteradas, não páginas do livro:
+    num livro de 898 páginas com 60 diagramas, o total é 60, e é isso que faz a
+    barra andar de forma honesta.
+    """
     in_path = Path(input_pdf)
     if not in_path.exists():
         raise FileNotFoundError(f"PDF de entrada não encontrado: {input_pdf}")
@@ -758,7 +775,12 @@ def apply_operations_to_pdf(
             if 0 <= erase_op.page_num < len(doc):
                 page_erases[erase_op.page_num].append(erase_op)
 
-        for page_num in sorted(set(page_ops) | set(page_erases)):
+        pages = sorted(set(page_ops) | set(page_erases))
+        total = len(pages)
+        for done, page_num in enumerate(pages, start=1):
+            if should_cancel is not None and should_cancel():
+                logger.info("Exportação cancelada em %d/%d páginas", done - 1, total)
+                raise ExportCanceled(f"Exportação cancelada após {done - 1} de {total} páginas.")
             apply_page_operations(
                 doc[page_num],
                 page_ops.get(page_num, []),
@@ -768,7 +790,13 @@ def apply_operations_to_pdf(
                 include_lichess_link=include_lichess_link,
                 erase_coordinates=erase_coordinates,
             )
+            if on_progress is not None:
+                on_progress(done, total)
 
+        # Última checagem antes de gravar: o `save` de um livro grande também
+        # demora, e chegar até aqui não obriga ninguém a esperar por ele.
+        if should_cancel is not None and should_cancel():
+            raise ExportCanceled("Exportação cancelada antes de gravar o arquivo.")
         doc.save(output_pdf, deflate=True, garbage=3)
     finally:
         doc.close()
