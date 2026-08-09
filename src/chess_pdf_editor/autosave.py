@@ -75,10 +75,48 @@ def is_autosave_path(path: str) -> bool:
     return str(path).endswith(AUTOSAVE_SUFFIX)
 
 
+def _flush_to_disk(path: Path) -> None:
+    """Força os bytes para o disco antes do `os.replace` (§43.1).
+
+    Sem isto, `os.replace` garante só a **ordem** da troca de nome: o diretório passa
+    a apontar para o arquivo novo, mas o conteúdo dele pode ainda estar em cache. Numa
+    queda de energia — o cenário que o cabeçalho deste módulo promete cobrir — sobra
+    a entrada nova apontando para blocos não gravados.
+
+    O diretório também é sincronizado onde isso existe (POSIX), porque é o que torna
+    o próprio rename durável. No Windows não se abre diretório como arquivo, e ali o
+    `os.replace` já é uma operação de metadados do sistema.
+    """
+    with open(path, "r+b") as handle:
+        handle.flush()
+        os.fsync(handle.fileno())
+    if hasattr(os, "O_DIRECTORY"):  # pragma: no cover - POSIX
+        directory_fd = os.open(str(path.parent), os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+
 def write_project_atomically(path: str, state: ProjectState) -> None:
-    """Grava o projeto sem risco de deixar um arquivo pela metade."""
+    """Grava o projeto sem risco de deixar um arquivo pela metade.
+
+    Falhar no meio não pode deixar lixo: o temporário é removido no caminho de erro.
+    Antes, uma gravação interrompida (disco cheio, por exemplo) deixava um
+    `projeto.json.tmp` truncado ao lado do projeto, um por falha.
+    """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target.with_name(target.name + ".tmp")
-    save_project_state(str(tmp_path), state)
-    os.replace(tmp_path, target)
+    try:
+        save_project_state(str(tmp_path), state)
+        _flush_to_disk(tmp_path)
+        os.replace(tmp_path, target)
+    except BaseException:
+        # `BaseException` de propósito: um KeyboardInterrupt no meio da gravação
+        # deixaria o mesmo lixo que um OSError.
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - só se o próprio unlink falhar
+            logger.warning("Não foi possível remover o temporário %s", tmp_path, exc_info=True)
+        raise

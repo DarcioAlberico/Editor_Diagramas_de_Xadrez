@@ -520,8 +520,12 @@ O trabalho tambem e salvo sozinho, a cada 2 minutos e ao fechar a janela:
 
 Na sessao seguinte o app reencontra esse arquivo sozinho e continua de onde
 parou. Em `Configuracoes` voce pode desligar o autosave ou forcar
-`Salvar agora`. A gravacao e atomica: um autosave interrompido no meio nao
-corrompe o projeto anterior.
+`Salvar agora`.
+
+A gravacao e atomica e **duravel**: o projeto vai primeiro para um arquivo
+temporario, os bytes sao forcados para o disco (`fsync`) e so entao ele toma o lugar
+do anterior. Um autosave interrompido no meio — disco cheio, `Ctrl+C`, queda de
+energia — nao corrompe o projeto anterior **nem deixa arquivo temporario para tras**.
 
 ## Comparar dois processamentos
 

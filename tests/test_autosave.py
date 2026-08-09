@@ -75,3 +75,100 @@ def test_failed_write_does_not_destroy_the_previous_file(tmp_path: Path, monkeyp
 
     assert target.read_bytes() == good_bytes
     assert json.loads(target.read_text(encoding="utf-8"))["source_pdf"] == "livro.pdf"
+
+
+# ---------------------------------------------------------------------------
+# Gravação durável (§43)
+# ---------------------------------------------------------------------------
+
+
+def test_a_failed_write_leaves_no_temporary_behind(tmp_path: Path, monkeypatch) -> None:
+    """Antes, cada falha deixava um `.json.tmp` truncado ao lado do projeto."""
+    from chess_pdf_editor import autosave as autosave_module
+
+    target = tmp_path / "projeto.json"
+    write_project_atomically(str(target), _state("livro.pdf"))
+    good = target.read_bytes()
+
+    def explode(path, state):
+        # Escreve pela metade e falha, como um disco que enche no meio.
+        Path(path).write_text('{"parcial": ', encoding="utf-8")
+        raise OSError("disco cheio")
+
+    monkeypatch.setattr(autosave_module, "save_project_state", explode)
+    with pytest.raises(OSError):
+        write_project_atomically(str(target), _state("livro.pdf"))
+
+    assert target.read_bytes() == good, "a falha estragou o projeto bom"
+    leftovers = [p.name for p in tmp_path.iterdir() if p.name != "projeto.json"]
+    assert leftovers == [], f"sobrou lixo: {leftovers}"
+
+
+def test_an_interrupt_also_cleans_up(tmp_path: Path, monkeypatch) -> None:
+    """`KeyboardInterrupt` não é `Exception`, e deixaria o mesmo lixo."""
+    from chess_pdf_editor import autosave as autosave_module
+
+    target = tmp_path / "projeto.json"
+
+    def interrupt(path, state):
+        Path(path).write_text("{", encoding="utf-8")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(autosave_module, "save_project_state", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        write_project_atomically(str(target), _state("livro.pdf"))
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_bytes_are_pushed_to_disk_before_the_rename(tmp_path: Path, monkeypatch) -> None:
+    """`os.replace` ordena a troca de nome, não a gravação do conteúdo.
+
+    Sem `fsync`, uma queda de energia pode deixar o nome novo apontando para blocos
+    que nunca foram escritos — e é justamente queda de energia que o cabeçalho do
+    módulo promete cobrir.
+    """
+    from chess_pdf_editor import autosave as autosave_module
+
+    synced: list[int] = []
+    real_fsync = autosave_module.os.fsync
+    real_replace = autosave_module.os.replace
+    order: list[str] = []
+
+    def spy_fsync(fd):
+        synced.append(fd)
+        order.append("fsync")
+        return real_fsync(fd)
+
+    def spy_replace(src, dst):
+        order.append("replace")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(autosave_module.os, "fsync", spy_fsync)
+    monkeypatch.setattr(autosave_module.os, "replace", spy_replace)
+
+    write_project_atomically(str(tmp_path / "projeto.json"), _state("livro.pdf"))
+
+    assert synced, "nada foi sincronizado com o disco"
+    assert order.index("fsync") < order.index("replace"), f"ordem errada: {order}"
+
+
+def test_the_written_project_reloads(tmp_path: Path) -> None:
+    """A durabilidade não vale nada se o que ficou no disco não abrir."""
+    target = tmp_path / "projeto.json"
+    write_project_atomically(str(target), _state("livro.pdf"))
+
+    reloaded = load_project_state(str(target))
+
+    assert len(reloaded.operations) == 1
+    assert reloaded.operations[0].fen == FEN
+    assert json.loads(target.read_text(encoding="utf-8"))["source_pdf"] == "livro.pdf"
+
+
+def test_writing_twice_in_a_row_keeps_the_folder_clean(tmp_path: Path) -> None:
+    target = tmp_path / "projeto.json"
+    write_project_atomically(str(target), _state("a.pdf"))
+    write_project_atomically(str(target), _state("b.pdf"))
+
+    assert [p.name for p in tmp_path.iterdir()] == ["projeto.json"]
+    assert load_project_state(str(target)).source_pdf == "b.pdf"

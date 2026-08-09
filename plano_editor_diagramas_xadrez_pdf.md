@@ -3119,3 +3119,62 @@ Duas notas de honestidade de teste, das mutações:
 - tirar a limpeza explícita do estado de desfazer **não** derruba nada — a chamada
   seguinte o descarta de todo modo. A linha fica por clareza, e o docstring do teste
   diz isso em vez de alegar uma garantia que não existe.
+
+---
+
+## 43) Sprint 9.15 — a gravação atômica que não era durável (2026-08-09)
+
+O cabeçalho do `autosave.py` promete, desde o Sprint 5.3:
+
+> Um autosave interrompido no meio (**queda de energia**, kill) nao pode deixar para
+> tras um JSON truncado no lugar do projeto bom — `os.replace` e atomico no Windows e
+> no POSIX.
+
+Metade disso era verdade. Medido, gravando num diretório temporário e falhando de
+propósito no meio:
+
+| Comportamento | Antes |
+|---|---|
+| projeto bom sobrevive a uma falha | **sim** — a garantia principal valia |
+| temporário removido no caminho de erro | **não** — sobrava um `.json.tmp` truncado por falha |
+| bytes forçados para o disco antes do rename | **não** — nenhum `flush`/`fsync` |
+
+### 43.1 `os.replace` ordena o nome, não o conteúdo
+
+É a parte que a promessa original confundia. `os.replace` é atômico quanto ao
+**namespace**: em nenhum instante o nome de destino aponta para um arquivo pela metade.
+Ele não diz nada sobre os *bytes* terem chegado ao disco.
+
+Ou seja, no cenário nomeado na promessa — queda de energia — dava para terminar com a
+entrada nova apontando para blocos que nunca foram escritos. `kill -9` estava coberto
+(o cache do sistema sobrevive à morte do processo); falta de energia, não.
+
+A correção é a receita padrão: gravar no temporário, `flush` + `fsync` **nele**, só
+então `os.replace`. O diretório também é sincronizado onde isso existe (POSIX), porque
+é o que torna o próprio rename durável; no Windows não se abre diretório como arquivo, e
+ali o `replace` já é operação de metadados do sistema.
+
+### 43.2 O lixo do caminho de erro
+
+Uma gravação que falha no meio deixava `projeto.json.tmp` truncado ao lado do projeto —
+um por falha, acumulando. Agora o temporário é removido no `except`.
+
+O `except` captura `BaseException`, e não `Exception`, de propósito: um
+`KeyboardInterrupt` no meio da gravação deixaria exatamente o mesmo lixo, e não é um
+caso hipotético num app que grava de dois lugares (o timer e o fechamento da janela).
+A exceção segue subindo — quem chama é que decide o que fazer com a falha.
+
+### 43.3 Cobertura de teste
+
+`tests/test_autosave.py` passou de 5 para 10.
+
+- falha no meio: o projeto bom fica **byte a byte** igual e **nada** sobra no diretório;
+- `KeyboardInterrupt` limpa igual;
+- `fsync` acontece **antes** do `replace` — a ordem é verificada, não só a presença,
+  porque sincronizar depois de trocar o nome não protegeria nada;
+- o que ficou no disco **reabre** (durabilidade sem legibilidade não vale nada);
+- duas gravações seguidas deixam a pasta com um arquivo só.
+
+Mutações conferidas à mão: tirar o `_flush_to_disk` derruba o teste de ordem; trocar o
+`except BaseException` por algo que não pega `OSError` derruba os dois testes de
+limpeza.
