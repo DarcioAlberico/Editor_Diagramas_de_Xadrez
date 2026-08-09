@@ -231,6 +231,22 @@ recortados do PDF a 300 DPI) e linhas acrescentadas a `labels.csv`.
 O arquivo de destino nunca e sobrescrito, so acrescentado. O retreino em si
 acontece no projeto ChessVisionOFF_Puro, onde estao os splits e as metricas.
 
+## Galeria de diagramas
+
+`Diagramas` > `Galeria de diagramas` (Ctrl+G) abre uma grade com **todos** os
+diagramas do livro em miniatura, antes e depois lado a lado. A maior parte das
+paginas de um livro nao tem diagrama nenhum; a galeria mostra so o que interessa.
+
+- Clique numa miniatura e a janela principal vai ate aquele diagrama — pagina,
+  selecao e posicao carregadas. A galeria continua aberta ao lado.
+- Candidatos aparecem junto das substituicoes, marcados como tal, com a confianca.
+- O "depois" mostra a **pagina inteira aplicada**, apagamentos inclusive: e o que o
+  PDF exportado vai conter.
+
+As miniaturas sao renderizadas fora da thread da interface e vao aparecendo na
+grade; fechar a janela no meio cancela o trabalho. Medido num livro real: ~128 ms
+por diagrama (44 diagramas em 5,6 s).
+
 ## Prévia ao vivo do resultado
 
 Voce nao precisa exportar o PDF para saber como o diagrama vai ficar.
@@ -356,6 +372,7 @@ src/chess_pdf_editor/
   ocr_workflow.py     # mixin: reconhecimento, lote e fila de candidatos
   study_workflow.py   # mixin: posicoes de estudo do PDF e comentarios por lance
   study_panel.py      # painel de estudo (nao conhece a janela)
+  gallery.py          # galeria antes/depois do livro, com worker proprio
   theme.py            # cores semanticas e QSS reutilizado
   widgets.py          # viewer selecionavel (alcas/teclado), editor, antes/depois
   pdf_service.py      # render, previa e overlay no PDF

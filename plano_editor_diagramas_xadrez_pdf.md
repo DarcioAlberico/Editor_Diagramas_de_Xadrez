@@ -542,8 +542,7 @@ Beta (meta):
 
 1. **Modo "revisar pendências"** ✅ — ver §29.
 2. **Dividir `app.py`** ✅ — ver §30.
-3. **Galeria de diagramas do livro** (§22.5), viável em minutos por livro com o
-   reconhecimento local. — próximo
+3. **Galeria de diagramas do livro** ✅ — ver §31.
 
 ---
 
@@ -1055,9 +1054,7 @@ Ordenadas por (valor percebido ÷ esforço):
    `Aplicar em todas as substituições` muda tudo às cegas; com a prévia, mostrar
    uma grade de miniaturas "depois" de N diagramas antes de confirmar.
 
-3. **Galeria de diagramas do livro** — painel com todas as substituições em
-   miniatura (antes/depois), navegável, para revisar um livro inteiro sem
-   percorrer página por página.
+3. ~~**Galeria de diagramas do livro**~~ — feito no Sprint 9.3, ver §31.
 
 4. **Verificação de posição por engine** — apontar posições impossíveis ou
    suspeitas (rei em xeque para quem não joga, material absurdo) usando
@@ -1966,3 +1963,71 @@ reduzir o acoplamento de verdade um método por vez, sem um big bang.
 `_open_study_dialog`, `_is_study_mode`, `_load_operation_into_study` e
 `_study_position_index_at_image_point` continuam em `app.py`: são pequenos, estão
 intercalados com código da janela e movê-los fragmentaria o diff sem reduzir nada.
+
+---
+
+## 31) Sprint 9.3 — galeria de diagramas do livro (implementado em 2026-08-08)
+
+### 31.1 O problema
+
+Reconhecer um livro de 898 páginas leva ~8 minutos e produz centenas de
+substituições. Conferir o resultado exigia abrir página por página no visor — e a
+maior parte das páginas de um livro **não tem diagrama nenhum**.
+
+A galeria (Ctrl+G) mostra só os diagramas, em grade, antes e depois lado a lado.
+
+### 31.2 Decisões
+
+**Worker próprio, mesma regra do Sprint 5.1.** Renderizar 300 pares de miniaturas
+na thread da UI congelaria a janela por dezenas de segundos. O `GalleryWorker`
+abre o **seu próprio** `fitz.Document` a partir do caminho; o que atravessa por
+sinal são `bytes` de PNG e inteiros. Fechar a galeria cancela e espera a thread —
+sem isso, uma `QThread` viva mexeria num diálogo já destruído.
+
+**As células aparecem antes das imagens.** A grade é montada cheia, com as
+legendas, e os ícones vão chegando. Esperar tudo para mostrar algo deixaria a
+janela vazia por segundos num livro grande.
+
+**Ordem de leitura, e não por acaso.** Os itens são ordenados por página e, dentro
+dela, de cima para baixo. Além de ser a ordem em que o livro se lê, é o que faz o
+cache de prévia do `PdfService` acertar: ele guarda **um** documento por
+assinatura de página, então processar fora de ordem o reconstruiria a cada item.
+
+**O "depois" mostra a página inteira aplicada.** Uma miniatura que mostrasse só a
+própria substituição mentiria numa página com duas — o PDF exportado terá as duas.
+Vale também para apagamentos. Para candidatos, o "depois" inclui o próprio
+candidato, que ainda não está em `operations`; sem isso a miniatura seria idêntica
+ao original e não haveria o que conferir.
+
+**Não-modal.** Clicar numa miniatura leva a janela principal até aquele diagrama e
+a galeria continua aberta. É o que faz dela uma forma de *navegar* o livro, e não
+só de olhá-lo.
+
+### 31.3 Desempenho medido
+
+Livro real (*A Matter of Endgame Technique*), 44 diagramas detectados em 20
+páginas:
+
+| | |
+|---|---|
+| Miniaturas prontas | 44 de 44 |
+| Tempo total | 5,65 s |
+| Por diagrama | 128 ms |
+
+O custo dominante é montar o documento de prévia de cada página (~119 ms, §21.6);
+com ~2,2 diagramas por página o cache absorve o resto. Num livro de 300 diagramas
+isso dá ~40 s, em segundo plano e com a grade preenchendo à medida que chega.
+
+### 31.4 Cobertura de teste
+
+`tests/test_gallery.py` (23):
+- ordem de leitura, e candidatos preservando o índice da lista de origem;
+- **o "depois" é de fato outra imagem** — comparado nos bytes do PNG, porque o
+  ícone composto junta os dois num pixmap só;
+- **o "depois" de um candidato mostra o candidato aplicado**;
+- **um apagamento dentro do enquadramento muda a miniatura** (a primeira versão
+  deste teste apagava papel branco e passava sem exercitar nada);
+- confiança ausente é omitida da legenda, não inventada;
+- **nenhuma `QThread` sobrevive ao fechamento**, nem da galeria nem da janela;
+- clicar leva a janela à página certa, e índice fora de faixa é ignorado — a
+  galeria é montada de uma cópia, e o usuário pode remover algo enquanto ela vive.

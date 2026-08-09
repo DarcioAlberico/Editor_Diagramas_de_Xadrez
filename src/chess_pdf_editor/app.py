@@ -16,6 +16,7 @@ from .autosave import (
     write_project_atomically,
 )
 from .feedback import export_training_samples
+from .gallery import KIND_CANDIDATE, GalleryDialog
 from .fen import extract_piece_placement, normalize_piece_placement, validate_piece_placement
 from .history import ChangeHistory
 from .logging_config import get_logger, log_file_path, setup_logging
@@ -113,6 +114,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self._syncing_study_positions = False
         self._last_ocr_result: Optional[OcrBoardResult] = None
         self.study_dialog: Optional[StudyDialog] = None
+        self.gallery_dialog: Optional[GalleryDialog] = None
 
         # Undo/redo do modo edicao (Sprint 5.2). O modo Estudo tem o seu proprio,
         # dentro do StudyBoardWidget.
@@ -905,6 +907,13 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.act_export_report.setShortcut(QtGui.QKeySequence("Ctrl+Shift+E"))
         self.act_export_report.triggered.connect(self._export_report_dialog)
 
+        self.act_gallery = QtGui.QAction("Galeria de diagramas", self)
+        self.act_gallery.setShortcut(QtGui.QKeySequence("Ctrl+G"))
+        self.act_gallery.setToolTip(
+            "Todos os diagramas do livro em miniatura, antes e depois (Ctrl+G)"
+        )
+        self.act_gallery.triggered.connect(self._open_gallery)
+
         self.act_export_training = QtGui.QAction("Exportar correções para treino...", self)
         self.act_export_training.setToolTip(
             "Grava os diagramas corrigidos no formato do dataset que treina o motor local"
@@ -969,6 +978,8 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         pdf_menu.addAction(self.act_toggle_preview)
 
         diagrams_menu = self.menuBar().addMenu("Diagramas")
+        diagrams_menu.addAction(self.act_gallery)
+        diagrams_menu.addSeparator()
         diagrams_menu.addAction(self.act_snap_selection)
         diagrams_menu.addAction(self.act_auto_orient)
         diagrams_menu.addSeparator()
@@ -1050,10 +1061,73 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         if self.study_dialog:
             self.study_dialog.close()
             self.study_dialog = None
+        if self.gallery_dialog:
+            # A galeria tem a sua própria QThread de miniaturas; `close()` a
+            # cancela e espera, pelo mesmo motivo do worker de OCR acima.
+            self.gallery_dialog.close()
+            self.gallery_dialog = None
         if self.pdf_service:
             self.pdf_service.close()
             self.pdf_service = None
         super().closeEvent(event)
+
+    def _open_gallery(self) -> None:
+        """Grade com todos os diagramas do livro, antes e depois (§22.5).
+
+        Não-modal de propósito: clicar numa miniatura leva a janela principal até
+        aquele diagrama, e a galeria continua aberta ao lado. É o que faz dela uma
+        forma de *navegar* o livro, e não só de olhá-lo.
+        """
+        if not self.pdf_service or not self.current_pdf_path:
+            QtWidgets.QMessageBox.warning(self, "Sem PDF", "Abra um PDF primeiro.")
+            return
+        if not self.operations and not self.candidates:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Galeria",
+                "Nenhum diagrama ainda. Adicione substituições ou reconheça o PDF.",
+            )
+            return
+
+        if self.gallery_dialog is not None:
+            # Reabrir com o estado atual é mais previsível que atualizar a janela
+            # existente enquanto ela ainda renderiza miniaturas do estado antigo.
+            self.gallery_dialog.close()
+            self.gallery_dialog = None
+
+        dialog = GalleryDialog(
+            self.current_pdf_path,
+            self.operations,
+            candidates=self.candidates,
+            erase_operations=self.erase_operations,
+            whiteout=self.whiteout_check.isChecked(),
+            include_lichess_link=self.include_lichess_link_check.isChecked(),
+            parent=self,
+        )
+        dialog.entry_activated.connect(self._focus_gallery_entry)
+        dialog.finished.connect(lambda _result: setattr(self, "gallery_dialog", None))
+        self.gallery_dialog = dialog
+        dialog.show()
+
+    def _focus_gallery_entry(self, kind: str, index: int) -> None:
+        """Leva a janela principal até o diagrama escolhido na galeria."""
+        if kind == KIND_CANDIDATE:
+            if 0 <= index < len(self.candidates):
+                self._focus_candidate(index)
+                self._select_candidate_row(index)
+            return
+        if 0 <= index < len(self.operations):
+            self._set_current_operation(index)
+            self._focus_operation(index)
+            self._select_change("operation", index)
+
+    def _select_candidate_row(self, index: int) -> None:
+        """Seleciona na lista de candidatos o item de índice real `index`."""
+        for row in range(self.candidates_list.count()):
+            item = self.candidates_list.item(row)
+            if item is not None and item.data(QtCore.Qt.UserRole) == index:
+                self.candidates_list.setCurrentRow(row)
+                return
 
     def _open_study_dialog(self) -> None:
         if self.study_dialog is None:

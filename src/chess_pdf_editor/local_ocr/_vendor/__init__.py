@@ -1,7 +1,14 @@
 """Cópia fiel do caminho de inferência do **ChessVisionOFF_Puro**.
 
-Origem: `C:\\PythonChess\\ChessVisionOFF_Puro`, pacote `chess_diagram_ocr`,
-commit `ee308dd`, importado em 2026-08-08.
+Origem: projeto **ChessVisionOFF_Puro**, pacote `chess_diagram_ocr`, commit
+`ee308dd`, importado em 2026-08-08. Em 2026-08-08 ele vivia em
+`C:\\Python-Chess2\\ChessVisionOFF_Puro` (antes disso, em `C:\\PythonChess\\`).
+
+O caminho é registro histórico, não dependência: **nada aqui procura esse diretório
+em tempo de execução**. O editor precisa rodar numa máquina que não tem o projeto
+de origem instalado — foi justamente essa cópia que manteve o app funcionando
+quando a pasta original mudou de lugar no meio do desenvolvimento. Para
+re-sincronizar, ache o projeto pelo nome e compare commit por commit.
 
 Módulos trazidos (só o necessário para reconhecer, nada de treino/dataset/UI):
 
