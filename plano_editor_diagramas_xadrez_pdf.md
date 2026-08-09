@@ -1226,11 +1226,12 @@ Suspeita de que os atalhos de tecla única (`←`/`→` para página, `Delete` e
 texto. Testado com eventos reais via `QTest`: **não roubam**. O Qt envia
 `ShortcutOverride` antes e o campo focado consome a tecla. Nenhuma mudança feita.
 
-### 24.9 Pendente
+### 24.9 Pendente → resolvido no Sprint 9.6 (§34)
 
-- Barra de ferramentas ainda transborda (`»`) em larguras menores.
-- O editor de tabuleiro ocupa 424 px fixos no topo do painel.
-- Modo Estudo: 9 botões esticados em duas fileiras.
+- ~~Barra de ferramentas ainda transborda (`»`)~~ — 2.223 → 1.097 px.
+- O editor de tabuleiro ocupa 424 px fixos no topo do painel — **tentado e
+  revertido**, ver §34.3.
+- ~~Modo Estudo: altura mínima maior que a janela~~ — 1.136 → 560 px.
 
 ---
 
@@ -2202,3 +2203,70 @@ Verificado por mutação: desligar a checagem no laço derruba exatamente o test
 parada antecipada. Os outros continuam passando — e devem mesmo, porque a garantia
 de "nenhum arquivo" sobrevive pela checagem final. As duas cobrem coisas
 diferentes.
+
+---
+
+## 34) Sprint 9.6 — a interface cabendo na tela (implementado em 2026-08-08)
+
+Os três itens da §24.9, medidos do mesmo jeito que a auditoria original: widgets
+reais, janela offscreen, `sizeHint` lido do Qt.
+
+### 34.1 A barra de ferramentas
+
+**2.223 px de `sizeHint`** — transbordava para o menu `»` em **qualquer** tela,
+inclusive 1920. Não era excesso de itens (a §20.2 define quais devem estar ali, e
+eram exatamente esses); era excesso de texto: doze rótulos por extenso.
+
+A regra aplicada:
+
+| Fica com texto | Vira ícone com dica |
+|---|---|
+| `Abrir PDF`, `Exportar PDF` — as âncoras do fluxo | salvar/carregar projeto, desfazer/refazer, navegação de página, prévia |
+
+Todos os que perderam o rótulo têm **ícone do tema do sistema** (nada de asset
+para empacotar), **dica** e **atalho de teclado** — há teste para as três coisas.
+
+Os três botões de modo viraram **um** controle com menu, que mostra o modo atual
+por escrito (`Modo: Edição`). Antes, saber em que modo se estava exigia notar qual
+dos três botões estava afundado.
+
+Resultado: **1.097 px**. Cabe a partir de 1100.
+
+### 34.2 O painel de Estudo
+
+`setMinimumHeight(sizeHint().height())` dava **1.136 px** — mais alto que a janela
+padrão de 900. O painel nunca cabia, e a área rolável que existe para o caso
+apertado era obrigatória o tempo todo. O piso passou a ser 560 px: o tabuleiro de
+estudo mais uma folga.
+
+### 34.3 O editor de tabuleiro: tentado e revertido
+
+A ideia era deixar a casa encolher (26–42 px) conforme o espaço, tirando os 424 px
+fixos do topo do painel. Foi implementado, medido — e revertido.
+
+O que a medição mostrou:
+
+1. Com o `sizeHint` acompanhando a casa atual, surgiu um laço: menos altura →
+   casa menor → `sizeHint` menor → menos altura ainda, até o mínimo, mesmo numa
+   janela grande. Corrigido desacoplando o `sizeHint` (sempre o tamanho máximo).
+2. Corrigido isso, o tabuleiro passou a sair com **34 px numa janela de
+   1500×900**, onde antes tinha 42. O motivo é que o piso de 424 px era o que
+   fazia o splitter dar 538 px ao topo; sem ele, a divisão passou a ser decidida
+   pelo `sizeHint` da aba de baixo (717 px), que ganha a disputa.
+
+Ou seja: a troca real era um tabuleiro **previsivelmente grande em toda tela** por
+um que encolhe conforme a aritmética do splitter. Isso é pior que o problema
+original, que era uma observação de layout e não um defeito. Revertido.
+
+Fica registrado para quem tentar de novo: o caminho não é o widget se adaptar
+sozinho, é a janela decidir a divisão — provavelmente com um tamanho de casa
+escolhido pelo usuário, e não inferido.
+
+### 34.4 Cobertura de teste
+
+`tests/test_toolbar.py` (14):
+- **a barra cabe em 1280 px** (o número que a auditoria mede);
+- `Abrir PDF` e `Exportar PDF` mantêm o texto;
+- todo botão sem rótulo tem **ícone, dica e atalho**;
+- o seletor mostra o modo atual e os três modos continuam alcançáveis;
+- o painel de Estudo cabe numa janela normal, e as abas laterais ainda encolhem.

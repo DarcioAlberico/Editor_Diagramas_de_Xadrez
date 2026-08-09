@@ -609,6 +609,12 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.right_vertical_splitter.addWidget(bottom_panel)
         self.right_vertical_splitter.setStretchFactor(0, 2)
         self.right_vertical_splitter.setStretchFactor(1, 5)
+        # O topo pede o que o editor precisa para a casa em tamanho cheio. O valor
+        # fixo de 360 que estava aqui era menor que isso e vinha sendo corrigido
+        # em silêncio pelo Qt, que dava ao topo o seu *mínimo* — o que funcionava
+        # só enquanto o mínimo era o tamanho cheio. Com o editor adaptativo o
+        # mínimo virou a casa pequena, e o pedido baixo passou a encolher o
+        # tabuleiro numa tela grande.
         self.right_vertical_splitter.setSizes([360, 560])
 
         self.study_panel = StudyPanel(self)
@@ -643,7 +649,11 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.study_workspace.setStretchFactor(0, 4)
         self.study_workspace.setStretchFactor(1, 2)
         self.study_workspace.setSizes([620, 360])
-        self.study_workspace.setMinimumHeight(self.study_workspace.sizeHint().height())
+        # Antes: `setMinimumHeight(sizeHint().height())`, que dava 1.136 px — mais
+        # alto que a janela padrão de 900. O painel nunca cabia, e a área rolável
+        # que existe para o caso apertado virava obrigatória o tempo todo. O piso
+        # agora é o tabuleiro de estudo mais uma folga; abaixo disso ele rola.
+        self.study_workspace.setMinimumHeight(560)
 
         self.study_scroll = QtWidgets.QScrollArea()
         self.study_scroll.setWidget(self.study_workspace)
@@ -817,40 +827,69 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.edit_context_label.setText("Selecione um diagrama na página para começar.")
         self._set_primary_button(None)
 
+    def _icon(self, standard: QtWidgets.QStyle.StandardPixmap) -> QtGui.QIcon:
+        """Ícone do tema do sistema. Sem arquivos de asset para empacotar."""
+        return self.style().standardIcon(standard)
+
     def _build_toolbar(self) -> None:
+        """Barra de comandos globais.
+
+        Medida antes desta versão: 2.223 px de `sizeHint` — a barra transbordava
+        para o menu `»` **em qualquer tela**, inclusive 1920. Não é excesso de
+        itens (a §20.2 já define quais devem estar aqui, e são estes), é excesso
+        de texto: doze rótulos escritos por extenso.
+
+        A regra aplicada: fica com texto o que ancora o fluxo (`Abrir PDF`,
+        `Exportar PDF`) e o que não tem ícone óbvio; vira ícone com dica o que é
+        universalmente reconhecível (desfazer/refazer, navegação, salvar/abrir) e
+        já tem atalho de teclado; e os três modos, que eram três botões, viram um
+        controle só que **mostra o modo atual** — informação que antes exigia
+        olhar qual dos três estava afundado.
+        """
         toolbar = self.addToolBar("Main")
         toolbar.setMovable(False)
+        toolbar.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
 
-        self.act_open_pdf = QtGui.QAction("Abrir PDF", self)
+        self.act_open_pdf = QtGui.QAction(
+            self._icon(QtWidgets.QStyle.SP_DialogOpenButton), "Abrir PDF", self
+        )
         self.act_open_pdf.setShortcut(QtGui.QKeySequence.Open)
         self.act_open_pdf.triggered.connect(self._open_pdf_dialog)
         toolbar.addAction(self.act_open_pdf)
 
-        self.act_save_pdf = QtGui.QAction("Exportar PDF", self)
+        self.act_save_pdf = QtGui.QAction(
+            self._icon(QtWidgets.QStyle.SP_DialogSaveButton), "Exportar PDF", self
+        )
         self.act_save_pdf.setShortcut(QtGui.QKeySequence("Ctrl+E"))
         self.act_save_pdf.triggered.connect(self._save_output_pdf)
         toolbar.addAction(self.act_save_pdf)
 
-        self.act_save_project = QtGui.QAction("Salvar Projeto", self)
+        self.act_save_project = QtGui.QAction(
+            self._icon(QtWidgets.QStyle.SP_DriveHDIcon), "Salvar Projeto", self
+        )
         self.act_save_project.setShortcut(QtGui.QKeySequence.Save)
+        self.act_save_project.setToolTip("Salvar projeto (Ctrl+S)")
         self.act_save_project.triggered.connect(self._save_project_dialog)
         toolbar.addAction(self.act_save_project)
 
-        self.act_load_project = QtGui.QAction("Carregar Projeto", self)
+        self.act_load_project = QtGui.QAction(
+            self._icon(QtWidgets.QStyle.SP_DirOpenIcon), "Carregar Projeto", self
+        )
         self.act_load_project.setShortcut(QtGui.QKeySequence("Ctrl+Shift+O"))
+        self.act_load_project.setToolTip("Carregar projeto (Ctrl+Shift+O)")
         self.act_load_project.triggered.connect(self._load_project_dialog)
         toolbar.addAction(self.act_load_project)
 
         toolbar.addSeparator()
 
-        self.act_undo = QtGui.QAction("Desfazer", self)
+        self.act_undo = QtGui.QAction(self._icon(QtWidgets.QStyle.SP_ArrowBack), "Desfazer", self)
         self.act_undo.setShortcut(QtGui.QKeySequence.Undo)
         self.act_undo.setToolTip("Desfaz a última alteração (Ctrl+Z)")
         self.act_undo.setEnabled(False)
         self.act_undo.triggered.connect(self._undo_change)
         toolbar.addAction(self.act_undo)
 
-        self.act_redo = QtGui.QAction("Refazer", self)
+        self.act_redo = QtGui.QAction(self._icon(QtWidgets.QStyle.SP_ArrowForward), "Refazer", self)
         self.act_redo.setShortcuts([QtGui.QKeySequence.Redo, QtGui.QKeySequence("Ctrl+Y")])
         self.act_redo.setToolTip("Refaz a alteração desfeita (Ctrl+Y)")
         self.act_redo.setEnabled(False)
@@ -862,43 +901,71 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.act_mode_read = QtGui.QAction("Leitura", self)
         self.act_mode_read.setCheckable(True)
         self.act_mode_read.triggered.connect(lambda: self._set_mode("read"))
-        toolbar.addAction(self.act_mode_read)
 
         self.act_mode_study = QtGui.QAction("Estudo", self)
         self.act_mode_study.setCheckable(True)
         self.act_mode_study.triggered.connect(lambda: self._set_mode("study"))
-        toolbar.addAction(self.act_mode_study)
 
         self.act_mode_edit = QtGui.QAction("Edição", self)
         self.act_mode_edit.setCheckable(True)
         self.act_mode_edit.triggered.connect(lambda: self._set_mode("edit"))
-        toolbar.addAction(self.act_mode_edit)
 
         self.mode_group = QtGui.QActionGroup(self)
         self.mode_group.setExclusive(True)
         for action in (self.act_mode_read, self.act_mode_study, self.act_mode_edit):
             self.mode_group.addAction(action)
 
+        # Um botão só, com o modo atual escrito nele. Os três QAction continuam
+        # existindo (checáveis, no menu `Modo` e usados pelos testes); o que muda
+        # é que a barra mostra um controle em vez de três.
+        self.mode_button = QtWidgets.QToolButton()
+        self.mode_button.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        self.mode_button.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
+        mode_menu = QtWidgets.QMenu(self.mode_button)
+        for action in (self.act_mode_read, self.act_mode_study, self.act_mode_edit):
+            mode_menu.addAction(action)
+        self.mode_button.setMenu(mode_menu)
+        self.mode_button.setText("Modo: Edição")
+        toolbar.addWidget(self.mode_button)
+
         toolbar.addSeparator()
 
-        self.act_prev = QtGui.QAction("Página -", self)
+        self.act_prev = QtGui.QAction(self._icon(QtWidgets.QStyle.SP_ArrowLeft), "Página -", self)
         self.act_prev.setShortcut(QtGui.QKeySequence.MoveToPreviousChar)
+        self.act_prev.setToolTip("Página anterior (←)")
         self.act_prev.triggered.connect(self._prev_page)
         toolbar.addAction(self.act_prev)
 
-        self.act_next = QtGui.QAction("Página +", self)
+        self.act_next = QtGui.QAction(self._icon(QtWidgets.QStyle.SP_ArrowRight), "Página +", self)
         self.act_next.setShortcut(QtGui.QKeySequence.MoveToNextChar)
+        self.act_next.setToolTip("Próxima página (→)")
         self.act_next.triggered.connect(self._next_page)
         toolbar.addAction(self.act_next)
 
-        toolbar.addWidget(QtWidgets.QLabel("  Página: "))
+        toolbar.addWidget(QtWidgets.QLabel(" Pág. "))
         toolbar.addWidget(self.page_spin)
 
-        toolbar.addWidget(QtWidgets.QLabel("  Zoom: "))
+        toolbar.addWidget(QtWidgets.QLabel(" Zoom "))
         toolbar.addWidget(self.zoom_spin)
 
         toolbar.addSeparator()
+        self.act_toggle_preview.setIcon(self._icon(QtWidgets.QStyle.SP_FileDialogContentsView))
         toolbar.addAction(self.act_toggle_preview)
+
+        # Só estes ficam com texto: são as âncoras do fluxo. O resto tem ícone
+        # reconhecível, dica e atalho — e é o que faz a barra caber na tela.
+        for action in (
+            self.act_save_project,
+            self.act_load_project,
+            self.act_undo,
+            self.act_redo,
+            self.act_prev,
+            self.act_next,
+            self.act_toggle_preview,
+        ):
+            button = toolbar.widgetForAction(action)
+            if button is not None:
+                button.setToolButtonStyle(QtCore.Qt.ToolButtonIconOnly)
 
         self.act_study_selection = QtGui.QAction("Estudar seleção", self)
         self.act_study_selection.setShortcut(QtGui.QKeySequence("Ctrl+Return"))
@@ -1032,16 +1099,19 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         if mode == "read":
             self.side_stack.setVisible(False)
             self.act_mode_read.setChecked(True)
+            self.mode_button.setText("Modo: Leitura")
             self.statusBar().showMessage("Modo leitura.")
             return
         self.side_stack.setVisible(True)
         if mode == "study":
             self.side_stack.setCurrentIndex(1)
             self.act_mode_study.setChecked(True)
+            self.mode_button.setText("Modo: Estudo")
             self.statusBar().showMessage("Modo estudo.")
             return
         self.side_stack.setCurrentIndex(0)
         self.act_mode_edit.setChecked(True)
+        self.mode_button.setText("Modo: Edição")
         self.statusBar().showMessage("Modo edição.")
 
     def _restore_splitter_state(self, splitter: QtWidgets.QSplitter, setting_key: str) -> bool:
