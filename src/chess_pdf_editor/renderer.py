@@ -72,6 +72,25 @@ def render_board_pdf(piece_placement: str, size_px: int = 1024) -> Optional[byte
     return _render_with_python_chess_pdf(piece_placement, size_px=size_px)
 
 
+def render_board_svg(piece_placement: str, size_px: int = 1024) -> str:
+    """SVG do tabuleiro, via `python-chess`.
+
+    Não passa pela Merida nem pelo CairoSVG: o `chess.svg` **gera** o SVG, e o
+    CairoSVG só serve para convertê-lo em raster. Ou seja, este é o único formato de
+    saída que não depende de nada opcional — `python-chess` é dependência base.
+
+    O desenho é o do `python-chess`, e não o da Merida que vai para o PDF. Quem
+    exporta SVG quer editar o vetor em outro programa; ali a fidelidade ao PDF
+    exportado importa menos que ter caminhos editáveis em vez de glifos de uma fonte
+    que o outro programa talvez não tenha.
+    """
+    import chess
+    import chess.svg
+
+    board = chess.Board(to_full_fen(piece_placement))
+    return chess.svg.board(board=board, size=int(size_px), coordinates=False)
+
+
 def render_board_png(piece_placement: str, size_px: int = 1024) -> bytes:
     merida_bytes = _render_with_merida_font(piece_placement, size_px=size_px)
     if merida_bytes is not None:

@@ -21,6 +21,11 @@ from typing import Optional, Sequence
 
 from PySide6 import QtCore
 
+from .diagram_export import (
+    DEFAULT_FORMAT as DEFAULT_DIAGRAM_FORMAT,
+    DEFAULT_SIZE_PX as DEFAULT_DIAGRAM_SIZE_PX,
+    export_diagrams,
+)
 from .logging_config import get_logger
 from .pdf_service import ExportCanceled, PdfService, apply_operations_to_pdf
 from .recognition import DEFAULT_ENGINE_MODE, RecognitionError, make_engine
@@ -249,3 +254,71 @@ class ExportWorker(QtCore.QThread):
             len(self._erase_operations),
         )
         self.done.emit(self._output_pdf)
+
+
+class DiagramExportWorker(QtCore.QThread):
+    """Grava um arquivo por diagrama fora da thread da UI (§39).
+
+    O contrato de thread aqui é trivial, ao contrário dos outros workers deste
+    módulo: a exportação de diagramas isolados renderiza a partir da **FEN** e não
+    abre documento nenhum, então não existe `fitz` para cruzar a fronteira. O que
+    atravessa são cópias das operações e, na volta, contagens e caminhos.
+    """
+
+    #: quantos arquivos gravados, quantas falhas, caminho do índice (ou vazio)
+    done = QtCore.Signal(int, int, str)
+    #: mensagem de erro que abortou tudo
+    failed = QtCore.Signal(str)
+    #: diagramas processados, total
+    progress = QtCore.Signal(int, int)
+    #: gravados até o pedido de parada, quantos ficaram de fora
+    canceled = QtCore.Signal(int, int)
+
+    def __init__(
+        self,
+        operations: Sequence[OverlayOperation],
+        out_dir: str,
+        fmt: str = DEFAULT_DIAGRAM_FORMAT,
+        size_px: int = DEFAULT_DIAGRAM_SIZE_PX,
+        write_index: bool = True,
+        parent: Optional[QtCore.QObject] = None,
+    ) -> None:
+        super().__init__(parent)
+        # Copia defensiva, como no `ExportWorker`: o que sai em disco tem de ser o
+        # que existia no clique, e o usuario continua editando.
+        self._operations = [replace(op) for op in operations]
+        self._out_dir = str(out_dir)
+        self._fmt = str(fmt)
+        self._size_px = int(size_px)
+        self._write_index = bool(write_index)
+        self._cancel_requested = False
+
+    def cancel(self) -> None:
+        """Pede parada. Os arquivos ja gravados **ficam** — ao contrario do PDF,
+        onde meio arquivo seria pior que nenhum (§33). Aqui sao N arquivos
+        independentes e os prontos servem por si."""
+        self._cancel_requested = True
+
+    def run(self) -> None:  # pragma: no cover - exercitado via teste de integracao
+        try:
+            result = export_diagrams(
+                self._operations,
+                self._out_dir,
+                fmt=self._fmt,
+                size_px=self._size_px,
+                write_index=self._write_index,
+                should_cancel=lambda: self._cancel_requested,
+                on_progress=self.progress.emit,
+            )
+        except Exception as exc:
+            logger.exception("Falha ao exportar diagramas para %s", self._out_dir)
+            self.failed.emit(str(exc))
+            return
+        if result.canceled:
+            self.canceled.emit(result.total_written, result.skipped)
+            return
+        self.done.emit(
+            result.total_written,
+            len(result.failed),
+            "" if result.index_path is None else str(result.index_path),
+        )

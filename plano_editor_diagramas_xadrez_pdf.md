@@ -550,6 +550,7 @@ Beta (meta):
 8. **Estilo em lote com prévia** ✅ — ver §36.
 9. **Auditoria de legalidade da posição** ✅ — ver §37.
 10. **Diagrama por clique único** ✅ — ver §38.
+11. **Diagramas isolados** ✅ — ver §39.
 
 ---
 
@@ -1074,8 +1075,9 @@ Ordenadas por (valor percebido ÷ esforço):
    Barato porque a detecção da página inteira custa ~40 ms, então roda no próprio
    clique, sem worker.
 
-6. **Exportar diagramas isolados** — PNG/SVG/PDF de cada posição substituída,
-   para reaproveitar em aulas e materiais próprios.
+6. ~~**Exportar diagramas isolados**~~ — feito no Sprint 9.11, ver §39. O SVG saiu
+   de graça: o CairoSVG opcional só serve para *rasterizar* o SVG, gerá-lo é
+   `python-chess` puro.
 
 7. **Modo "revisar pendências"** — fila só com as posições marcadas como
    incertas (depende de `confidence` funcionar, §22.4).
@@ -2690,3 +2692,98 @@ clicar no texto não cria seleção; a preferência desliga e persiste; e a gara
 
 Três mutações conferidas à mão: escolher o retângulo maior, zerar a tolerância e
 recolocar a âncora — cada uma derruba exatamente o teste que a cobre.
+
+---
+
+## 39) Sprint 9.11 — diagramas isolados (implementado em 2026-08-09)
+
+Item 6 da §22.5: "PNG/SVG/PDF de cada posição substituída, para reaproveitar em
+aulas e materiais próprios".
+
+### 39.1 Os três formatos e o que cada um custa
+
+| Formato | Caminho de render | Depende de opcional? |
+|---|---|---|
+| `png` | o mesmo do PDF exportado: Merida → CairoSVG → Pillow | não |
+| `pdf` | o mesmo do PDF exportado: Merida vetorial | não |
+| `svg` | `chess.svg`, desenho do `python-chess` | não |
+
+O `svg` foi o achado do sprint: **já estava de graça**. O CairoSVG, que é o opcional
+e exige runtime nativo no Windows, só serve para converter SVG em *raster* — gerar o
+SVG é `python-chess` puro, que é dependência base. Então o formato vetorial mais
+portátil dos três é o que não depende de nada.
+
+Em troca, o `svg` é o único cujo desenho **não** é o que vai para o PDF do livro. É
+deliberado: quem exporta SVG quer editar o vetor em outro programa, e ali ter caminhos
+editáveis vale mais que fidelidade a glifos de uma fonte que o outro programa talvez
+não tenha.
+
+### 39.2 A medição que exigiu worker
+
+Por diagrama, a 512 px: **PNG ~35 ms**, **PDF ~31 ms**, **SVG ~1 ms**.
+
+Num livro com 300 substituições isso é ~10 s de PNG na thread da UI — exatamente o
+que o Sprint 5 tirou do OCR. Então vai para `DiagramExportWorker`, com barra de
+progresso e cancelamento.
+
+O contrato de thread aqui é **trivial**, ao contrário de todos os outros workers: o
+render sai da FEN e não abre documento nenhum, então não existe `fitz` para cruzar a
+fronteira. O que atravessa são cópias das operações e, na volta, contagens.
+
+### 39.3 Cancelar aqui é o oposto de cancelar o PDF
+
+A §33 estabeleceu que interromper a exportação do PDF grava **nenhum arquivo**: meio
+PDF no lugar de um bom é pior que nada.
+
+Aqui a regra se inverte, e por um motivo concreto: são N arquivos **independentes**, e
+os que já foram gravados servem por si. Cancelar para de gravar novos e **mantém** os
+prontos — inclusive quando o cancelamento vem de fechar a janela.
+
+O que isso obriga: dizer em voz alta quantos ficaram de fora
+(`{n} gravado(s) e mantido(s); {m} não foram exportados`). Sem isso o usuário acharia
+que exportou o livro todo, que é o modo de falha que a §33 chama de silencioso.
+
+Pelo mesmo raciocínio, **falha de um diagrama não aborta os outros**: ela entra em
+`failed`, a exportação segue, e o aviso final diz quantas foram. Um livro perdido por
+causa de uma FEN estragada seria pior que 299 arquivos e um aviso.
+
+### 39.4 Nome de arquivo e índice
+
+`diagrama-pag0012-02.png`: página com **zeros à esquerda** porque o usuário vai olhar
+a pasta ordenada por nome, e `pag10` antes de `pag2` é justamente o que não se quer. O
+segundo número é a ordem **na página**, na mesma ordem de leitura da galeria (§31) —
+de cima para baixo —, então o `-01` é o diagrama de cima independentemente da ordem em
+que a operação entrou na lista. Há teste que confere isso pela FEN, e não só pelo nome.
+
+Junto vai um `indice.csv` com arquivo, página, FEN, lado a jogar, número do lance e
+origem. Uma pasta com 300 PNGs sem índice obriga a abrir um por um para achar a
+posição que se quer. Mesmo `utf-8-sig` e mesmo delimitador do relatório (§26.4) — dois
+CSVs do mesmo app com separadores diferentes seria pegadinha. O que falhou **não**
+entra no índice, senão ele apontaria para arquivo inexistente.
+
+### 39.5 Cobertura de teste
+
+`tests/test_diagram_export.py` (26).
+
+Formatos: cada um grava arquivo real, e o conteúdo é conferido pelos **bytes mágicos**
+(`\x89PNG`, `%PDF-`, `<svg`) — extensão certa com conteúdo de outro formato seria pior
+que falhar. Normalização aceita `PNG`, `.svg`, vazio e lixo.
+
+Nomes: a lista de nomes ordena igual em gerenciador de arquivos; dois diagramas na
+mesma página recebem nomes distintos; e o `-01` é o de cima mesmo com a lista fora de
+ordem.
+
+Índice: diz o que há em cada arquivo, pode ser desligado, não é criado quando não há
+nada, e cobre só o que existe.
+
+Cancelar e falhar, que são os dois pontos do sprint: cancelar **mantém** os gravados e
+conta os que ficaram de fora; cancelar antes do primeiro não grava nada; um diagrama
+quebrado não leva os outros; o progresso conta todos.
+
+Na janela: o comando fica desligado sem substituição; sem elas explica em vez de
+abrir; formato e tamanho são lembrados; cancelar o diálogo de opções não exporta nada;
+e o worker roda de ponta a ponta.
+
+As duas mutações que importam foram conferidas à mão: fazer a falha abortar tudo, e
+fazer o cancelamento apagar o que já gravou (o comportamento do PDF, errado aqui) —
+cada uma derruba exatamente o teste que a cobre.

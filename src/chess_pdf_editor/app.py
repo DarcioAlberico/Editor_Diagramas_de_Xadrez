@@ -15,6 +15,13 @@ from .autosave import (
     is_autosave_path,
     write_project_atomically,
 )
+from .diagram_export import (
+    DEFAULT_FORMAT as DEFAULT_DIAGRAM_FORMAT,
+    DEFAULT_SIZE_PX as DEFAULT_DIAGRAM_SIZE_PX,
+    FORMATS as DIAGRAM_FORMATS,
+    INDEX_NAME,
+    normalize_format as normalize_diagram_format,
+)
 from .feedback import export_training_samples
 from .gallery import KIND_CANDIDATE, GalleryDialog
 from .fen import extract_piece_placement, normalize_piece_placement, validate_piece_placement
@@ -60,7 +67,7 @@ from .theme import (
 )
 from .types import EraseOperation, OcrBoardResult, OverlayOperation, StudyPosition
 from .widgets import BeforeAfterWidget, BoardEditorWidget, SelectablePageWidget
-from .workers import BatchOcrWorker, ExportWorker
+from .workers import BatchOcrWorker, DiagramExportWorker, ExportWorker
 
 logger = get_logger("app")
 
@@ -148,6 +155,8 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self._ocr_batch: dict = {}
         self._export_worker: Optional[ExportWorker] = None
         self._export_progress: Optional[QtWidgets.QProgressDialog] = None
+        self._diagram_export_worker: Optional[DiagramExportWorker] = None
+        self._diagram_export_progress: Optional[QtWidgets.QProgressDialog] = None
 
         # Previa ao vivo: a pagina pode exibir o PDF original ou o resultado das
         # alteracoes pendentes (incluindo a substituicao ainda nao confirmada).
@@ -837,6 +846,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             or not hasattr(self, "act_save_pdf")
             # Criada mais tarde que `act_save_pdf`, junto da galeria.
             or not hasattr(self, "act_style_batch")
+            or not hasattr(self, "act_export_diagrams")
         ):
             return
 
@@ -866,6 +876,9 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.btn_clear.setEnabled(bool(self.operations or self.erase_operations))
         self.btn_style_batch.setEnabled(has_pdf and bool(self.operations))
         self.act_style_batch.setEnabled(has_pdf and bool(self.operations))
+        # Exportar diagramas não precisa do PDF aberto — renderiza da FEN — mas
+        # precisa de substituições.
+        self.act_export_diagrams.setEnabled(bool(self.operations))
         self.act_save_pdf.setEnabled(has_changes)
         self.act_recognize_selection.setEnabled(has_selection)
         self.act_recognize_page.setEnabled(has_pdf)
@@ -1084,6 +1097,12 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         )
         self.act_gallery.triggered.connect(self._open_gallery)
 
+        self.act_export_diagrams = QtGui.QAction("Exportar diagramas isolados...", self)
+        self.act_export_diagrams.setToolTip(
+            "Um arquivo PNG, SVG ou PDF por diagrama substituído, para reaproveitar fora"
+        )
+        self.act_export_diagrams.triggered.connect(self._export_diagrams_dialog)
+
         self.act_export_training = QtGui.QAction("Exportar correções para treino...", self)
         self.act_export_training.setToolTip(
             "Grava os diagramas corrigidos no formato do dataset que treina o motor local"
@@ -1113,6 +1132,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.act_save_pdf)
         file_menu.addAction(self.act_export_report)
+        file_menu.addAction(self.act_export_diagrams)
         file_menu.addAction(self.act_export_training)
         file_menu.addSeparator()
         file_menu.addAction("Sair", self.close)
@@ -1230,6 +1250,16 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             if not self._export_worker.wait(15000):
                 logger.warning("Exportação ainda em andamento no fechamento")
         self._export_worker = None
+
+        if self._diagram_export_worker is not None:
+            # Cancelar aqui mantém os arquivos já gravados (§39): são N arquivos
+            # independentes, e fechar a janela não é motivo para jogá-los fora.
+            self._diagram_export_worker.cancel()
+            if not self._diagram_export_worker.wait(15000):
+                logger.warning("Exportação de diagramas ainda em andamento no fechamento")
+                self._diagram_export_worker.terminate()
+                self._diagram_export_worker.wait(1000)
+        self._diagram_export_worker = None
 
         # Autosave final: fechar a janela nunca pode custar o trabalho da sessao.
         if self._autosave_dirty:
@@ -2795,6 +2825,167 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         with_warnings = sum(1 for row in rows if row.avisos)
         self.statusBar().showMessage(
             f"Relatório gravado: {file_path} ({len(rows)} linha(s), {with_warnings} com aviso)."
+        )
+
+    def _export_diagrams_dialog(self) -> None:
+        """Um arquivo por diagrama substituído, para reaproveitar fora (§39)."""
+        if not self.operations:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Exportar diagramas",
+                "Nenhuma substituição para exportar. Adicione ao menos uma.",
+            )
+            return
+        if self._diagram_export_worker is not None:
+            QtWidgets.QMessageBox.information(
+                self, "Exportar diagramas", "Já há uma exportação de diagramas em andamento."
+            )
+            return
+
+        fmt, size, accepted = self._ask_diagram_export_options()
+        if not accepted:
+            return
+
+        suggested = str(Path(self.current_pdf_path or ".").with_suffix("")) + "_diagramas"
+        out_dir = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Pasta para os diagramas", suggested
+        )
+        if not out_dir:
+            return
+
+        total = len(self.operations)
+        progress = QtWidgets.QProgressDialog(
+            f"Exportando {total} diagrama(s)...", "Cancelar", 0, total, self
+        )
+        progress.setWindowTitle("Exportar diagramas")
+        # Mesmo cuidado do PDF: o ciclo de vida do diálogo é nosso, senão cancelar
+        # deixaria a thread órfã.
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setValue(0)
+        progress.canceled.connect(self._cancel_diagram_export)
+        self._diagram_export_progress = progress
+
+        worker = DiagramExportWorker(
+            self.operations,
+            out_dir,
+            fmt=fmt,
+            size_px=size,
+            parent=self,
+        )
+        worker.done.connect(self._on_diagram_export_done)
+        worker.failed.connect(self._on_diagram_export_failed)
+        worker.canceled.connect(self._on_diagram_export_canceled)
+        worker.progress.connect(self._on_diagram_export_progress)
+        self._diagram_export_worker = worker
+        self.statusBar().showMessage(f"Exportando diagramas para {out_dir}...")
+        worker.start()
+
+    def _ask_diagram_export_options(self) -> tuple[str, int, bool]:
+        """Formato e tamanho, lembrados entre sessões."""
+        saved_format = normalize_diagram_format(
+            self.settings.value("diagram_export_format", DEFAULT_DIAGRAM_FORMAT, str)
+        )
+        saved_size = int(
+            self.settings.value("diagram_export_size", DEFAULT_DIAGRAM_SIZE_PX, int)
+            or DEFAULT_DIAGRAM_SIZE_PX
+        )
+
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Exportar diagramas isolados")
+        format_combo = QtWidgets.QComboBox()
+        for value in DIAGRAM_FORMATS:
+            format_combo.addItem(value.upper(), value)
+        format_combo.setCurrentIndex(max(0, format_combo.findData(saved_format)))
+        size_spin = QtWidgets.QSpinBox()
+        size_spin.setRange(64, 4096)
+        size_spin.setSingleStep(64)
+        size_spin.setSuffix(" px")
+        size_spin.setValue(max(64, saved_size))
+        hint = QtWidgets.QLabel(
+            "PNG e PDF usam o mesmo desenho do PDF exportado. SVG usa o desenho do "
+            "python-chess, para abrir como vetor editável em outro programa.\n"
+            f"Um {INDEX_NAME} acompanha os arquivos, com página e FEN de cada um."
+        )
+        hint.setWordWrap(True)
+
+        form = QtWidgets.QFormLayout()
+        form.addRow("Formato", format_combo)
+        form.addRow("Tamanho", size_spin)
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.addLayout(form)
+        layout.addWidget(hint)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
+            return (saved_format, saved_size, False)
+
+        fmt = normalize_diagram_format(str(format_combo.currentData()))
+        size = int(size_spin.value())
+        self.settings.setValue("diagram_export_format", fmt)
+        self.settings.setValue("diagram_export_size", size)
+        return (fmt, size, True)
+
+    def _cancel_diagram_export(self) -> None:
+        if self._diagram_export_worker is not None:
+            self._diagram_export_worker.cancel()
+        if self._diagram_export_progress is not None:
+            self._diagram_export_progress.setLabelText(
+                "Parando... os diagramas já gravados serão mantidos."
+            )
+
+    def _on_diagram_export_progress(self, done: int, total: int) -> None:
+        if self._diagram_export_progress is None:
+            return
+        self._diagram_export_progress.setMaximum(max(1, total))
+        self._diagram_export_progress.setValue(done)
+        self._diagram_export_progress.setLabelText(
+            f"Exportando diagramas... {done} de {total}"
+        )
+
+    def _finish_diagram_export(self) -> None:
+        if self._diagram_export_progress is not None:
+            self._diagram_export_progress.close()
+            self._diagram_export_progress = None
+        if self._diagram_export_worker is not None:
+            self._diagram_export_worker.wait()
+            self._diagram_export_worker.deleteLater()
+            self._diagram_export_worker = None
+
+    def _on_diagram_export_done(self, written: int, failures: int, index_path: str) -> None:
+        self._finish_diagram_export()
+        message = f"{written} diagrama(s) exportado(s)."
+        if failures:
+            message += f" {failures} falharam — veja o log."
+        if index_path:
+            message += f"\nÍndice: {index_path}"
+        self.statusBar().showMessage(f"{written} diagrama(s) exportado(s).")
+        QtWidgets.QMessageBox.information(self, "Exportar diagramas", message)
+
+    def _on_diagram_export_canceled(self, written: int, skipped: int) -> None:
+        self._finish_diagram_export()
+        # Ao contrário do PDF, cancelar aqui não desfaz nada: dizer quantos ficaram
+        # é o que impede o usuário de achar que exportou o livro todo.
+        self.statusBar().showMessage(
+            f"Exportação interrompida: {written} gravado(s), {skipped} de fora."
+        )
+        QtWidgets.QMessageBox.information(
+            self,
+            "Exportar diagramas",
+            f"Interrompido a seu pedido.\n{written} diagrama(s) gravado(s) e mantido(s); "
+            f"{skipped} não foram exportados.",
+        )
+
+    def _on_diagram_export_failed(self, message: str) -> None:
+        self._finish_diagram_export()
+        self.statusBar().showMessage("Falha ao exportar diagramas.")
+        QtWidgets.QMessageBox.critical(
+            self, "Exportar diagramas", f"Falha ao exportar: {message}"
         )
 
     def _export_training_samples_dialog(self) -> None:

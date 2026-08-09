@@ -275,6 +275,30 @@ altura, FEN, origem da deteccao, confianca e os avisos de validacao.
 O JSON traz ainda um resumo (contagens, confianca minima e media) e qual motor
 produziu aquele processamento.
 
+## Exportar diagramas isolados
+
+`Arquivo` > `Exportar diagramas isolados...` grava **um arquivo por substituicao**,
+para reaproveitar a posicao num slide, numa lista de exercicios ou num post.
+
+| Formato | Desenho | Quando usar |
+|---|---|---|
+| `PNG` | o mesmo do PDF exportado (Merida) | colar em slide, documento, post |
+| `PDF` | o mesmo do PDF exportado (Merida vetorial) | imprimir, incluir em LaTeX |
+| `SVG` | do `python-chess` | editar o vetor em outro programa |
+
+O `SVG` e o unico cujo desenho **nao** e o que vai para o PDF do livro. E de proposito:
+quem exporta SVG quer caminhos editaveis, e nao glifos de uma fonte que o outro
+programa talvez nao tenha.
+
+Os nomes sao `diagrama-pag0012-02.png` — pagina com zeros a esquerda (para a pasta
+ordenar certo) e a ordem na pagina, de cima para baixo. Junto vem um `indice.csv` com
+arquivo, pagina, FEN, lado a jogar e origem de cada um.
+
+A exportacao roda em segundo plano com barra de progresso (~35 ms por PNG, ~31 ms por
+PDF, ~1 ms por SVG). **Cancelar mantem os arquivos ja gravados** — ao contrario da
+exportacao do PDF, aqui sao arquivos independentes e os prontos servem por si; o aviso
+final diz quantos ficaram de fora. Um diagrama que falhe nao interrompe os outros.
+
 ## Correcoes para treino
 
 `Arquivo` > `Exportar correcoes para treino...` grava os diagramas que voce
