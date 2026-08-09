@@ -548,6 +548,7 @@ Beta (meta):
 6. **A interface cabendo na tela** ✅ — ver §34.
 7. **Comparação "cortina"** ✅ — ver §35.
 8. **Estilo em lote com prévia** ✅ — ver §36.
+9. **Auditoria de legalidade da posição** ✅ — ver §37.
 
 ---
 
@@ -1062,9 +1063,11 @@ Ordenadas por (valor percebido ÷ esforço):
 
 3. ~~**Galeria de diagramas do livro**~~ — feito no Sprint 9.3, ver §31.
 
-4. **Verificação de posição por engine** — apontar posições impossíveis ou
-   suspeitas (rei em xeque para quem não joga, material absurdo) usando
-   `python-chess`. Pega erro de OCR que passa pela validação atual.
+4. ~~**Verificação de posição por engine**~~ — feito no Sprint 9.9, ver §37. O
+   `python-chess` pega o xeque do lado errado mas **não** faz contabilidade de
+   promoções, então o "material absurdo" virou conta própria. E o xeque do lado
+   errado teve de ser suspeita, não impossibilidade: o lado a jogar vem preenchido
+   por padrão.
 
 5. **Detecção de diagrama por clique único** — clicar dentro do tabuleiro e o
    app encontra as bordas automaticamente, em vez de arrastar a seleção.
@@ -2495,3 +2498,99 @@ o que a janela propôs.
 A mutação que importa foi conferida à mão: ignorar `before_operations` no worker
 derruba o teste dos dois lados iguais — e nenhum teste da galeria, que é o
 comportamento que ela deve manter.
+
+---
+
+## 37) Sprint 9.9 — auditoria de legalidade da posição (implementado em 2026-08-09)
+
+Item 4 da §22.5: "apontar posições impossíveis ou suspeitas usando `python-chess`.
+Pega erro de OCR que passa pela validação atual."
+
+### 37.1 O degrau que faltava
+
+`fen.validate_piece_placement` confere a **escrita** da FEN — 8 fileiras, 8 casas
+por fileira, caracteres válidos — mais dois avisos: reis fora de um por cor e peão
+na 1ª/8ª fila. O que passa por isso e ainda assim não existe:
+
+- o rei de quem **não** está a jogar em xeque;
+- três damas com os oito peões em casa: cada dama extra exige uma promoção, e
+  promover exige um peão que não está mais lá.
+
+### 37.2 O `python-chess` não faz contabilidade de promoções
+
+Medido na versão 1.11.2 instalada: `Board.status()` conta peças (`TOO_MANY_*`) e
+pega xeque do lado errado (`OPPOSITE_CHECK`), mas
+`4k3/8/8/8/8/QQQ5/PPPPPPPP/4K3` é reportado como **`STATUS_VALID`**.
+
+Então a auditoria é `status()` **mais** uma conta própria: para cada cor, peça além
+do conjunto inicial só pode ter vindo de promoção, e cada promoção gasta um peão. Se
+as promoções exigidas passam dos peões que faltam, a posição não existe. É condição
+*necessária* — não prova legalidade, mas basta para acusar.
+
+Isso está fixado no teste `test_python_chess_alone_would_let_the_three_queens_pass`,
+que afirma `status() == STATUS_VALID`. Se uma versão futura passar a pegar o caso, o
+teste falha e avisa que o nosso código pode sair.
+
+### 37.3 A armadilha do lado a jogar, e o que fazer com ela
+
+Esta é a decisão que separa a ferramenta útil do gerador de falso alarme.
+
+Um diagrama de livro quase nunca diz de quem é a vez, e o app preenche `brancas`
+por padrão. Um `OPPOSITE_CHECK` calculado sobre esse preenchimento acusaria de
+impossível uma posição que só está com o lado trocado. É o mesmo cuidado que fez a
+§26.3 (`orientation.plausibility`) não usar nenhuma regra dependente do lado.
+
+A auditoria roda com **os dois lados** e compara:
+
+| O problema aparece | Conclusão | Severidade |
+|---|---|---|
+| com os dois lados | a posição é impossível | `impossivel` |
+| só com o lado indicado | o lado a jogar provavelmente está trocado | `suspeita` |
+
+E a mensagem da segunda diz o que fazer, não só que algo está errado: *"a posição
+fica legal com as pretas a jogar, então o lado a jogar provavelmente está trocado"*.
+
+Consequência que importa para a §37.4: `is_impossible` é **falso** nesse caso. Se
+fosse verdadeiro, todo diagrama com xeque cairia na fila de revisão — e um filtro
+que seleciona tudo não filtra nada.
+
+### 37.4 Onde a auditoria aparece
+
+Três lugares, e o terceiro é o ganho de escala:
+
+1. **Rótulo de avisos**, ao vivo, junto dos avisos de escrita. Os códigos que o
+   validador antigo já reporta com as suas palavras (`LEGACY_CODES`) são filtrados,
+   senão o usuário leria a mesma frase duas vezes.
+2. **Relatório** (§26.4), na coluna `avisos` existente — e não numa coluna nova,
+   porque os rótulos do CSV são estáveis para quem faz diff entre dois
+   processamentos. Os achados vêm prefixados (`impossível:` / `suspeita:`), o que dá
+   para filtrar na planilha. É assim que se audita um livro inteiro fora do app.
+3. **Fila de revisão** (§29): posição impossível entra na fila **mesmo com confiança
+   alta**. O motor pode estar seguríssimo de uma leitura que não pode existir, e essa
+   é exatamente a que ninguém deve aplicar sem olhar — era o ponto do item 4 da
+   §22.5. O rótulo do candidato ganha `⚠ impossível`, senão um candidato com
+   confiança 0,99 apareceria na fila sem nada explicando por que está ali.
+
+### 37.5 Cobertura de teste
+
+`tests/test_legality.py` (27).
+
+O que não deve fazer barulho: posição normal e **tabuleiro vazio** — que é o estado
+em que o app abre, e acusá-lo seria ruído sobre quem ainda não montou nada.
+
+O lado a jogar: xeque do lado errado é suspeita e não impossibilidade; a mesma
+posição com o lado certo é limpa; reis adjacentes são impossíveis com os dois lados,
+porque aí o problema é a posição.
+
+Promoções: três damas com tudo em casa é impossível, com peões faltando é apenas
+incomum; oficiais extras contam por cor.
+
+Integração: uma leitura impossível com confiança 0,99 entra na fila, uma legal com
+0,99 não entra, e **lado trocado sozinho não enche a fila**; o rótulo diz por que o
+candidato está ali; o aviso ao vivo não repete o que o validador antigo já disse; o
+relatório carrega os achados.
+
+As duas mutações que importam foram conferidas à mão: auditar um lado só (tratando
+tudo como impossível) derruba 4 testes, e tirar a checagem de impossibilidade da fila
+derruba o teste do candidato confiante — e nenhum teste da §29, que é o
+comportamento que a fila deve manter.

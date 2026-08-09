@@ -7,7 +7,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import local_ocr
+from . import legality, local_ocr
 from .autosave import (
     DEFAULT_INTERVAL_SEC,
     MIN_INTERVAL_SEC,
@@ -2811,6 +2811,15 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         except Exception as exc:
             self.warnings.setText(f"Erro: {exc}")
             return
+        # A auditoria de legalidade (§37) pega o que a validação da escrita deixa
+        # passar: rei em xeque do lado errado, material que exigiria promoções que
+        # não aconteceram. `LEGACY_CODES` sai porque `validate_piece_placement` já
+        # disse aquilo com as suas palavras.
+        side_to_move, _fullmove = self._current_fen_defaults()
+        warnings = list(warnings) + legality.labels(
+            legality.audit(piece_placement, side_to_move),
+            skip_codes=legality.LEGACY_CODES,
+        )
         self.warnings.setText("\n".join(warnings) if warnings else "")
 
     def _add_operation(self) -> None:

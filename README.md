@@ -130,6 +130,35 @@ Com o filtro ligado, os botoes viram `Aplicar visiveis` / `Descartar visiveis` e
 confirmacao diz quantos ficam na fila: uma acao em massa **nunca** toca no que
 esta escondido. O titulo da secao mostra `(N incertos de M)`.
 
+## Posicoes impossiveis
+
+A validacao da FEN confere a **escrita**: 8 fileiras, 8 casas por fileira,
+caracteres validos. Uma leitura de OCR pode passar por isso e ainda assim descrever
+uma posicao que **nao pode ter existido**. O app audita a legalidade e avisa:
+
+- **`impossivel:`** — a posicao nao poderia ter surgido de um jogo. Exemplos: tres
+  damas com os oito peoes em casa (cada dama extra exige uma promocao, e promover
+  gasta um peao), nove peoes, reis encostados, peao na 1ª ou 8ª fila.
+- **`suspeita:`** — possivel, mas do tipo que costuma ser erro de leitura. Exemplo:
+  tres bispos com peoes faltando — legal, mas incomum.
+
+Um caso merece explicacao: **o rei de quem nao esta a jogar em xeque**. Isso e
+impossivel, mas um diagrama de livro quase nunca diz de quem e a vez, e o app
+preenche `brancas` por padrao. Entao a auditoria testa os **dois** lados: se a
+posicao fica legal com o outro lado a jogar, o aviso e `suspeita: ... o lado a jogar
+provavelmente esta trocado` — e nao uma acusacao de impossibilidade.
+
+Onde os avisos aparecem:
+
+- no **rotulo de avisos** da aba `FEN`, ao vivo, enquanto voce edita;
+- na coluna `avisos` do **relatorio** (CSV/JSON), prefixados, para auditar um livro
+  inteiro na planilha;
+- na **fila de revisao**: uma posicao impossivel entra na fila **mesmo com confianca
+  alta**, marcada com `⚠ impossivel`. O motor pode estar seguro de uma leitura que
+  nao existe, e e justamente essa que ninguem deve aplicar sem olhar. Lado a jogar
+  trocado, por ser so suspeita, **nao** entra na fila por si — senao todo diagrama
+  com xeque cairia la e o filtro nao filtraria nada.
+
 ## Reconhecimento e exportacao em segundo plano
 
 `Detectar no PDF` e `Exportar PDF` rodam fora da thread da interface. Na pratica:

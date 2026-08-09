@@ -29,6 +29,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtWidgets
 
+from . import legality
 from .fen import extract_piece_placement, normalize_piece_placement, validate_piece_placement
 from .logging_config import get_logger
 from .pdf_service import crop_from_rendered_page
@@ -550,9 +551,21 @@ class RecognitionMixin:
         Mesma regra do motor híbrido: não saber não é o mesmo que estar confiante,
         e um candidato sem confiança é exatamente o que ninguém deveria aplicar às
         cegas.
+
+        Posição impossível entra na fila **mesmo com confiança alta** (§37): o
+        motor pode estar seguríssimo de uma leitura que não pode existir, e essa é
+        justamente a que ninguém deve aplicar sem olhar.
         """
+        if self._is_impossible_candidate(candidate):
+            return True
         confidence = getattr(candidate, "confidence", None)
         return confidence is None or float(confidence) < self._uncertainty_threshold()
+
+    @staticmethod
+    def _is_impossible_candidate(candidate: OverlayOperation) -> bool:
+        return legality.is_impossible(
+            candidate.fen, getattr(candidate, "side_to_move", "w")
+        )
 
     def _visible_candidate_indexes(self) -> list[int]:
         """Índices reais dos candidatos exibidos, na ordem em que aparecem."""
@@ -584,8 +597,15 @@ class RecognitionMixin:
         confidence = getattr(candidate, "confidence", None)
         shown = "  ?  " if confidence is None else f"{float(confidence):.2f}"
         fen = candidate.fen
+        # Sem o marcador, um candidato impossível com confiança 0,99 apareceria na
+        # fila sem nada explicando por que está ali.
+        flag = (
+            " | ⚠ impossível"
+            if legality.is_impossible(fen, getattr(candidate, "side_to_move", "w"))
+            else ""
+        )
         return (
-            f"{position:03d} | pág {candidate.page_num + 1} | conf {shown} | "
+            f"{position:03d} | pág {candidate.page_num + 1} | conf {shown}{flag} | "
             f"{fen[:24]}{'...' if len(fen) > 24 else ''}"
         )
 

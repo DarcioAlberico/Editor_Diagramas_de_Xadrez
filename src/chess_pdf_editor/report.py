@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
+from . import legality
 from .fen import validate_piece_placement
 from .logging_config import get_logger
 from .types import EraseOperation, OverlayOperation
@@ -101,11 +102,21 @@ class ReportRow:
         return data
 
 
-def _fen_warnings(piece_placement: str) -> list[str]:
+def _fen_warnings(piece_placement: str, side_to_move: str = "w") -> list[str]:
+    """Avisos da escrita da FEN e da legalidade da posição.
+
+    Os dois vão para a mesma coluna `avisos`, e não para uma coluna nova, porque os
+    rótulos do CSV são estáveis para quem faz diff entre dois relatórios. Os achados
+    de legalidade vêm prefixados (`impossível:` / `suspeita:`), o que dá para
+    filtrar na planilha.
+    """
     try:
-        return list(validate_piece_placement(piece_placement))
+        warnings = list(validate_piece_placement(piece_placement))
     except ValueError as exc:
         return [f"FEN inválida: {exc}"]
+    return warnings + legality.labels(
+        legality.audit(piece_placement, side_to_move), skip_codes=legality.LEGACY_CODES
+    )
 
 
 def _row_from_operation(op: OverlayOperation, tipo: str) -> ReportRow:
@@ -125,7 +136,7 @@ def _row_from_operation(op: OverlayOperation, tipo: str) -> ReportRow:
         numero_do_lance=int(getattr(op, "fullmove_number", 1)),
         origem=str(getattr(op, "source", "")),
         confianca=getattr(op, "confidence", None),
-        avisos=_fen_warnings(str(op.fen)),
+        avisos=_fen_warnings(str(op.fen), str(getattr(op, "side_to_move", "w"))),
     )
 
 
