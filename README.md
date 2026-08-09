@@ -496,6 +496,38 @@ parou. Em `Configuracoes` voce pode desligar o autosave ou forcar
 `Salvar agora`. A gravacao e atomica: um autosave interrompido no meio nao
 corrompe o projeto anterior.
 
+## Comparar dois processamentos
+
+Reprocessou o livro com um motor melhor e quer saber o que mudou?
+`Arquivo` > `Comparar projetos...` — ou o script:
+
+```powershell
+python scripts/project_diff.py --before .\antigo.json --after .\novo.json
+```
+
+O diff nao casa os diagramas por retangulo exato: um detector melhor devolve a mesma
+moldura alguns pontos diferente, e por chave exata **todo** diagrama reenquadrado
+apareceria como removido e readicionado. O casamento e por sobreposicao (mesma pagina,
+IoU >= 0,50), e cada par casado diz **em que** difere:
+
+| Motivo | Significa |
+|---|---|
+| `fen` | o motor leu a posicao de outra forma — e o que vale conferir |
+| `retangulo` | mesmo diagrama, moldura reenquadrada |
+| `confianca` | mesma leitura, outra certeza |
+| `estilo` | padding ou borda |
+| `lado_ou_lance` | lado a jogar ou numero do lance |
+
+Num reprocessamento a maioria vai ser `retangulo+confianca` (ruido esperado); a linha
+`das alteradas, N mudaram de FEN` e a lista de revisao de verdade.
+
+Se os dois projetos apontarem para **PDFs diferentes** (sha256 distinto), o diff avisa
+antes de mostrar numero nenhum — comparar projetos de livros diferentes nao quer dizer
+nada.
+
+`--json diff.json` grava o diff completo para outra ferramenta. Codigos de saida:
+`0` igual, `1` houve diferenca, `2` livros diferentes.
+
 ## Scripts uteis
 
 Verificar ambiente:
@@ -520,6 +552,10 @@ Gerar dataset offline (imagens + FEN) a partir de projetos salvos:
 
 ```powershell
 python scripts/collect_project_labels.py --projects .\project_state.json --images-dir .\data\images --labels .\data\labels.jsonl --square --size 512
+```
+
+```powershell
+python scripts/project_diff.py --before .\antigo.json --after .\novo.json --json .\diff.json
 ```
 
 ## Estrutura principal
@@ -547,9 +583,13 @@ src/chess_pdf_editor/
   autosave.py         # caminho e gravacao atomica do autosave
   logging_config.py   # log em arquivo com rotacao
   fen.py              # utilitarios e validacoes FEN
-  renderer.py         # render do diagrama (PDF/PNG)
+  legality.py         # auditoria de legalidade da posicao (impossivel/suspeita)
+  renderer.py         # render do diagrama (PDF/PNG/SVG)
+  diagram_export.py   # um arquivo por diagrama + indice.csv
+  style_batch.py      # experimentar estilo no livro antes de aplicar
   study.py            # arvore de lances/variantes do modo Estudo
   project_state.py    # persistencia de checkpoint
+  project_diff.py     # o que mudou entre dois projetos salvos
 models/
   piece_classifier.pt # classificador das 64 casas usado pelo motor local
 ```

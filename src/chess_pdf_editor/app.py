@@ -35,6 +35,7 @@ from .pdf_service import (
     RenderedPage,
     clear_board_render_cache,
 )
+from .project_diff import diff_files, format_diff
 from .project_state import (
     ProjectSchemaError,
     ProjectState,
@@ -123,6 +124,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self._last_ocr_result: Optional[OcrBoardResult] = None
         self.study_dialog: Optional[StudyDialog] = None
         self.gallery_dialog: Optional[GalleryDialog] = None
+        self.project_diff_dialog: Optional[QtWidgets.QDialog] = None
 
         # Undo/redo do modo edicao (Sprint 5.2). O modo Estudo tem o seu proprio,
         # dentro do StudyBoardWidget.
@@ -1097,6 +1099,12 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         )
         self.act_gallery.triggered.connect(self._open_gallery)
 
+        self.act_compare_projects = QtGui.QAction("Comparar projetos...", self)
+        self.act_compare_projects.setToolTip(
+            "Lista o que mudou entre dois projetos salvos — útil ao reprocessar um livro"
+        )
+        self.act_compare_projects.triggered.connect(self._compare_projects_dialog)
+
         self.act_export_diagrams = QtGui.QAction("Exportar diagramas isolados...", self)
         self.act_export_diagrams.setToolTip(
             "Um arquivo PNG, SVG ou PDF por diagrama substituído, para reaproveitar fora"
@@ -1129,6 +1137,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         file_menu.addAction(self.act_open_pdf)
         file_menu.addAction(self.act_load_project)
         file_menu.addAction(self.act_save_project)
+        file_menu.addAction(self.act_compare_projects)
         file_menu.addSeparator()
         file_menu.addAction(self.act_save_pdf)
         file_menu.addAction(self.act_export_report)
@@ -2826,6 +2835,78 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.statusBar().showMessage(
             f"Relatório gravado: {file_path} ({len(rows)} linha(s), {with_warnings} com aviso)."
         )
+
+    def _compare_projects_dialog(self) -> None:
+        """Diff entre dois projetos salvos (§40).
+
+        Compara arquivos, e não o estado em memória: a pergunta é "o que mudou entre
+        o processamento de ontem e o de hoje", e os dois lados dela estão em disco.
+        """
+        before_path, _f = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Projeto anterior", "", "Projeto (*.json)"
+        )
+        if not before_path:
+            return
+        after_path, _f = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Projeto novo", before_path, "Projeto (*.json)"
+        )
+        if not after_path:
+            return
+
+        try:
+            diff = diff_files(before_path, after_path)
+        except Exception as exc:
+            logger.exception("Falha ao comparar projetos")
+            QtWidgets.QMessageBox.critical(
+                self, "Comparar projetos", f"Não foi possível comparar: {exc}"
+            )
+            return
+
+        self._show_project_diff(diff, before_path, after_path)
+
+    def _show_project_diff(self, diff, before_path: str, after_path: str) -> None:
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Comparar projetos")
+        dialog.resize(900, 640)
+
+        header = QtWidgets.QLabel(
+            f"<b>antes:</b> {Path(before_path).name}<br><b>depois:</b> {Path(after_path).name}"
+        )
+        header.setWordWrap(True)
+        warning = QtWidgets.QLabel("")
+        warning.setWordWrap(True)
+        if not diff.same_source:
+            # Antes de qualquer número: comparar projetos de livros diferentes não
+            # quer dizer nada, e o usuário tem de ler isso primeiro.
+            warning.setText(
+                "⚠ Os dois projetos apontam para PDFs diferentes. O diff abaixo "
+                "provavelmente não quer dizer nada."
+            )
+            warning.setStyleSheet(f"color: {warning_text_color()};")
+
+        text = QtWidgets.QPlainTextEdit()
+        text.setReadOnly(True)
+        text.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
+        text.setPlainText(format_diff(diff))
+        font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont)
+        text.setFont(font)
+
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Close)
+        copy_button = buttons.addButton("Copiar", QtWidgets.QDialogButtonBox.ActionRole)
+        copy_button.clicked.connect(
+            lambda: QtWidgets.QApplication.clipboard().setText(text.toPlainText())
+        )
+        buttons.rejected.connect(dialog.reject)
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+        layout.addWidget(header)
+        if warning.text():
+            layout.addWidget(warning)
+        layout.addWidget(text, 1)
+        layout.addWidget(buttons)
+        self.project_diff_dialog = dialog
+        dialog.exec()
+        self.project_diff_dialog = None
 
     def _export_diagrams_dialog(self) -> None:
         """Um arquivo por diagrama substituído, para reaproveitar fora (§39)."""

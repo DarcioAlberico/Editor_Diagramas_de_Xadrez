@@ -551,6 +551,7 @@ Beta (meta):
 9. **Auditoria de legalidade da posição** ✅ — ver §37.
 10. **Diagrama por clique único** ✅ — ver §38.
 11. **Diagramas isolados** ✅ — ver §39.
+12. **Diff de projeto** ✅ — ver §40. Com ele, a §22.5 fecha.
 
 ---
 
@@ -1082,8 +1083,9 @@ Ordenadas por (valor percebido ÷ esforço):
 7. **Modo "revisar pendências"** — fila só com as posições marcadas como
    incertas (depende de `confidence` funcionar, §22.4).
 
-8. **Diff de projeto** — comparar dois `project_state.json` e listar o que mudou,
-   útil ao reprocessar um livro com um OCR melhor.
+8. ~~**Diff de projeto**~~ — feito no Sprint 9.12, ver §40. O casamento teve de ser
+   geométrico: por chave exata, todo diagrama reenquadrado sairia como removido +
+   readicionado, ou seja, o diff falharia no próprio caso de uso.
 
 ---
 
@@ -2787,3 +2789,103 @@ e o worker roda de ponta a ponta.
 As duas mutações que importam foram conferidas à mão: fazer a falha abortar tudo, e
 fazer o cancelamento apagar o que já gravou (o comportamento do PDF, errado aqui) —
 cada uma derruba exatamente o teste que a cobre.
+
+---
+
+## 40) Sprint 9.12 — diff de projeto (implementado em 2026-08-09)
+
+Item 8 da §22.5, e o último da lista: "comparar dois `project_state.json` e listar o
+que mudou, útil ao reprocessar um livro com um OCR melhor".
+
+### 40.1 O jeito óbvio de casar as listas é o jeito errado
+
+A chave natural de uma substituição é `(página, retângulo)`. Um diff por essa chave
+falha **exatamente no caso de uso**: um detector melhor devolve a mesma moldura com
+alguns pontos de diferença, então cada diagrama reenquadrado sairia como *removido* e
+*readicionado*. O relatório estaria tecnicamente correto e completamente inútil — o
+usuário abriria o diff de um livro de 300 diagramas e leria "300 removidos, 300
+adicionados".
+
+Então o casamento é geométrico: mesma página, e o par de maior sobreposição com
+**IoU ≥ 0,50**. É o critério que a fila de candidatos já usa para não duplicar
+detecção (§29), com o limiar mais folgado — lá a pergunta é "isto já está aplicado?"
+(0,90), aqui é "isto é o mesmo diagrama, ainda que reenquadrado?".
+
+O casamento é **guloso pelo maior IoU**: com dois diagramas próximos na mesma página,
+o par mais sobreposto se resolve primeiro e não sobra ambiguidade para o segundo. Há
+teste com dois diagramas trocados de ordem na lista.
+
+### 40.2 Casada a dupla, o que interessa é em quê ela difere
+
+Cada par casado produz uma lista de motivos, e a distinção que importa é entre eles:
+
+| Motivo | O que significa |
+|---|---|
+| `fen` | o motor leu a posição de outra forma — **é o que se quer conferir** |
+| `retangulo` | mesmo diagrama, moldura reenquadrada |
+| `confianca` | mesma leitura, o motor passou a ter mais (ou menos) certeza |
+| `estilo` | padding/borda |
+| `lado_ou_lance` | lado a jogar ou número do lance |
+
+`ProjectDiff.fen_changes` isola o primeiro grupo, porque num reprocessamento a
+maioria das alterações vai ser `retangulo+confianca` — ruído esperado — e as poucas
+com FEN diferente são a lista de revisão de verdade.
+
+Ruído de arredondamento não vira notícia: meio ponto de diferença no retângulo
+(`RECT_EPSILON_PT`) é o detector arredondando, não mudança.
+
+### 40.3 A checagem que vem antes de qualquer número
+
+Diff entre projetos de **livros diferentes** não quer dizer nada. Se os dois
+`source_pdf_fingerprint` têm `sha256` e eles diferem, `same_source` fica falso e tanto
+o resumo de texto quanto a janela dizem isso **antes** de mostrar contagem alguma.
+
+Ausência de `sha256` **não** é evidência: projeto antigo pode não ter, e acusar por
+ausência seria falso alarme. Só sha presente nos dois lados e diferente conta.
+
+### 40.4 Duas portas, e um bug que só aparece rodando
+
+O diff está em `Arquivo` > `Comparar projetos...` e em
+`scripts/project_diff.py --before a.json --after b.json`, com `--json` para quem quer
+o diff completo em máquina. Códigos de saída úteis em script: **0** igual, **1** houve
+diferença, **2** livros diferentes.
+
+O script quebrou na primeira execução real: `UnicodeEncodeError` no meio do relatório.
+O console do Windows abre em cp1252 e o resumo tem `→` e acentos. Os outros scripts
+deste repositório contornam isso escrevendo **só ASCII** nas mensagens — `batch_replace`
+imprime "Projeto nao encontrado", sem acento, e agora se sabe por quê.
+
+Aqui a saída ASCII não servia, porque o mesmo `format_diff` alimenta a janela do app,
+onde a tipografia certa importa. Então quem se adapta é o stream:
+`sys.stdout.reconfigure(encoding="utf-8", errors="replace")`. Fica registrado que o
+teste automatizado **não** teria pego isso: `pytest` captura a saída num stream UTF-8.
+
+### 40.5 Cobertura de teste
+
+`tests/test_project_diff.py` (28).
+
+O teste que carrega o sprint é `test_a_refined_bbox_is_the_same_diagram`: bbox
+deslocada 3 pt e crescida 1,5 pt tem de sair como **uma** alteração de motivo
+`retangulo`, e não como um par removido/adicionado.
+
+Casamento: projetos iguais não mudaram nada; diagrama que se moveu para longe é
+removido + adicionado (sem sobreposição não há como afirmar que é o mesmo, e afirmar
+seria pior); o limiar de 0,50 está preso por teste dos dois lados; dois diagramas na
+mesma página casam com os parceiros certos; página diferente nunca casa.
+
+Motivos: FEN, confiança (inclusive confiança que passou a existir), estilo e lado a
+jogar, cada um sozinho; ruído de arredondamento não é mudança; e vários motivos juntos
+saem todos.
+
+Resto do projeto: apagamentos também casam por geometria; contagens de estudo e de
+candidatos; ajustes do livro todo.
+
+Origem: livros diferentes são acusados no texto; sha ausente não acusa; mesmo livro
+não acusa.
+
+Saída: "nada mudou" quando nada mudou; as contagens aparecem; lista longa diz quantas
+ficaram de fora (recorte silencioso se lê como "foi só isso"); diff de dois arquivos
+em disco; e a janela mostra o texto e não deixa o diálogo pendurado.
+
+A mutação que importa foi conferida à mão: trocar o casamento geométrico por chave
+exata derruba 5 testes.
