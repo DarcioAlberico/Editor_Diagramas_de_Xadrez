@@ -131,6 +131,82 @@ def refine_rect(
     )
 
 
+#: Tolerância do clique que cai *fora* da moldura, como fração do lado do
+#: tabuleiro. Acertar por dentro de uma borda de 2 px seria exigir precisão de
+#: cirurgião; 8% do lado é a folga que perdoa a mão sem pegar o diagrama vizinho.
+CLICK_TOLERANCE_RATIO = 0.08
+
+
+def _rect_from_quad(quad, offset_x: float = 0.0, offset_y: float = 0.0) -> Rect:
+    return (
+        offset_x + float(quad[:, 0].min()),
+        offset_y + float(quad[:, 1].min()),
+        offset_x + float(quad[:, 0].max()),
+        offset_y + float(quad[:, 1].max()),
+    )
+
+
+def detect_board_rects(image_png: bytes, max_boards: int = 12) -> list[Rect]:
+    """Retângulos dos tabuleiros da imagem, em pixels dela.
+
+    Só o detector por contorno, como o `refine_rect`: nenhum modelo é carregado,
+    então isto funciona numa instalação com OpenCV e sem o classificador.
+
+    Medido numa página A4 a zoom 2.0 (1190×1684): **~40 ms**. É o que permite que um
+    clique dispare a detecção da página inteira sem worker e sem lag perceptível.
+    """
+    from ._vendor.board_detection import detect_boards
+
+    image_rgb = _png_to_rgb(image_png)
+    found = detect_boards(image_rgb, max_boards=max_boards, warn_on_cap=False)
+    return [_rect_from_quad(quad) for _crop, quad in found if quad is not None]
+
+
+def _point_distance_to_rect(rect: Rect, x: float, y: float) -> float:
+    x0, y0, x1, y1 = rect
+    dx = max(x0 - x, 0.0, x - x1)
+    dy = max(y0 - y, 0.0, y - y1)
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _rect_area(rect: Rect) -> float:
+    x0, y0, x1, y1 = rect
+    return max(0.0, x1 - x0) * max(0.0, y1 - y0)
+
+
+def board_rect_at(
+    image_png: bytes,
+    point_img: tuple[float, float],
+    max_boards: int = 12,
+    tolerance_ratio: float = CLICK_TOLERANCE_RATIO,
+) -> Optional[Rect]:
+    """Tabuleiro sob o ponto clicado, ou `None` se não houver nenhum ali.
+
+    Quem contém o ponto ganha; havendo mais de um (moldura dentro de moldura), ganha
+    o **menor**, que é a borda mais justa do tabuleiro. Nada contendo o ponto, aceita
+    o mais próximo dentro de `tolerance_ratio` do seu próprio lado — o clique que
+    raspou a borda por fora vale, o clique no meio do texto não.
+    """
+    x, y = (float(point_img[0]), float(point_img[1]))
+    rects = detect_board_rects(image_png, max_boards=max_boards)
+    if not rects:
+        return None
+
+    containing = [rect for rect in rects if _point_distance_to_rect(rect, x, y) == 0.0]
+    if containing:
+        return min(containing, key=_rect_area)
+
+    best: Optional[Rect] = None
+    best_distance = float("inf")
+    for rect in rects:
+        x0, y0, x1, y1 = rect
+        tolerance = max(x1 - x0, y1 - y0) * float(tolerance_ratio)
+        distance = _point_distance_to_rect(rect, x, y)
+        if distance <= tolerance and distance < best_distance:
+            best, best_distance = rect, distance
+    return best
+
+
 class LocalRecognizer:
     """Detecta e reconhece diagramas sem sair da máquina."""
 

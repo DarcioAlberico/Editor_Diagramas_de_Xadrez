@@ -549,6 +549,7 @@ Beta (meta):
 7. **Comparação "cortina"** ✅ — ver §35.
 8. **Estilo em lote com prévia** ✅ — ver §36.
 9. **Auditoria de legalidade da posição** ✅ — ver §37.
+10. **Diagrama por clique único** ✅ — ver §38.
 
 ---
 
@@ -1069,8 +1070,9 @@ Ordenadas por (valor percebido ÷ esforço):
    errado teve de ser suspeita, não impossibilidade: o lado a jogar vem preenchido
    por padrão.
 
-5. **Detecção de diagrama por clique único** — clicar dentro do tabuleiro e o
-   app encontra as bordas automaticamente, em vez de arrastar a seleção.
+5. ~~**Detecção de diagrama por clique único**~~ — feito no Sprint 9.10, ver §38.
+   Barato porque a detecção da página inteira custa ~40 ms, então roda no próprio
+   clique, sem worker.
 
 6. **Exportar diagramas isolados** — PNG/SVG/PDF de cada posição substituída,
    para reaproveitar em aulas e materiais próprios.
@@ -2594,3 +2596,97 @@ As duas mutações que importam foram conferidas à mão: auditar um lado só (t
 tudo como impossível) derruba 4 testes, e tirar a checagem de impossibilidade da fila
 derruba o teste do candidato confiante — e nenhum teste da §29, que é o
 comportamento que a fila deve manter.
+
+---
+
+## 38) Sprint 9.10 — diagrama por clique único (implementado em 2026-08-09)
+
+Item 5 da §22.5: "clicar dentro do tabuleiro e o app encontra as bordas
+automaticamente, em vez de arrastar a seleção".
+
+### 38.1 O que já existia e o que faltava
+
+O detector por contorno já achava as bordas de um tabuleiro desde o Sprint 7, e o
+`Ajustar seleção à borda` (§26.2) já o usava **partindo de uma seleção**. O que
+faltava era o começo: chegar à seleção sem desenhá-la.
+
+`local_ocr.engine` ganhou duas funções de módulo, ao lado do `refine_rect` e pela
+mesma razão que ele é função e não método — usam **só o detector**, nenhum modelo
+carregado, então funcionam numa instalação com OpenCV e sem o classificador:
+
+* `detect_board_rects(image_png)` — os retângulos dos tabuleiros da página;
+* `board_rect_at(image_png, ponto)` — o tabuleiro sob o ponto clicado.
+
+### 38.2 A medição que decidiu a arquitetura
+
+Detecção da **página inteira** a zoom 2.0 (1190×1684): **~40 ms**.
+
+Isso é o que permite o clique disparar a detecção da página toda de forma síncrona,
+sem worker. A alternativa — detectar em segundo plano — daria uma seleção que aparece
+depois do clique, que é pior que esperar 40 ms.
+
+Não foi preciso adivinhar a região a partir do ponto para economizar: a página inteira
+já é barata, e detectar tudo é mais previsível que apostar num recorte em volta do
+clique que pode cortar um tabuleiro maior.
+
+### 38.3 Três regras de escolha
+
+**Quem contém o ponto ganha.** Havendo mais de um (moldura dentro de moldura), ganha
+o **menor** — é a borda mais justa do tabuleiro.
+
+**O clique que raspou a borda vale.** Nada contendo o ponto, aceita o tabuleiro mais
+próximo dentro de **8% do próprio lado**. Exigir acerto dentro de uma moldura de 2 px
+seria exigir mão de cirurgião; 8% perdoa a mão sem alcançar o diagrama vizinho.
+
+**O clique perdido não faz nada.** Fora da tolerância, `None`, e a seleção fica como
+estava. Sem diálogo: um clique errado não deve virar modal.
+
+### 38.4 A âncora que **não** é criada
+
+Detectar a área **não** cria âncora de posição (§21.5). Isso é deliberado e tem teste
+próprio.
+
+A área foi encontrada, mas nenhuma posição pertence a ela ainda. Ancorar aqui faria a
+prévia desenhar a FEN do diagrama *anterior* sobre o que acabou de ser clicado — que é
+exatamente o susto que a §21.5 diagnosticou e removeu. Com a âncora intacta no
+diagrama antigo, o rascunho morre pelo critério de IoU e a prévia fica em branco até o
+usuário reconhecer ou montar a posição, que é o comportamento correto.
+
+Conferido por mutação: recolocar o `_anchor_from_selection()` derruba
+`test_clicking_a_second_diagram_does_not_reuse_the_first_position`.
+
+### 38.5 Por que ligado por padrão
+
+O clique que não acertava diagrama nenhum **já limpava a seleção** — a única coisa que
+acontecia era destrutiva e inútil. Trocar isso por "seleciona o tabuleiro que você
+clicou, se houver um" é estritamente melhor, então o padrão é ligado.
+
+Mesmo assim é desligável (`Clique único detecta o diagrama`, em `Avançado`), para quem
+prefere só arrastar. E ligar sem o detector instalado avisa na barra de status na hora,
+em vez de deixar o usuário descobrir no primeiro clique sem efeito.
+
+Sem OpenCV a detecção simplesmente não roda e o clique volta a fazer o que fazia.
+
+### 38.6 Cobertura de teste
+
+`tests/test_click_detect.py` (14), tudo pulando sem o detector local.
+
+As fixtures são os diagramas **reais** de `tests/data/local_ocr/`, e não um tabuleiro
+desenhado por nós — pelo mesmo motivo que o `test_local_ocr` já registrava para o
+classificador, e que aqui foi medido de novo: o renderer do app desenha as casas
+escuras **hachuradas e sem moldura**, um estilo que não existe em livro nenhum, e
+`detect_board_rects` devolve **zero** numa página cheia deles. Uma fixture do nosso
+próprio render faria o teste medir nada.
+
+O detector: os dois diagramas da página são achados nos lugares certos (12 px de
+tolerância, porque a borda detectada é a do desenho e não a caixa da imagem colada);
+página só de texto não tem tabuleiro; clique no centro de cada um acha aquele; clique
+no texto não acha nada; clique que raspou a borda acha; clique longe não é puxado para
+um diagrama distante; e, com dois retângulos contendo o ponto, o menor ganha.
+
+Na janela: clicar num diagrama seleciona as bordas dele; clicar no outro troca;
+clicar no texto não cria seleção; a preferência desliga e persiste; e a garantia da
+§21.5 pelo caminho do clique.
+
+Três mutações conferidas à mão: escolher o retângulo maior, zerar a tolerância e
+recolocar a âncora — cada uma derruba exatamente o teste que a cobre.

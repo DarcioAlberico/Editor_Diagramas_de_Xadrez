@@ -245,6 +245,20 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.whiteout_check = QtWidgets.QCheckBox("Aplicar whiteout antes do overlay")
         self.whiteout_check.setChecked(True)
         self.whiteout_check.toggled.connect(lambda checked: self._schedule_preview_refresh(immediate=True))
+
+        # Detecção por clique único (§38). Ligada por padrão: o clique que não acerta
+        # diagrama nenhum já limpava a seleção, então achar a borda ali é melhor que
+        # o que acontecia antes. Desligável para quem prefere só arrastar.
+        self.click_detects_diagram = bool(
+            self.settings.value("click_detects_diagram", True, bool)
+        )
+        self.click_detects_check = QtWidgets.QCheckBox("Clique único detecta o diagrama")
+        self.click_detects_check.setChecked(self.click_detects_diagram)
+        self.click_detects_check.setToolTip(
+            "Clicar dentro de um tabuleiro na página seleciona as bordas dele, sem "
+            "precisar arrastar. Precisa do detector local (OpenCV)."
+        )
+        self.click_detects_check.toggled.connect(self._on_click_detects_toggled)
         self.include_lichess_link_check = QtWidgets.QCheckBox("Incluir link Lichess no PDF exportado")
         self.include_lichess_link_check.setChecked(bool(self.settings.value("include_lichess_link", True, bool)))
         self.include_lichess_link_check.toggled.connect(
@@ -580,6 +594,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
 
         ocr_advanced_layout = QtWidgets.QVBoxLayout()
         ocr_advanced_layout.addWidget(self.whiteout_check)
+        ocr_advanced_layout.addWidget(self.click_detects_check)
         ocr_advanced_layout.addWidget(QtWidgets.QLabel("Motor de reconhecimento"))
         ocr_advanced_layout.addWidget(self.engine_combo)
         ocr_advanced_layout.addWidget(QtWidgets.QLabel("Modelo local (.pt)"))
@@ -2419,6 +2434,8 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                 self._load_operation_into_study(op_idx)
                 return
 
+            if self._select_board_at_point(x, y):
+                return
             self.statusBar().showMessage(
                 "Nenhum diagrama conhecido nesse clique. Selecione a área e use Reconhecer seleção ou Estudar seleção."
             )
@@ -2426,9 +2443,63 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
 
         idx = self._operation_index_at_image_point(x, y)
         if idx is None:
+            # Clique em área livre: em vez de só limpar a seleção, tenta achar o
+            # tabuleiro que está embaixo do cursor (§38).
+            self._select_board_at_point(x, y)
             return
         self._set_current_operation(idx)
         self._focus_operation(idx)
+
+    def _on_click_detects_toggled(self, checked: bool) -> None:
+        self.click_detects_diagram = bool(checked)
+        self.settings.setValue("click_detects_diagram", self.click_detects_diagram)
+        if not self.click_detects_diagram:
+            self.statusBar().showMessage(
+                "Detecção por clique desligada: selecione o diagrama arrastando."
+            )
+        elif not local_ocr.dependencies_available():
+            # Ligar sem o detector instalado não faria nada, e o usuário merece
+            # saber disso agora e não no primeiro clique sem efeito.
+            self.statusBar().showMessage(
+                f"Detecção por clique precisa do detector local: {local_ocr.unavailable_reason()}"
+            )
+
+    def _select_board_at_point(self, x: float, y: float) -> bool:
+        """Seleciona o tabuleiro sob o ponto clicado. Devolve se achou algum.
+
+        O clique que não acerta diagrama nenhum já limpava a seleção; achar a borda
+        do tabuleiro ali é estritamente melhor que isso. Silencioso de propósito
+        quando não há nada: um clique perdido não deve virar diálogo.
+        """
+        if not self.click_detects_diagram or not self.current_render:
+            return False
+        if not local_ocr.dependencies_available():
+            return False
+
+        try:
+            # ~40 ms numa página A4 a zoom 2.0 (§38.2), então roda no clique mesmo,
+            # sem worker — a alternativa seria uma seleção que aparece depois.
+            from .local_ocr.engine import board_rect_at
+
+            rect = board_rect_at(self.current_render.image_png, (x, y))
+        except Exception:
+            logger.warning("Falha ao detectar tabuleiro no clique", exc_info=True)
+            return False
+
+        if rect is None:
+            return False
+
+        # Sem âncora de propósito (§21.5): a área foi encontrada, mas nenhuma posição
+        # pertence a ela ainda. Ancorar aqui faria a prévia desenhar a FEN do
+        # diagrama anterior sobre este, que é justamente o susto que a §21.5 tirou.
+        self.page_widget.set_selection_rect(rect)
+        width = rect[2] - rect[0]
+        height = rect[3] - rect[1]
+        self.statusBar().showMessage(
+            f"Diagrama detectado no clique: {width:.0f}×{height:.0f} px. "
+            "Reconhecer seleção lê a posição."
+        )
+        return True
 
     def _on_change_selected(
         self,

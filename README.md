@@ -225,6 +225,23 @@ A confianca da deteccao e guardada junto da substituicao no projeto. No motor
 local ela e a confianca da **pior casa** do tabuleiro, nao a media — a media fica
 alta mesmo com erro, porque ~77% das casas sao vazias e triviais.
 
+## Selecionar um diagrama com um clique
+
+**Clique dentro de um tabuleiro na pagina** e a selecao pula para as bordas dele —
+sem arrastar nada. Se houver dois diagramas na pagina, clique no outro para trocar.
+
+- Clicar **fora** de qualquer tabuleiro nao faz nada (antes, um clique perdido
+  limpava a selecao). Um clique que raspou a borda por fora ainda conta.
+- A deteccao roda no proprio clique: ~40 ms para a pagina inteira em zoom 2,0.
+- Precisa das dependencias do motor local (so o **detector** — nao carrega o
+  classificador). Sem elas, o clique volta a fazer o que fazia.
+- Para desligar: `OCR` > `Avancado` > `Clique unico detecta o diagrama`.
+
+Detectar a area **nao** carrega posicao nenhuma: a selecao aparece e o editor
+continua como estava, ate voce usar `Reconhecer selecao` ou montar a posicao. E de
+proposito — herdar a FEN do diagrama anterior desenharia a posicao errada sobre o
+diagrama novo.
+
 ## Ajustar a selecao sem redesenhar
 
 O retangulo desenhado na pagina pode ser corrigido no lugar:
