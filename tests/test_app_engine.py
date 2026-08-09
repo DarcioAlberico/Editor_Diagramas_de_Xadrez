@@ -195,9 +195,21 @@ def test_the_default_engine_is_hybrid(main_window) -> None:
 
 
 def test_the_status_label_says_what_leaves_the_machine(main_window) -> None:
-    _set_mode(main_window, ENGINE_LOCAL)
-    assert "Nenhuma página sai" in main_window.engine_status_label.text()
+    """O rótulo tem duas coisas a dizer, e a ordem entre elas é regra.
 
+    Sem o motor local instalado, dizer "nenhuma página sai" seria verdade e inútil: o
+    que o usuário precisa saber é que o motor que ele acabou de escolher não existe na
+    máquina. Então a indisponibilidade vem primeiro, e é isso que a CI sem as
+    dependências opcionais exercita — pular o teste ali esconderia justamente o caso.
+    """
+    _set_mode(main_window, ENGINE_LOCAL)
+    text = main_window.engine_status_label.text()
+    if local_ocr.available():
+        assert "Nenhuma página sai" in text
+    else:
+        assert "indisponível" in text, f"nem a promessa nem o motivo: {text!r}"
+
+    # O modo remoto não depende do motor local, então a promessa vale nos dois casos.
     _set_mode(main_window, ENGINE_REMOTE)
     assert "enviadas" in main_window.engine_status_label.text()
 
