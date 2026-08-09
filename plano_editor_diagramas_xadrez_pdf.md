@@ -543,6 +543,10 @@ Beta (meta):
 1. **Modo "revisar pendências"** ✅ — ver §29.
 2. **Dividir `app.py`** ✅ — ver §30.
 3. **Galeria de diagramas do livro** ✅ — ver §31.
+4. **O que sobrava na página** (link Lichess, coordenadas) ✅ — ver §32.
+5. **Exportação interrompível** ✅ — ver §33.
+6. **A interface cabendo na tela** ✅ — ver §34.
+7. **Comparação "cortina"** ✅ — ver §35.
 
 ---
 
@@ -1046,9 +1050,9 @@ síncrona e isolada em `PdfService`, então a mudança é local.
 
 Ordenadas por (valor percebido ÷ esforço):
 
-1. **Modo comparação "cortina"** — arrastar uma linha vertical sobre a página
-   revelando original de um lado e resultado do outro. A infraestrutura já
-   existe: são dois `RenderedPage` do mesmo tamanho.
+1. ~~**Modo comparação "cortina"**~~ — feito no Sprint 9.7, ver §35. A aposta do
+   esforço baixo se confirmou: são dois `RenderedPage` do mesmo tamanho, e nenhum
+   render novo entrou.
 
 2. **Aplicar estilo por lote com pré-visualização** — hoje
    `Aplicar em todas as substituições` muda tudo às cegas; com a prévia, mostrar
@@ -2270,3 +2274,110 @@ escolhido pelo usuário, e não inferido.
 - todo botão sem rótulo tem **ícone, dica e atalho**;
 - o seletor mostra o modo atual e os três modos continuam alcançáveis;
 - o painel de Estudo cabe numa janela normal, e as abas laterais ainda encolhem.
+
+---
+
+## 35) Sprint 9.7 — comparação "cortina" (implementado em 2026-08-09)
+
+Item 1 da §22.5, o primeiro da fila por valor ÷ esforço — e a razão do esforço
+baixo estava certa: "a infraestrutura já existe, são dois `RenderedPage` do mesmo
+tamanho". Nenhum render novo entrou neste sprint.
+
+### 35.1 O que a prévia cheia não responde
+
+A prévia do Sprint 4.5 troca a página inteira de uma vez. Isso responde **"como
+vai ficar"**, que era a pergunta dela, e responde bem. O que ela não responde é
+**"o que mudou"**: os dois bitmaps nunca estão na tela ao mesmo tempo, então
+comparar é comparar de memória, alternando Ctrl+D e tentando lembrar do pixel.
+
+Diferença de padding de 2 pt, borda um fio mais grossa, coordenada do livro que
+sobrou num canto: é exatamente essa classe de erro que o Ctrl+D não pega.
+
+### 35.2 A escolha de qual bitmap é a base
+
+A cortina **não** monta uma terceira imagem. O widget continua com um pixmap base
+e ganhou um segundo, desenhado com `setClipRect` à direita da linha:
+
+| Camada | Conteúdo |
+|---|---|
+| pixmap base (`setPixmap`) | `current_render` — o PDF original |
+| pixmap da cortina | `current_preview_render` — o resultado |
+
+A base é o **original**, não o resultado, e isso é deliberado: desligar a cortina
+é jogar o segundo pixmap fora, e o que sobra já é a página original correta. A
+ordem inversa exigiria um re-render para voltar ao normal.
+
+Consequência de graça: como o "depois" é o mesmo `RenderedPage` da prévia, a
+garantia byte a byte da §21.2 (prévia == PDF exportado) vale para o lado direito
+da cortina sem nenhum teste novo.
+
+### 35.3 Três decisões de interação
+
+**A linha ganha do arrasto de seleção.** A linha cruza a página de ponta a ponta,
+e a área selecionada é justamente o diagrama — ou seja, no caso normal a linha
+passa *dentro* da seleção. Sem prioridade explícita no `mousePressEvent`, arrastar
+para comparar seria interpretado como "mover seleção", e o usuário perderia o
+enquadramento sem entender por quê. A cortina é testada nessa posição exata.
+
+**A alça segue o que está à vista.** Primeira versão ancorava alça e rótulos no
+meio e no topo do *bitmap*. Medido: a página tem 1.190 px de altura e o visor uns
+800, então os dois passavam a vida fora da tela. Agora a âncora é
+`visibleRegion()`, com a página inteira como reserva para quem renderiza um widget
+nunca exibido. A linha em si vai de ponta a ponta — pode ser agarrada em qualquer
+altura, a alça é só o convite.
+
+**O véu vermelho da seleção sai.** Ele é translúcido e cobre os *dois* lados,
+tingindo de rosa exatamente o que se está tentando comparar. Com a cortina ligada
+fica só o contorno e as alças, que é o suficiente para ajustar a seleção sem
+desligar a comparação.
+
+### 35.4 Exclusão mútua com a prévia cheia
+
+Ligar as duas ao mesmo tempo não tem leitura coerente: a prévia cheia pinta o
+resultado sobre a página toda, o que apagaria o lado "antes". Então cada toggle
+desliga o outro, nos dois sentidos, e há teste para isso.
+
+Estado persistido em `QSettings`: `compare_curtain_enabled` e
+`compare_curtain_fraction`. A segunda é o que faz trocar de página não devolver a
+linha para o meio.
+
+### 35.5 Custo
+
+Zero render novo. A cortina reaproveita `current_preview_render`, que a prévia já
+montava (119 ms na primeira montagem, §21.6); o trabalho a mais por repintura é um
+`drawPixmap` com clip. A barra de ferramentas saiu de 1.097 px para **1.130 px**
+com o botão novo — continua abaixo do teto de 1.280 da §34.4.
+
+### 35.6 Cobertura de teste
+
+`tests/test_curtain.py` (24). A cobertura de pixel está em dois níveis, porque são
+duas afirmações diferentes:
+
+- **no widget, com bitmaps sintéticos** (verde/azul, sem PDF nem seleção no
+  caminho): a composição respeita a linha; nas bordas aparece um lado só; sem
+  cortina a página é pintada inteira; e o véu da seleção some ao comparar. Verde e
+  azul, e não vermelho, porque o véu *é* vermelho — vermelho sobre vermelho não
+  moveria pixel nenhum e o teste não provaria nada;
+- **na janela**: o bitmap base é o `current_render` e o da cortina é o
+  `current_preview_render`, amostrados por coluna. Amostrar o widget *pintado*
+  aqui não serviria — o retângulo da seleção fica sobre o diagrama.
+
+Além disso: arrastar a linha não mexe na seleção (e arrastar longe dela ainda
+seleciona); a posição da linha é lembrada e reaplicada; a cortina não sobrevive a
+uma troca de página; página sem alteração não monta comparação nenhuma; os dois
+toggles se excluem; a prévia cheia continua trocando a página inteira; e uma
+janela que **abre** com a preferência ligada já compara, sem ninguém tocar no
+botão.
+
+As duas mutações que importam foram conferidas à mão: inverter o `setClipRect`
+derruba 4 testes, e remover a prioridade da linha no `mousePressEvent` derruba o
+teste do arrasto.
+
+### 35.7 Nota de medição
+
+No Qt offscreen deste ambiente `QFontDatabase.families()` devolve **zero**
+famílias: todo texto sai como caixinhas, e `horizontalAdvance` devolve a mesma
+largura para qualquer caractere. Os rótulos `antes`/`depois` foram conferidos por
+posição e por tamanho de caixa, não por forma de glifo — a inspeção visual das
+letras precisa de uma máquina com fontes. O dimensionamento da caixa não depende
+disso.

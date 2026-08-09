@@ -161,6 +161,27 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         )
         self.act_toggle_preview.setChecked(self.preview_result_enabled)
         self.act_toggle_preview.toggled.connect(self._on_toggle_preview)
+
+        # Comparacao "cortina" (Sprint 9.7). A previa cheia responde "como vai
+        # ficar"; a cortina responde "o que mudou", que e outra pergunta: com a
+        # pagina inteira trocada de uma vez, o olho nao acha a diferenca.
+        self.compare_curtain_enabled = bool(
+            self.settings.value("compare_curtain_enabled", False, bool)
+        )
+        self._curtain_active = False
+        self.curtain_fraction = self._clamp_curtain_fraction(
+            self.settings.value("compare_curtain_fraction", 0.5, float)
+        )
+        self.act_toggle_curtain = QtGui.QAction("Comparar com cortina", self)
+        self.act_toggle_curtain.setCheckable(True)
+        self.act_toggle_curtain.setShortcut(QtGui.QKeySequence("Ctrl+Shift+D"))
+        self.act_toggle_curtain.setToolTip(
+            "Arraste uma linha sobre a página: original de um lado, resultado do "
+            "outro (Ctrl+Shift+D)"
+        )
+        self.act_toggle_curtain.setChecked(self.compare_curtain_enabled)
+        self.act_toggle_curtain.toggled.connect(self._on_toggle_curtain)
+
         self._preview_timer = QtCore.QTimer(self)
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(140)
@@ -169,6 +190,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.page_widget = SelectablePageWidget()
         self.page_widget.selection_changed.connect(self._on_selection_changed)
         self.page_widget.point_clicked.connect(self._on_page_clicked)
+        self.page_widget.curtain_moved.connect(self._on_curtain_moved)
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(False)
         scroll.setWidget(self.page_widget)
@@ -260,6 +282,13 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.btn_toggle_preview.setChecked(self.preview_result_enabled)
         self.btn_toggle_preview.toggled.connect(self.act_toggle_preview.setChecked)
         self.act_toggle_preview.toggled.connect(self.btn_toggle_preview.setChecked)
+
+        self.btn_toggle_curtain = QtWidgets.QPushButton("Comparar com cortina")
+        self.btn_toggle_curtain.setCheckable(True)
+        self.btn_toggle_curtain.setToolTip(self.act_toggle_curtain.toolTip())
+        self.btn_toggle_curtain.setChecked(self.compare_curtain_enabled)
+        self.btn_toggle_curtain.toggled.connect(self.act_toggle_curtain.setChecked)
+        self.act_toggle_curtain.toggled.connect(self.btn_toggle_curtain.setChecked)
         self.merida_font_edit = QtWidgets.QLineEdit()
         self.merida_font_edit.setPlaceholderText("Caminho da fonte Merida (.ttf/.otf)")
         self.btn_select_merida = QtWidgets.QPushButton("Selecionar Fonte...")
@@ -517,6 +546,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
 
         preview_layout = QtWidgets.QVBoxLayout()
         preview_layout.addWidget(self.btn_toggle_preview)
+        preview_layout.addWidget(self.btn_toggle_curtain)
         preview_layout.addWidget(self.before_after)
         self.compare_group = self._make_collapsible_group("3 · Conferir a prévia", preview_layout, checked=True)
         self.compare_group.toggled.connect(lambda checked: self._schedule_preview_refresh(immediate=True))
@@ -781,7 +811,14 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.act_toggle_preview.setEnabled(has_pdf)
         self.btn_toggle_preview.setEnabled(has_pdf)
         self.btn_toggle_preview.setText(
-            "Voltar ao PDF original" if self._showing_preview else "Ver resultado na página"
+            "Voltar ao PDF original"
+            if (self._showing_preview and not self._curtain_active)
+            else "Ver resultado na página"
+        )
+        self.act_toggle_curtain.setEnabled(has_pdf)
+        self.btn_toggle_curtain.setEnabled(has_pdf)
+        self.btn_toggle_curtain.setText(
+            "Voltar ao PDF original" if self._curtain_active else "Comparar com cortina"
         )
         has_selection = bool(self.page_widget.selection_rect()) if has_pdf else False
         has_position = self._current_fen_has_pieces()
@@ -952,6 +989,9 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.act_toggle_preview.setIcon(self._icon(QtWidgets.QStyle.SP_FileDialogContentsView))
         toolbar.addAction(self.act_toggle_preview)
 
+        self.act_toggle_curtain.setIcon(self._icon(QtWidgets.QStyle.SP_FileDialogListView))
+        toolbar.addAction(self.act_toggle_curtain)
+
         # Só estes ficam com texto: são as âncoras do fluxo. O resto tem ícone
         # reconhecível, dica e atalho — e é o que faz a barra caber na tela.
         for action in (
@@ -962,6 +1002,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             self.act_prev,
             self.act_next,
             self.act_toggle_preview,
+            self.act_toggle_curtain,
         ):
             button = toolbar.widgetForAction(action)
             if button is not None:
@@ -1064,6 +1105,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         pdf_menu.addAction("Ajustar zoom a 200%", lambda: self.zoom_spin.setValue(2.0))
         pdf_menu.addSeparator()
         pdf_menu.addAction(self.act_toggle_preview)
+        pdf_menu.addAction(self.act_toggle_curtain)
 
         diagrams_menu = self.menuBar().addMenu("Diagramas")
         diagrams_menu.addAction(self.act_gallery)
@@ -1685,6 +1727,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.current_render = self.pdf_service.render_page(self.current_page, zoom=zoom)
         self.current_preview_render = None
         self._showing_preview = False
+        self._curtain_active = False
         self._apply_page_pixmap(self.current_render, preserve_selection=False)
         self.page_spin.blockSignals(True)
         self.page_spin.setValue(self.current_page + 1)
@@ -1697,7 +1740,12 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         if not self.pdf_service:
             self.setWindowTitle("Chess PDF Editor")
             return
-        suffix = " [prévia do resultado]" if self._showing_preview else ""
+        if self._curtain_active:
+            suffix = " [comparação: antes | depois]"
+        elif self._showing_preview:
+            suffix = " [prévia do resultado]"
+        else:
+            suffix = ""
         self.setWindowTitle(
             f"Chess PDF Editor - {Path(self.current_pdf_path or '').name} - "
             f"Página {self.current_page + 1}/{self.pdf_service.page_count}{suffix}"
@@ -1730,6 +1778,9 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.preview_result_enabled = bool(checked)
         self.settings.setValue("preview_result_enabled", self.preview_result_enabled)
         if self.preview_result_enabled:
+            # As duas são formas de olhar o mesmo resultado, e disputariam a
+            # página: a prévia cheia apagaria o lado "antes" da cortina.
+            self.act_toggle_curtain.setChecked(False)
             self.statusBar().showMessage(
                 "Prévia ligada: a página mostra como o PDF vai ficar. Ctrl+D volta ao original."
             )
@@ -1738,7 +1789,49 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             self.statusBar().showMessage("Prévia desligada: mostrando o PDF original.")
         self._schedule_preview_refresh(immediate=True)
 
+    def _on_toggle_curtain(self, checked: bool) -> None:
+        self.compare_curtain_enabled = bool(checked)
+        self.settings.setValue("compare_curtain_enabled", self.compare_curtain_enabled)
+        if self.compare_curtain_enabled:
+            self.act_toggle_preview.setChecked(False)
+            self.statusBar().showMessage(
+                "Cortina ligada: arraste a linha para comparar antes e depois. "
+                "Ctrl+Shift+D volta ao original."
+            )
+        else:
+            self._show_original_render()
+            self.statusBar().showMessage("Cortina desligada: mostrando o PDF original.")
+        self._schedule_preview_refresh(immediate=True)
+
+    @staticmethod
+    def _clamp_curtain_fraction(value: object) -> float:
+        try:
+            fraction = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 0.5
+        return min(1.0, max(0.0, fraction))
+
+    def _on_curtain_moved(self, fraction: float) -> None:
+        """Guarda onde o usuário deixou a linha: trocar de página não a reseta."""
+        self.curtain_fraction = self._clamp_curtain_fraction(fraction)
+        self.settings.setValue("compare_curtain_fraction", self.curtain_fraction)
+
+    def _apply_curtain_view(self, before: RenderedPage, after: RenderedPage) -> None:
+        """Página original como base, resultado revelado à direita da linha."""
+        self._showing_preview = True
+        self._curtain_active = True
+        self._apply_page_pixmap(before, preserve_selection=True)
+        pixmap = QtGui.QPixmap()
+        pixmap.loadFromData(after.image_png, "PNG")
+        self.page_widget.set_curtain_fraction(self.curtain_fraction)
+        self.page_widget.set_curtain_pixmap(pixmap)
+
+    def _clear_curtain(self) -> None:
+        self._curtain_active = False
+        self.page_widget.set_curtain_pixmap(None)
+
     def _show_original_render(self) -> None:
+        self._clear_curtain()
         if self.current_render is None or not self._showing_preview:
             return
         self._showing_preview = False
@@ -1869,7 +1962,9 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         want_thumbs = self.compare_group.isChecked() and compare_rect is not None
         # Pagina sem nenhuma alteracao: a previa seria identica ao original,
         # entao evita o custo de montar e renderizar o documento de previa.
-        want_page = self.preview_result_enabled and bool(operations or erasers)
+        has_changes = bool(operations or erasers)
+        want_curtain = self.compare_curtain_enabled and has_changes
+        want_page = (self.preview_result_enabled and has_changes) or want_curtain
 
         if not want_page and not want_thumbs:
             self.current_preview_render = None
@@ -1896,8 +1991,12 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                     include_lichess_link=include_link,
                     erase_coordinates=erase_coordinates,
                 )
-                self._showing_preview = True
-                self._apply_page_pixmap(self.current_preview_render, preserve_selection=True)
+                if want_curtain:
+                    self._apply_curtain_view(self.current_render, self.current_preview_render)
+                else:
+                    self._clear_curtain()
+                    self._showing_preview = True
+                    self._apply_page_pixmap(self.current_preview_render, preserve_selection=True)
             else:
                 self.current_preview_render = None
                 self._show_original_render()
@@ -1922,6 +2021,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                 )
         except Exception as exc:
             self.current_preview_render = None
+            self._clear_curtain()
             self.before_after.set_message(f"Não foi possível gerar a prévia: {exc}")
             self.statusBar().showMessage(f"Falha ao gerar prévia: {exc}")
 

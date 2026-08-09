@@ -107,6 +107,8 @@ def _set_button_piece_visual(button: QtWidgets.QPushButton, piece: str, icon_siz
 class SelectablePageWidget(QtWidgets.QLabel):
     selection_changed = QtCore.Signal(object)
     point_clicked = QtCore.Signal(object)
+    #: Nova posição da linha da cortina, em fração da largura (Sprint 9.7).
+    curtain_moved = QtCore.Signal(float)
 
     #: Alças desenhadas em volta da seleção (Sprint 6.1).
     _HANDLE_KEYS = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
@@ -115,6 +117,14 @@ class SelectablePageWidget(QtWidgets.QLabel):
     _HANDLE_HIT = 11.0
     #: Abaixo disso só as alças de canto cabem sem se sobrepor.
     _MIN_EDGE_HANDLES_PX = 34.0
+    #: Cortina de comparação (Sprint 9.7): meia-largura da alça e tolerância de
+    #: clique na linha. A tolerância é maior que o desenho pelo mesmo motivo das
+    #: alças da seleção — acertar 3 px de linha seria sorte.
+    _CURTAIN_GRIP_HALF = 7.0
+    _CURTAIN_HIT = 12.0
+    #: Abaixo desta largura os rótulos `antes`/`depois` não caberiam sem cobrir
+    #: a própria página.
+    _CURTAIN_LABELS_MIN_PX = 220.0
     _CURSORS = {
         "nw": QtCore.Qt.SizeFDiagCursor,
         "se": QtCore.Qt.SizeFDiagCursor,
@@ -152,11 +162,18 @@ class SelectablePageWidget(QtWidgets.QLabel):
         self._eraser_rects: list[QtCore.QRectF] = []
         self._study_rects: list[QtCore.QRectF] = []
         self._candidate_rects: list[QtCore.QRectF] = []
+        # Cortina: imagem do "depois", revelada à direita da linha. O pixmap base
+        # continua sendo o "antes", então cortina desligada = página original.
+        self._curtain_pixmap: Optional[QtGui.QPixmap] = None
+        self._curtain_fraction = 0.5
 
     def set_page_pixmap(self, pixmap: QtGui.QPixmap) -> None:
         self.setPixmap(pixmap)
         self.setFixedSize(pixmap.size())
         self.clear_selection()
+        # O "depois" pertence à página que estava na tela; deixá-lo sobreviver a
+        # uma troca de bitmap seria mostrar o resultado de uma página sobre outra.
+        self._curtain_pixmap = None
 
     def set_points_scale(self, px_per_pt: float) -> None:
         """Zoom em vigor, para o passo do teclado ser em pontos PDF de verdade."""
@@ -205,6 +222,48 @@ class SelectablePageWidget(QtWidgets.QLabel):
             for (x0, y0, x1, y1) in rects
         ]
         self.update()
+
+    # -- cortina de comparação (Sprint 9.7) ----------------------------
+
+    def set_curtain_pixmap(self, pixmap: Optional[QtGui.QPixmap]) -> None:
+        """Imagem do resultado. `None` desliga a cortina."""
+        self._curtain_pixmap = pixmap if pixmap is not None and not pixmap.isNull() else None
+        self.update()
+
+    def has_curtain(self) -> bool:
+        return self._curtain_pixmap is not None
+
+    def curtain_fraction(self) -> float:
+        return self._curtain_fraction
+
+    def set_curtain_fraction(self, fraction: float) -> None:
+        try:
+            value = float(fraction)
+        except (TypeError, ValueError):
+            return
+        self._curtain_fraction = min(1.0, max(0.0, value))
+        self.update()
+
+    def _page_size(self) -> tuple[float, float]:
+        pixmap = self.pixmap()
+        if pixmap is None:
+            return (float(self.width()), float(self.height()))
+        return (float(pixmap.width()), float(pixmap.height()))
+
+    def curtain_split_x(self) -> float:
+        """Onde a linha está, em pixels do widget."""
+        return self._page_size()[0] * self._curtain_fraction
+
+    def _near_curtain(self, point: QtCore.QPointF) -> bool:
+        if self._curtain_pixmap is None:
+            return False
+        return abs(point.x() - self.curtain_split_x()) <= self._CURTAIN_HIT
+
+    def _curtain_fraction_at(self, point: QtCore.QPointF) -> float:
+        width = self._page_size()[0]
+        if width <= 0:
+            return self._curtain_fraction
+        return min(1.0, max(0.0, point.x() / width))
 
     def selection_rect(self) -> Optional[tuple[float, float, float, float]]:
         if self._selection_rect is None:
@@ -289,6 +348,17 @@ class SelectablePageWidget(QtWidgets.QLabel):
         self._drag_start = p
         self._dragging = True
 
+        # A cortina vem antes da seleção: a linha cruza a página inteira, então
+        # se o clique nela caísse na seleção, arrastar para comparar viraria
+        # "mover seleção" — e o usuário perderia o enquadramento sem querer.
+        if self._near_curtain(p):
+            self._drag_mode = "curtain"
+            self._active_handle = None
+            self._rect_at_press = None
+            self.setCursor(QtCore.Qt.SplitHCursor)
+            self.update()
+            return
+
         if self._selection_rect is not None:
             handle = self._handle_at(p)
             if handle is not None:
@@ -317,6 +387,10 @@ class SelectablePageWidget(QtWidgets.QLabel):
             return super().mouseMoveEvent(event)
 
         p = self._clamp_point(event.position())
+        if self._drag_mode == "curtain":
+            self.set_curtain_fraction(self._curtain_fraction_at(p))
+            self.curtain_moved.emit(self._curtain_fraction)
+            return
         if self._drag_mode == "resize" and self._rect_at_press is not None and self._active_handle:
             self._selection_rect = self._resized_rect(self._active_handle, self._rect_at_press, p)
         elif self._drag_mode == "move" and self._rect_at_press is not None:
@@ -339,6 +413,12 @@ class SelectablePageWidget(QtWidgets.QLabel):
         self._active_handle = None
         self._rect_at_press = None
         self.unsetCursor()
+
+        if mode == "curtain":
+            # Arrastar a cortina não é seleção: nada de `selection_changed` nem
+            # de `point_clicked` no fim do arrasto.
+            self.update()
+            return
 
         if mode in ("new", "move") and self._selection_rect and self._drag_start is not None:
             p = self._clamp_point(event.position())
@@ -369,6 +449,9 @@ class SelectablePageWidget(QtWidgets.QLabel):
         self.selection_changed.emit(self.selection_rect())
 
     def _update_hover_cursor(self, position: QtCore.QPointF) -> None:
+        if self._near_curtain(position):
+            self.setCursor(QtCore.Qt.SplitHCursor)
+            return
         if self._selection_rect is None:
             self.unsetCursor()
             return
@@ -433,6 +516,9 @@ class SelectablePageWidget(QtWidgets.QLabel):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
 
+        if self._curtain_pixmap is not None:
+            self._paint_curtain(painter)
+
         if self._operation_rects:
             pen = QtGui.QPen(QtGui.QColor(20, 140, 255), 2)
             painter.setPen(pen)
@@ -466,7 +552,13 @@ class SelectablePageWidget(QtWidgets.QLabel):
             return
         pen = QtGui.QPen(QtGui.QColor(230, 40, 40), 2)
         painter.setPen(pen)
-        painter.setBrush(QtGui.QColor(255, 0, 0, 40))
+        if self._curtain_pixmap is None:
+            painter.setBrush(QtGui.QColor(255, 0, 0, 40))
+        else:
+            # Comparando, o véu vermelho cai sobre os dois lados e tinge
+            # justamente o que se está tentando comparar. O contorno e as alças
+            # ficam — dá para ajustar a seleção sem desligar a cortina.
+            painter.setBrush(QtCore.Qt.NoBrush)
         painter.drawRect(self._selection_rect)
 
         # Alças: branco com contorno escuro para aparecer sobre página clara ou
@@ -483,6 +575,75 @@ class SelectablePageWidget(QtWidgets.QLabel):
                     self._HANDLE_SIZE,
                 )
             )
+
+    def curtain_band(self) -> QtCore.QRectF:
+        """Faixa da página que está de fato à vista.
+
+        A página é bem mais alta que o visor: alça e rótulos ancorados no topo ou
+        no meio do *bitmap* passam a vida inteira fora da tela. Ancorá-los no que
+        está visível é o que os faz existir para o usuário. Fora de um visor
+        (`render()` num widget nunca exibido) a faixa é a página toda.
+        """
+        visible = self.visibleRegion().boundingRect()
+        width, height = self._page_size()
+        if visible.isEmpty():
+            return QtCore.QRectF(0.0, 0.0, width, height)
+        return QtCore.QRectF(visible)
+
+    def _paint_curtain(self, painter: QtGui.QPainter) -> None:
+        """Revela o resultado à direita da linha, sobre a página original."""
+        if self._curtain_pixmap is None:
+            return
+        width, height = self._page_size()
+        split = self.curtain_split_x()
+        band = self.curtain_band()
+
+        painter.save()
+        painter.setClipRect(QtCore.QRectF(split, 0.0, max(0.0, width - split), height))
+        painter.drawPixmap(0, 0, self._curtain_pixmap)
+        painter.restore()
+
+        # A linha em si: clara com contorno escuro, para aparecer tanto sobre o
+        # papel branco quanto sobre o diagrama. Ela vai de ponta a ponta, então o
+        # usuário pode agarrá-la na altura em que estiver olhando.
+        painter.setPen(QtGui.QPen(QtGui.QColor(30, 30, 30, 200), 1))
+        painter.setBrush(QtGui.QColor(250, 250, 250, 240))
+        painter.drawRect(QtCore.QRectF(split - 1.5, 0.0, 3.0, height))
+
+        # Alça: sem ela a linha não se anuncia como arrastável.
+        painter.drawRoundedRect(
+            QtCore.QRectF(
+                split - self._CURTAIN_GRIP_HALF,
+                band.center().y() - self._CURTAIN_GRIP_HALF * 2.0,
+                self._CURTAIN_GRIP_HALF * 2.0,
+                self._CURTAIN_GRIP_HALF * 4.0,
+            ),
+            3.0,
+            3.0,
+        )
+
+        if width >= self._CURTAIN_LABELS_MIN_PX:
+            self._paint_curtain_labels(painter, split, width, band)
+
+    def _paint_curtain_labels(
+        self, painter: QtGui.QPainter, split: float, width: float, band: QtCore.QRectF
+    ) -> None:
+        """Diz qual lado é qual: uma linha sozinha não informa a direção."""
+        metrics = QtGui.QFontMetricsF(painter.font())
+        pad = 5.0
+        top = band.top() + 8.0
+        for text, at_left in (("antes", True), ("depois", False)):
+            box_width = metrics.horizontalAdvance(text) + pad * 2.0
+            box_height = metrics.height() + pad
+            left = split - 8.0 - box_width if at_left else split + 8.0
+            if left < 0.0 or left + box_width > width:
+                continue
+            box = QtCore.QRectF(left, top, box_width, box_height)
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QColor(25, 25, 25, 175))
+            painter.drawRoundedRect(box, 4.0, 4.0)
+            painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255)))
+            painter.drawText(box, QtCore.Qt.AlignCenter, text)
 
     def _clamp_point(self, point: QtCore.QPointF) -> QtCore.QPointF:
         if self.pixmap() is None:

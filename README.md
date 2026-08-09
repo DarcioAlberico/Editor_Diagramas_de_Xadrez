@@ -322,6 +322,29 @@ nao atrapalhar a leitura do resultado, e o titulo da janela mostra `[prévia do 
 Custo medido em um livro de 1120 paginas: ~120 ms por atualizacao, o mesmo que abrir uma
 pagina normalmente.
 
+### Comparar com cortina
+
+A prévia cheia troca a pagina inteira de uma vez, e por isso ela responde "como vai
+ficar" mas nao "o que mudou": os dois bitmaps nunca estao na tela juntos.
+
+- **`Comparar com cortina` (Ctrl+Shift+D)**, na toolbar, no menu `PDF` ou na aba `OCR`:
+  uma linha vertical divide a pagina. A **esquerda** fica o PDF original, a **direita** o
+  resultado.
+- **Arraste a linha** para varrer a pagina. Ela pode ser agarrada em qualquer altura, e a
+  alca acompanha a parte da pagina que esta a vista.
+- Levada até a borda, a cortina vira um limpa-vidros: a pagina inteira de um lado so.
+
+Onde voce deixou a linha fica guardado — trocar de pagina ou fechar o app nao a devolve
+para o meio.
+
+A cortina e a prévia cheia sao **exclusivas entre si**: ligar uma desliga a outra, porque
+as duas disputariam a mesma pagina. Enquanto a cortina esta ligada, o veu vermelho da
+selecao sai (ele cairia sobre os dois lados e tingiria justamente o que se quer
+comparar); o contorno e as alcas ficam, entao a selecao ainda pode ser ajustada. O titulo
+da janela mostra `[comparação: antes | depois]`.
+
+Nao ha custo novo de render: os dois bitmaps sao os mesmos que a prévia ja produzia.
+
 ## Modo Estudo (offline)
 
 No toolbar, use `Estudo` para abrir um painel lateral com:
