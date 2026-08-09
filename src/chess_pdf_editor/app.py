@@ -59,6 +59,7 @@ from .study_workflow import StudyWorkflowMixin
 from .style_batch import StyleBatchDialog, StyleProposal, count_affected
 from .theme import (
     CONTEXT_STYLE,
+    DESTRUCTIVE_BUTTON_STYLE,
     PRIMARY_BUTTON_STYLE,
     SECONDARY_BUTTON_STYLE,
     SECTION_STYLE,
@@ -92,6 +93,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
     # referências `self._CONTEXT_STYLE` continuarem valendo sem uma passada de
     # renomeação que engordaria o diff do refactor sem mudar nada.
     _PRIMARY_BUTTON_STYLE = PRIMARY_BUTTON_STYLE
+    _DESTRUCTIVE_BUTTON_STYLE = DESTRUCTIVE_BUTTON_STYLE
     _SECONDARY_BUTTON_STYLE = SECONDARY_BUTTON_STYLE
     _CONTEXT_STYLE = CONTEXT_STYLE
     _SECTION_STYLE = SECTION_STYLE
@@ -500,6 +502,19 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.btn_remove_fen.clicked.connect(self._remove_selected_fen_operation)
         self.btn_clear = QtWidgets.QPushButton("Limpar")
         self.btn_clear.clicked.connect(self._clear_changes)
+
+        # §20.5: comando destrutivo pesa menos que ação principal. Numa lista só,
+        # para o conjunto ser auditável — antes cada um destes tinha o mesmo peso
+        # visual de `Adicionar substituição`, e nada os distinguia.
+        self.destructive_buttons = (
+            self.btn_remove,
+            self.btn_remove_fen,
+            self.btn_clear,
+            self.btn_discard_candidate,
+            self.btn_discard_all_candidates,
+        )
+        for button in self.destructive_buttons:
+            button.setStyleSheet(self._DESTRUCTIVE_BUTTON_STYLE)
         self.btn_study_selection = QtWidgets.QPushButton("Estudar seleção")
         self.btn_study_selection.clicked.connect(self._study_selection)
         self.btn_study_initial = QtWidgets.QPushButton("Partida inicial")
@@ -585,7 +600,9 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         preview_layout.addWidget(self.btn_toggle_preview)
         preview_layout.addWidget(self.btn_toggle_curtain)
         preview_layout.addWidget(self.before_after)
-        self.compare_group = self._make_collapsible_group("3 · Conferir a prévia", preview_layout, checked=True)
+        self.compare_group = self._make_collapsible_group(
+            "3 · Conferir a prévia", preview_layout, checked=True, key="preview"
+        )
         self.compare_group.toggled.connect(lambda checked: self._schedule_preview_refresh(immediate=True))
         ocr_tab_layout.addWidget(self.compare_group)
 
@@ -621,7 +638,9 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         font_layout.addWidget(self.btn_select_merida)
         font_layout.addWidget(self.btn_clear_merida)
         ocr_advanced_layout.addLayout(font_layout)
-        ocr_tab_layout.addWidget(self._make_collapsible_group("Avançado", ocr_advanced_layout, checked=False))
+        ocr_tab_layout.addWidget(self._make_collapsible_group(
+                "Avançado", ocr_advanced_layout, checked=False, key="ocr_advanced"
+            ))
 
         fens_tab = QtWidgets.QWidget()
         fens_tab_layout = QtWidgets.QVBoxLayout(fens_tab)
@@ -661,7 +680,9 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         appearance_grid.addWidget(self.apply_style_all_check, 8, 0, 1, 2)
         appearance_grid.addWidget(self.btn_style_batch, 9, 0, 1, 2)
         whiteout_tab_layout.addWidget(
-            self._make_collapsible_group("Ajustes avançados", appearance_grid, checked=False)
+            self._make_collapsible_group(
+                "Ajustes avançados", appearance_grid, checked=False, key="appearance_advanced"
+            )
         )
         whiteout_tab_layout.addStretch(1)
         # Cada aba rola: sem isso o conteudo e comprimido abaixo do minimo e o
@@ -785,14 +806,35 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         title: str,
         layout: QtWidgets.QLayout,
         checked: bool = False,
+        key: Optional[str] = None,
     ) -> QtWidgets.QGroupBox:
+        """Grupo recolhível. Com `key`, o estado sobrevive ao fechar o app.
+
+        A persistência existe por uma medição (§41.3): no visor de 1500×900 a aba
+        `OCR` pede 743 px e recebe 222, então quem quiser o fluxo básico sem rolagem
+        precisa recolher `3 · Conferir a prévia`. Sem lembrar disso, o usuário
+        refazia o mesmo clique a cada abertura — e recolher a prévia **por padrão**
+        seria esconder justamente o que o app faz de melhor.
+        """
         group = QtWidgets.QGroupBox(title)
         group.setCheckable(True)
+        if key:
+            checked = bool(self.settings.value(self._group_setting(key), checked, bool))
         group.setChecked(checked)
         group.setLayout(layout)
         group.toggled.connect(lambda visible, target_layout=layout: self._set_layout_visible(target_layout, visible))
+        if key:
+            group.toggled.connect(
+                lambda visible, setting=self._group_setting(key): self.settings.setValue(
+                    setting, bool(visible)
+                )
+            )
         self._set_layout_visible(layout, checked)
         return group
+
+    @staticmethod
+    def _group_setting(key: str) -> str:
+        return f"group_expanded/{key}"
 
     def _section_label(self, text: str) -> QtWidgets.QLabel:
         label = QtWidgets.QLabel(text)

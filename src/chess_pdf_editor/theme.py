@@ -60,6 +60,17 @@ PRIMARY_BUTTON_STYLE = (
     "QPushButton:disabled { background-color: palette(button); color: palette(mid); }"
 )
 SECONDARY_BUTTON_STYLE = ""
+# Remover/limpar/descartar têm de pesar **menos** que a ação principal (§20.5), e
+# "menos" aqui não é vermelho: vermelho chama mais atenção, não menos. É o botão
+# achatado — sem preenchimento, contorno discreto — que ganha contraste só no hover,
+# para continuar legível quando a mão chega nele. As cores saem da paleta do sistema,
+# então isto sobrevive à troca de tema.
+DESTRUCTIVE_BUTTON_STYLE = (
+    "QPushButton { background-color: transparent; color: palette(dark); "
+    "border: 1px solid palette(mid); border-radius: 4px; padding: 4px 8px; } "
+    "QPushButton:hover { color: palette(window-text); border-color: palette(dark); } "
+    "QPushButton:disabled { color: palette(mid); border-color: palette(mid); }"
+)
 CONTEXT_STYLE = (
     "QLabel { background-color: palette(alternate-base); color: palette(window-text); "
     "border: 1px solid palette(mid); border-radius: 5px; padding: 8px; }"

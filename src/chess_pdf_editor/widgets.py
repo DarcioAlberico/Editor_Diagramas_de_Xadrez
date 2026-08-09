@@ -871,10 +871,15 @@ class BoardEditorWidget(QtWidgets.QWidget):
             # O fundo do botao e sempre claro (para as pecas aparecerem), entao o
             # texto precisa de cor fixa escura: herdar do tema deixaria o "x" da
             # casa vazia branco no branco no modo escuro.
+            # As duas primeiras linhas são f-string e as duas últimas não: as chaves
+            # só se desdobram na f-string, então `}}` numa linha normal chega ao Qt
+            # como duas chaves e ele **descarta a folha inteira** em silêncio — era
+            # o que acontecia até aqui, e com ela ia embora a cor fixa do texto que
+            # o comentário acima promete.
             button.setStyleSheet(
                 f"QPushButton {{ background-color: {bg}; color: #1b1b1b; "
                 f"border: 2px solid {border}; "
-                "border-radius: 4px; font-size: 18px; font-weight: bold; }} "
+                f"border-radius: 4px; font-size: 18px; font-weight: bold; }} "
                 "QPushButton:hover { border-color: #1f6feb; }"
             )
 

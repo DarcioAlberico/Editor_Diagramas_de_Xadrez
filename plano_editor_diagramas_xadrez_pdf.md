@@ -824,18 +824,32 @@ Painel lateral: Edição
 
 ### 20.5 Critérios de aceite para a nova interface
 
-- [ ] O usuário consegue identificar a próxima ação principal em até 3 segundos.
-- [ ] Configurações avançadas não aparecem por padrão.
-- [ ] O painel lateral não exige rolagem para executar o fluxo básico em tela 1500x900.
-- [ ] O fluxo básico é possível com estes passos visíveis:
+Medidos no Sprint 9.13 — ver §41.5 para o veredito de cada um, e §41.2 para o número
+do único que não passou.
+
+- [x] O usuário consegue identificar a próxima ação principal em até 3 segundos.
+      Rótulo contextual por estado, com **um** botão em destaque de cada vez.
+- [x] Configurações avançadas não aparecem por padrão. Os dois grupos `Avançado`
+      abrem recolhidos, e agora o estado que o usuário escolher persiste (§41.3).
+- [ ] O painel lateral não exige rolagem para executar o fluxo básico em tela
+      1500x900. **Não cumprido, medido:** faltam 191 px. O painel de cima fica preso
+      no seu mínimo de 538 px e o visor das abas fica com 222 px para 745 px de
+      conteúdo. O fluxo cabe a partir de **1.100 px** de altura (1.050 com a prévia
+      recolhida). Ver §41.2, incluindo por que forçar não valeria a pena.
+- [~] O fluxo básico é possível com estes passos visíveis:
   1. abrir PDF;
   2. selecionar diagrama;
   3. reconhecer seleção;
   4. corrigir FEN/tabuleiro;
   5. adicionar substituição;
   6. exportar PDF.
-- [ ] A correção manual no tabuleiro exige menos cliques do que o combo atual.
-- [ ] Comandos destrutivos, como remover/limpar, têm menos destaque que ações principais.
+
+      Todos existem e ficam habilitados no momento certo; o passo 5 exige rolagem em
+      900 px de altura, pela mesma causa do item acima.
+- [x] A correção manual no tabuleiro exige menos cliques do que o combo atual.
+      Paleta: 2 cliques (peça + casa). Combo: 3 (abrir, escolher, casa).
+- [x] Comandos destrutivos, como remover/limpar, têm menos destaque que ações
+      principais. Feito no Sprint 9.13 — botão achatado, não vermelho (§41.4).
 
 ---
 
@@ -2889,3 +2903,125 @@ em disco; e a janela mostra o texto e não deixa o diálogo pendurado.
 
 A mutação que importa foi conferida à mão: trocar o casamento geométrico por chave
 exata derruba 5 testes.
+
+---
+
+## 41) Sprint 9.13 — auditoria do painel lateral (implementado em 2026-08-09)
+
+Os critérios de aceite da §20.5 estavam **todos** desmarcados. O Sprint 9.6 mediu a
+barra de ferramentas (§34); o painel lateral era a metade que ninguém tinha medido.
+Mesmo método: widgets reais, janela offscreen, número lido do Qt.
+
+### 41.1 Um defeito silencioso achado pelo caminho
+
+Medindo o critério "comandos destrutivos têm menos destaque", apareceu no log da CI
+uma fileira de `Could not parse stylesheet of object QPushButton` — **39 avisos** em
+cada abertura da janela.
+
+A causa, em `_refresh_palette_styles`: quatro linhas concatenadas, as duas primeiras
+`f"..."` e a terceira não. As chaves duplas só se desdobram na f-string, então o
+`}}` da terceira chegava ao Qt como duas chaves. E o Qt, diante de erro de sintaxe,
+**descarta a folha inteira em silêncio**.
+
+O que ia embora com a folha não era enfeite. O comentário imediatamente acima dela
+explica que o texto da paleta tem cor fixa escura porque *"herdar do tema deixaria o
+'x' da casa vazia branco no branco no modo escuro"* — e essa proteção **não estava em
+vigor**. O bug tinha aviso no log, comentário explicando a intenção, e nenhum teste.
+
+Uma varredura por AST em todo o `src/` (strings não-f contendo `{{` ou `}}`) achou
+**exatamente uma** ocorrência. Corrigida, os 39 avisos viraram zero.
+
+### 41.2 O critério que não dá para cumprir como está escrito
+
+*"O painel lateral não exige rolagem para executar o fluxo básico em tela 1500×900."*
+
+Medido, com o PDF aberto:
+
+| | px |
+|---|---|
+| altura útil do painel direito | 822 |
+| painel de cima (editor + FEN + avisos) — **preso no mínimo** | 538 |
+| sobra para as abas | 280 (visor de 222) |
+| conteúdo que a aba `OCR` pede | 745 |
+| onde termina `Adicionar substituição` (passo 5 de 6) | 413 |
+
+Falta **191 px**. E o painel de cima não tem o que ceder: ele está no seu próprio
+mínimo, cujo piso é o editor de tabuleiro de 424 px — que a §34.3 já tentou encolher,
+mediu e reverteu.
+
+A partir de que altura cabe, medido widget por widget:
+
+| Prévia | Fluxo básico cabe a partir de |
+|---|---|
+| expandida | **1.100 px** |
+| recolhida | **1.050 px** |
+
+Curiosidade que fecha com a §34.1: a barra de ferramentas cabe a partir de 1.100 px
+de **largura**; o fluxo do painel cabe a partir de 1.100 px de **altura**.
+
+**O que não foi feito, e por quê.** Recolher `3 · Conferir a prévia` por padrão
+liberaria 88 px — insuficiente (faltariam 103) e ao custo de esconder justamente o que
+o app faz de melhor (§21). Encolher o tabuleiro está reprovado desde a §34.3. Então o
+critério fica **não cumprido em 900**, com o número na mesa, em vez de cumprido no
+papel. Quem retomar tem duas saídas honestas: mexer na divisão do painel direito (não
+no widget, como a §34.3 já concluiu), ou aceitar 1.100 px como a altura de trabalho.
+
+### 41.3 O que foi feito: o recolhimento passou a durar
+
+Se recolher a prévia é o que faz o fluxo caber numa tela menor, refazer esse clique a
+cada abertura é uma cobrança diária. `_make_collapsible_group` ganhou uma `key`
+opcional e grava o estado em `QSettings` (`group_expanded/<key>`).
+
+Vale nos dois sentidos — quem **abre** `Avançado` também o encontra aberto na próxima
+vez —, senão a persistência só serviria para esconder coisa.
+
+### 41.4 Destrutivo é o botão achatado, não o vermelho
+
+`Remover`, `Remover posição`, `Limpar`, `Descartar` e `Descartar todos` tinham
+**folha vazia**: o mesmo peso visual de qualquer outro botão. O `_set_primary_button`
+nunca os tocou — ele só alterna primário/secundário entre as cinco ações do fluxo.
+
+A escolha do tratamento merece registro: **vermelho seria mais destaque, não menos**, e
+o critério pede menos. Então é o botão achatado — sem preenchimento, contorno
+discreto, sem negrito — que recupera contraste no `:hover`, para discreto não virar
+ilegível quando a mão chega nele. As cores saem da paleta do sistema, então sobrevive à
+troca de tema.
+
+Os cinco estão numa tupla `destructive_buttons`, para o conjunto ser auditável por
+teste em vez de espalhado pelo construtor.
+
+### 41.5 Veredito dos seis critérios
+
+| §20.5 | Veredito |
+|---|---|
+| próxima ação principal em 3 s | **cumprido** — rótulo contextual + um botão em destaque por estado |
+| avançadas não aparecem por padrão | **cumprido** — os dois grupos abrem recolhidos |
+| sem rolagem para o fluxo básico em 1500×900 | **não cumprido** — falta 191 px; cabe a partir de 1.100 (§41.2) |
+| os 6 passos do fluxo visíveis | **parcial** — todos existem e estão habilitados na hora certa; o passo 5 exige rolagem em 900 |
+| correção manual com menos cliques que o combo | **cumprido** — 2 cliques (peça + casa) contra 3 |
+| destrutivos com menos destaque | **cumprido** — a partir deste sprint (§41.4) |
+
+### 41.6 Cobertura de teste
+
+`tests/test_side_panel.py` (11), a contraparte do `test_toolbar.py`.
+
+Duas redes para o defeito da §41.1, de propósito: uma instala um *message handler* do
+Qt e exige **zero** reclamações de folha de estilo; a outra conta chaves em cada folha
+aplicada. A primeira é mais geral (pega erro que contar chaves não pega); a segunda
+diz **qual** widget, que o aviso do Qt não diz.
+
+Registro de um erro cometido aqui: a primeira versão do teste do handler usava a
+fixture `main_window`, que constrói a janela **antes** do handler ser instalado — e a
+maior parte das folhas é aplicada no `__init__`. O teste passava sem olhar nada.
+Descoberto por mutação: reintroduzir o `}}` derrubava só a contagem de chaves. Agora a
+janela é construída dentro do escopo do handler, e a mutação derruba os dois.
+
+O resto: grupos avançados recolhidos; destrutivos achatados e sem negrito; a ação
+principal em destaque no mesmo estado em que eles aparecem (o contraste é o ponto);
+destrutivos com `:hover`; a paleta com 13 botões e nenhum combo sobrando; dois cliques
+põem a peça; o fluxo cabe a partir de 1.100 px; e o recolhimento sobrevive a reabrir,
+nos dois sentidos.
+
+O teste da altura prende **1.100**, e não afirma nada sobre 900 — congelar o defeito
+seria transformá-lo em requisito. Quem acrescentar 200 px de painel acima de
+`Adicionar substituição` quebra o teste.

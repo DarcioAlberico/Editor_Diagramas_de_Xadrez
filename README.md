@@ -382,6 +382,22 @@ que se aplica em massa com `Aplicar em todas as substituicoes`.
 A escolha e salva no projeto. Projetos antigos abrem com a opcao **desligada**: o
 PDF que voce ja conferiu nao pode mudar sozinho.
 
+## O painel lateral
+
+Os grupos recolhíveis (`3 · Conferir a prévia`, `Avançado`, `Ajustes avançados`)
+**lembram** se voce os deixou abertos ou fechados — nos dois sentidos, e entre sessoes.
+
+Isso importa por uma medicao: numa janela de 1500x900, a aba `OCR` pede 745 px e recebe
+222, entao `Adicionar substituicao` (passo 5 do fluxo) fica abaixo da dobra e exige
+rolar. O fluxo inteiro cabe sem rolagem **a partir de 1100 px de altura** de janela
+(1050 com a previa recolhida). Recolher a previa nao resolve em 900 px, mas ajuda — e
+agora a escolha nao se perde ao fechar o app.
+
+Na hierarquia dos botoes: a **acao principal do momento** aparece preenchida de azul
+(um botao por vez), as acoes secundarias ficam com o botao normal, e os comandos
+**destrutivos** (`Remover`, `Limpar`, `Descartar`) sao achatados — sem preenchimento,
+contorno discreto — recuperando contraste quando o cursor chega neles.
+
 ## Prévia ao vivo do resultado
 
 Voce nao precisa exportar o PDF para saber como o diagrama vai ficar.
