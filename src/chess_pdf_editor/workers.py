@@ -198,6 +198,7 @@ class ExportWorker(QtCore.QThread):
         erase_operations: Sequence[EraseOperation] = (),
         whiteout: bool = True,
         include_lichess_link: bool = True,
+        erase_coordinates: bool = False,
         parent: Optional[QtCore.QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -209,6 +210,7 @@ class ExportWorker(QtCore.QThread):
         self._erase_operations = [replace(op) for op in erase_operations]
         self._whiteout = bool(whiteout)
         self._include_lichess_link = bool(include_lichess_link)
+        self._erase_coordinates = bool(erase_coordinates)
 
     def run(self) -> None:  # pragma: no cover - exercitado via teste de integracao
         try:
@@ -219,6 +221,7 @@ class ExportWorker(QtCore.QThread):
                 erase_operations=self._erase_operations,
                 whiteout=self._whiteout,
                 include_lichess_link=self._include_lichess_link,
+                erase_coordinates=self._erase_coordinates,
             )
         except Exception as exc:
             logger.exception("Falha ao exportar %s", self._output_pdf)

@@ -64,6 +64,8 @@ class ProjectState:
     candidates: list[OverlayOperation] = field(default_factory=list)
     current_page: int = 0
     include_lichess_link: bool = True
+    # Apagar as coordenadas (a-h/1-8) que o diagrama original deixou em volta.
+    erase_coordinates: bool = False
     ocr_full_next_page: int = 0
     schema_version: int = SCHEMA_VERSION
     app_version: str = APP_VERSION
@@ -167,6 +169,7 @@ def load_project_state_with_report(path: str) -> tuple[ProjectState, MigrationRe
         candidates=candidates,
         current_page=int(payload.get("current_page", 0)),
         include_lichess_link=bool(payload.get("include_lichess_link", True)),
+        erase_coordinates=bool(payload.get("erase_coordinates", False)),
         ocr_full_next_page=max(0, int(payload.get("ocr_full_next_page", 0))),
         # Sempre a versão corrente: `migrate_payload` já levou o conteúdo até ela,
         # e gravar o número antigo faria a próxima abertura migrar de novo.

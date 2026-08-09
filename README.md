@@ -82,7 +82,9 @@ python -m chess_pdf_editor
 8. Se necessário, abra `Aparência` > `Ajustes avançados` para ajustar `Padding whiteout` por lado e `Borda`.
    A opcao `Aplicar em todas as substituicoes` (ligada por padrao) replica a configuracao para toda a lista.
 9. Clique em `Adicionar substituição`.
-10. Para apagar coordenadas/letras residuais, selecione a area e clique em `Adicionar apagamento`.
+10. Para as coordenadas do diagrama original, prefira a opcao automatica (veja
+    [Coordenadas do diagrama original](#coordenadas-do-diagrama-original)).
+    Para qualquer outro resto, selecione a area e clique em `Adicionar apagamento`.
     Substituições e apagamentos aparecem juntos na lista `Alterações`.
 11. Repita para outros diagramas.
 12. Clique em `Exportar PDF`.
@@ -246,6 +248,40 @@ paginas de um livro nao tem diagrama nenhum; a galeria mostra so o que interessa
 As miniaturas sao renderizadas fora da thread da interface e vao aparecendo na
 grade; fechar a janela no meio cancela o trabalho. Medido num livro real: ~128 ms
 por diagrama (44 diagramas em 5,6 s).
+
+## Coordenadas do diagrama original
+
+O diagrama do livro quase sempre traz as coordenadas impressas em volta do
+tabuleiro (`a`-`h` embaixo, `1`-`8` na lateral). O whiteout cobre o tabuleiro e um
+padding pequeno; as coordenadas ficam **fora** dele e sobrevivem a substituicao,
+emoldurando o diagrama novo com as letrinhas do antigo.
+
+Em `Aparencia` > `Ajustes avancados`, **`Apagar coordenadas do diagrama original`**
+resolve isso automaticamente, junto do whiteout — e aparece na previa ao vivo,
+entao voce ve o efeito antes de exportar.
+
+A deteccao e conservadora de proposito, porque apagar texto do livro por engano e
+muito pior que deixar uma letrinha. Ela aceita duas formas: uma **fileira** de pelo
+menos 4 coordenadas soltas alinhadas, ou uma **corrida contigua e em ordem** como
+`abcdefgh` (que e como o PDF costuma guardar a linha inteira). E o que impede de
+comer o `e` de "brancas jogam **e** ganham" numa legenda logo abaixo do diagrama —
+e o que separa `cdef` de `faced`.
+
+Medido em quatro livros reais (paginas 20-60):
+
+| Livro | Diagramas com coordenadas apagadas |
+|---|---|
+| *A Matter of Endgame Technique* | 142 de 147 |
+| *1001 Sacrificios* | 0 de 43 — o livro nao imprime coordenadas |
+| *400 Quebra-cabecas* | 0 de 40 — idem |
+| *Chess Structures* | 0 de 85 — pagina escaneada, sem texto |
+
+**O limite:** num PDF escaneado as coordenadas sao pixels, e nenhuma leitura de
+texto as encontra. Ali a ferramenta continua sendo o `Padding whiteout` por lado,
+que se aplica em massa com `Aplicar em todas as substituicoes`.
+
+A escolha e salva no projeto. Projetos antigos abrem com a opcao **desligada**: o
+PDF que voce ja conferiu nao pode mudar sozinho.
 
 ## Prévia ao vivo do resultado
 

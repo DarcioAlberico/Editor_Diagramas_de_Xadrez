@@ -25,6 +25,7 @@ aqui; todo o resto é registrar o que já acontecia.
 | 3–6 | fronteiras não registradas | — |
 | 7 | estado do primeiro commit do repositório | `28a21e5` |
 | 8 | `candidates` (fila de conferência, §23) | `a82bb98` |
+| 9 | `erase_coordinates` (apagar as coordenadas do diagrama original) | — |
 
 O schema **7 foi mutado no lugar duas vezes** sem trocar de número: `9d1d832`
 acrescentou lado a jogar às posições de estudo e `9b51845` os comentários por
@@ -45,7 +46,7 @@ from .logging_config import get_logger
 logger = get_logger("migrations")
 
 #: Versão que este app grava.
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 #: Abaixo disto o número da versão não identifica o formato (ver o cabeçalho); a
 #: leitura cai na tolerância por campo de `project_state.py`.
@@ -85,10 +86,24 @@ def _v7_to_v8(payload: dict) -> str:
     return "fila de candidatos já presente"
 
 
+def _v8_to_v9(payload: dict) -> str:
+    """Schema 9 guarda a opção de apagar as coordenadas do diagrama original.
+
+    Ausente vira **desligado**, e não o padrão de fábrica de uma instalação nova:
+    um projeto de schema 8 foi exportado sem apagar coordenada nenhuma, e reabri-lo
+    não pode mudar o PDF que o usuário já conferiu.
+    """
+    if "erase_coordinates" not in payload:
+        payload["erase_coordinates"] = False
+        return "apagamento de coordenadas desligado (como era antes)"
+    return "apagamento de coordenadas já presente"
+
+
 #: Chave = versão de origem; valor = função que a leva para a versão seguinte.
 #: Cada função muta `payload` no lugar e devolve uma frase para o log/UI.
 _MIGRATIONS: dict[int, Callable[[dict], str]] = {
     7: _v7_to_v8,
+    8: _v8_to_v9,
 }
 
 

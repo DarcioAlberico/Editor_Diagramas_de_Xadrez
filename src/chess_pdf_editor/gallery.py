@@ -137,6 +137,7 @@ class GalleryWorker(QtCore.QThread):
         erase_operations: Sequence[EraseOperation] = (),
         whiteout: bool = True,
         include_lichess_link: bool = True,
+        erase_coordinates: bool = False,
         parent: Optional[QtCore.QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -148,6 +149,7 @@ class GalleryWorker(QtCore.QThread):
         self._erase_operations = [replace(op) for op in erase_operations]
         self._whiteout = bool(whiteout)
         self._include_lichess_link = bool(include_lichess_link)
+        self._erase_coordinates = bool(erase_coordinates)
         self._cancel_requested = False
 
     def cancel(self) -> None:
@@ -212,6 +214,7 @@ class GalleryWorker(QtCore.QThread):
             erase_operations=erases_by_page.get(item.page_num, []),
             whiteout=self._whiteout,
             include_lichess_link=self._include_lichess_link,
+            erase_coordinates=self._erase_coordinates,
         )
         return before, after
 
@@ -259,6 +262,7 @@ class GalleryDialog(QtWidgets.QDialog):
         erase_operations: Sequence[EraseOperation] = (),
         whiteout: bool = True,
         include_lichess_link: bool = True,
+        erase_coordinates: bool = False,
         parent: Optional[QtWidgets.QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -298,7 +302,13 @@ class GalleryDialog(QtWidgets.QDialog):
         self._populate_placeholders()
         if self._items:
             self._start_worker(
-                pdf_path, operations, candidates, erase_operations, whiteout, include_lichess_link
+                pdf_path,
+                operations,
+                candidates,
+                erase_operations,
+                whiteout,
+                include_lichess_link,
+                erase_coordinates,
             )
 
     # -- montagem ------------------------------------------------------
@@ -338,6 +348,7 @@ class GalleryDialog(QtWidgets.QDialog):
         erase_operations: Sequence[EraseOperation],
         whiteout: bool,
         include_lichess_link: bool,
+        erase_coordinates: bool,
     ) -> None:
         worker = GalleryWorker(
             pdf_path,
@@ -347,6 +358,7 @@ class GalleryDialog(QtWidgets.QDialog):
             erase_operations=erase_operations,
             whiteout=whiteout,
             include_lichess_link=include_lichess_link,
+            erase_coordinates=erase_coordinates,
             parent=self,
         )
         worker.thumbnail_ready.connect(self._on_thumbnail_ready)

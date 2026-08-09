@@ -189,12 +189,14 @@ class PdfService:
         erase_operations: Sequence[EraseOperation] = (),
         whiteout: bool = True,
         include_lichess_link: bool = True,
+        erase_coordinates: bool = False,
     ) -> fitz.Page:
         signature = (
             self.pdf_path,
             int(page_num),
             bool(whiteout),
             bool(include_lichess_link),
+            bool(erase_coordinates),
             _board_cache_scope(),
             tuple(operation_signature(op) for op in operations),
             tuple(erase_signature(op) for op in erase_operations),
@@ -219,6 +221,7 @@ class PdfService:
                 erase_operations=[replace(op, page_num=0) for op in erase_operations],
                 whiteout=whiteout,
                 include_lichess_link=include_lichess_link,
+                erase_coordinates=erase_coordinates,
             )
         except Exception:
             preview_doc.close()
@@ -236,6 +239,7 @@ class PdfService:
         erase_operations: Sequence[EraseOperation] = (),
         whiteout: bool = True,
         include_lichess_link: bool = True,
+        erase_coordinates: bool = False,
     ) -> RenderedPage:
         """Renderiza a pagina ja com as alteracoes aplicadas (WYSIWYG)."""
         page = self._preview_page(
@@ -244,6 +248,7 @@ class PdfService:
             erase_operations=erase_operations,
             whiteout=whiteout,
             include_lichess_link=include_lichess_link,
+            erase_coordinates=erase_coordinates,
         )
         return _render_page_object(page, page_num, zoom)
 
@@ -256,6 +261,7 @@ class PdfService:
         erase_operations: Sequence[EraseOperation] = (),
         whiteout: bool = True,
         include_lichess_link: bool = True,
+        erase_coordinates: bool = False,
     ) -> bytes:
         """PNG de um recorte da pagina ja com as alteracoes (lado 'depois')."""
         page = self._preview_page(
@@ -264,6 +270,7 @@ class PdfService:
             erase_operations=erase_operations,
             whiteout=whiteout,
             include_lichess_link=include_lichess_link,
+            erase_coordinates=erase_coordinates,
         )
         return _render_page_region(page, zoom, rect_pdf)
 
@@ -363,43 +370,292 @@ def _operation_lichess_url(op: OverlayOperation) -> str:
     return f"https://lichess.org/analysis/{piece_placement}{quote(' ' + fen_tail, safe='')}"
 
 
-def _insert_lichess_link_below_diagram(page: fitz.Page, rect: fitz.Rect, op: OverlayOperation) -> None:
-    link_text = "Lichess"
-    gap_pt = 2.0
-    font_size = min(12.0, max(7.0, rect.height * 0.09))
+LINK_TEXT = "Lichess"
+LINK_GAP_PT = 2.0
 
-    text_width = fitz.get_text_length(link_text, fontname="helv", fontsize=font_size)
+
+def _page_words(page: fitz.Page) -> list[tuple[fitz.Rect, str]]:
+    """Palavras da página com a caixa de cada uma.
+
+    `get_text(clip=...)` **não** serve para detectar sobreposição: o `clip` do
+    PyMuPDF devolve o texto *contido* no retângulo, então uma legenda larga
+    passando por trás de um rótulo estreito não apareceria. Aqui as caixas vêm
+    todas e quem decide a interseção é o chamador.
+    """
+    try:
+        return [
+            (fitz.Rect(word[0], word[1], word[2], word[3]), str(word[4]))
+            for word in page.get_text("words")
+        ]
+    except Exception:
+        logger.warning("Não foi possível ler as palavras da página", exc_info=True)
+        return []
+
+
+def _region_is_free(page: fitz.Page, rect: fitz.Rect) -> bool:
+    """Não há texto do livro nesta área?
+
+    A checagem roda **depois** das redações de `apply_page_operations`, então o
+    que o whiteout já apagou não conta como ocupado — e o rótulo de uma operação
+    anterior na mesma página conta, o que impede dois links se sobreporem.
+    """
+    if rect.is_empty:
+        return False
+    for box, text in _page_words(page):
+        if text.strip() and not (box & rect).is_empty:
+            return False
+    return True
+
+
+def _link_label_slots(page: fitz.Page, rect: fitz.Rect, font_size: float) -> list[float]:
+    """Linhas de base candidatas para o rótulo, da preferida para a alternativa."""
+    slots = [
+        rect.y1 + LINK_GAP_PT + font_size,  # abaixo do diagrama
+        rect.y0 - LINK_GAP_PT,              # acima
+    ]
+    return [
+        baseline
+        for baseline in slots
+        if baseline + 2.0 <= page.rect.y1 and baseline - font_size >= page.rect.y0
+    ]
+
+
+def _insert_lichess_link_below_diagram(page: fitz.Page, rect: fitz.Rect, op: OverlayOperation) -> None:
+    """Rótulo `Lichess` clicável, sem escrever por cima do livro (§22.4).
+
+    A versão anterior desenhava o rótulo logo abaixo do diagrama e pronto. Só que
+    é justamente ali que o livro costuma pôr a legenda ("Diagrama 12", "as brancas
+    jogam"): o texto azul saía sobreposto ao do autor e os dois ficavam ilegíveis —
+    num arquivo que o usuário vai ler, não num rascunho.
+
+    Agora o rótulo procura espaço livre. Se não houver nenhum, o **diagrama
+    inteiro** vira a área clicável, sem texto visível: o link continua existindo e
+    nada do livro é estragado. Perde-se a descoberta visual, que é o preço certo a
+    pagar — a alternativa é vandalizar a página.
+    """
+    font_size = min(12.0, max(7.0, rect.height * 0.09))
+    text_width = fitz.get_text_length(LINK_TEXT, fontname="helv", fontsize=font_size)
     center_x = (rect.x0 + rect.x1) / 2.0
     x0 = max(page.rect.x0 + 1.0, center_x - (text_width / 2.0) - 2.0)
     x1 = min(page.rect.x1 - 1.0, center_x + (text_width / 2.0) + 2.0)
-    if x1 <= x0:
-        return
 
-    baseline_y = rect.y1 + gap_pt + font_size
-    # Se nao houver espaco abaixo, posiciona acima para manter o link visivel.
-    if baseline_y + 2.0 > page.rect.y1:
-        baseline_y = rect.y0 - gap_pt
-    if baseline_y - font_size < page.rect.y0:
-        return
+    uri = _operation_lichess_url(op)
 
-    page.insert_text(
-        fitz.Point(x0 + 2.0, baseline_y),
-        link_text,
-        fontsize=font_size,
-        fontname="helv",
-        color=(0.0, 0.2, 1.0),
-        overlay=True,
-    )
-    link_rect = fitz.Rect(x0, baseline_y - font_size, x1, baseline_y + 2.0) & page.rect
-    if link_rect.is_empty:
+    if x1 > x0:
+        for baseline_y in _link_label_slots(page, rect, font_size):
+            label_rect = fitz.Rect(x0, baseline_y - font_size, x1, baseline_y + 2.0) & page.rect
+            if not _region_is_free(page, label_rect):
+                continue
+            page.insert_text(
+                fitz.Point(x0 + 2.0, baseline_y),
+                LINK_TEXT,
+                fontsize=font_size,
+                fontname="helv",
+                color=(0.0, 0.2, 1.0),
+                overlay=True,
+            )
+            page.insert_link({"kind": fitz.LINK_URI, "from": label_rect, "uri": uri})
+            return
+
+    fallback = fitz.Rect(rect) & page.rect
+    if fallback.is_empty:
         return
-    page.insert_link(
-        {
-            "kind": fitz.LINK_URI,
-            "from": link_rect,
-            "uri": _operation_lichess_url(op),
-        }
+    logger.info(
+        "Sem espaço livre para o rótulo Lichess na página %d; o diagrama virou o link",
+        page.number + 1 if page.number is not None else 0,
     )
+    page.insert_link({"kind": fitz.LINK_URI, "from": fallback, "uri": uri})
+
+
+# --- coordenadas residuais do diagrama original ------------------------------
+#
+# O diagrama do livro quase sempre traz as coordenadas impressas em volta do
+# tabuleiro (a-h embaixo, 1-8 na lateral). O whiteout cobre o tabuleiro e um
+# padding pequeno; as coordenadas ficam **fora** dele e sobrevivem à substituição,
+# emolduraando o diagrama novo com as letrinhas do antigo.
+#
+# Até aqui a saída era manual: selecionar cada faixa e clicar em `Adicionar
+# apagamento`, diagrama por diagrama. Num livro de 300 diagramas isso é trabalho
+# de tarde inteira, e é o tipo de coisa que se erra por cansaço.
+#
+# A detecção é deliberadamente conservadora — apagar texto do livro por engano é
+# muito pior que deixar uma letrinha:
+#
+#   1. só palavras de **um caractere** em `a-h` ou `1-8`;
+#   2. só na faixa em volta do tabuleiro, e **fora** dele;
+#   3. letras só acima/abaixo do tabuleiro, dígitos só à esquerda/direita;
+#   4. e — a regra que de fato segura o resto — só quando há **uma fileira delas**:
+#      pelo menos 4, alinhadas entre si.
+#
+# A regra 4 não é excesso de zelo. Em português, `a` e `e` são palavras inteiras, e
+# uma legenda "Diagrama 12 - brancas jogam **e** ganham" logo abaixo do diagrama cai
+# direto nas regras 1 a 3. Sozinho, esse `e` não forma fileira com ninguém; as oito
+# coordenadas de verdade formam. Sem essa regra, o apagamento comia a legenda do
+# autor — foi o que o teste mostrou na primeira versão.
+
+# Medido em livros reais: a fileira de coordenadas quase nunca sai como oito
+# palavras de um caractere. O PDF a guarda num único text run, e a extração
+# devolve `abcdefgh` inteiro — ou `abcdef` + `gh`, quando o espaçamento quebra o
+# run no meio. A primeira versão deste detector achava 10 diagramas em 147 pelo
+# motivo mais bobo possível: exigia palavras de um caractere.
+#
+# Daí as duas formas aceitas:
+#
+#   palavra de 1 caractere  → precisa de fileira (>= 4 alinhadas), porque `a` e
+#                             `e` são palavras inteiras em português;
+#   corrida de 2+           → precisa ser um trecho **contíguo e em ordem** de
+#                             `abcdefgh` / `12345678` / `87654321`.
+#
+# A segunda regra é o que separa `cdef` de `faced` — as duas só têm letras de
+# `a`-`h`, mas só a primeira é um pedaço da sequência.
+_FILE_LABELS = frozenset("abcdefgh")
+_RANK_LABELS = frozenset("12345678")
+
+_FILE_SEQUENCE = "abcdefgh"
+_RANK_SEQUENCES = ("12345678", "87654321")
+
+#: Quanto a soma das corridas precisa cobrir do lado do tabuleiro para valer.
+MIN_RUN_COVERAGE = 0.45
+
+
+def _coordinate_run_kind(token: str) -> Optional[str]:
+    """`"file"`, `"rank"` ou `None` para uma corrida de 2+ caracteres."""
+    if len(token) < 2:
+        return None
+    lowered = token.lower()
+    if lowered in _FILE_SEQUENCE:
+        return "file"
+    if any(token in sequence for sequence in _RANK_SEQUENCES):
+        return "rank"
+    return None
+
+#: Largura da faixa examinada em volta do tabuleiro, como fração do lado dele.
+COORDINATE_RING_RATIO = 0.10
+COORDINATE_RING_MIN_PT = 9.0
+COORDINATE_RING_MAX_PT = 30.0
+
+#: Quantas coordenadas alinhadas fazem uma fileira. Um diagrama traz 8; livro que
+#: imprime só as pontas traz 2, e esse caso fica de fora de propósito — o risco de
+#: falso positivo com 2 é alto demais.
+MIN_LABELS_IN_A_ROW = 4
+
+#: Quanto uma coordenada pode fugir da mediana da fileira e ainda pertencer a ela.
+_COLLINEAR_TOLERANCE_PT = 3.0
+
+#: Folga ao apagar, para não deixar meio pixel do glifo.
+_COORDINATE_PAD_PT = 0.6
+
+
+def _coordinate_ring_pt(rect: fitz.Rect) -> float:
+    side = max(rect.width, rect.height)
+    return min(COORDINATE_RING_MAX_PT, max(COORDINATE_RING_MIN_PT, side * COORDINATE_RING_RATIO))
+
+
+def _aligned_row(entries: list[tuple[fitz.Rect, float]]) -> list[fitz.Rect]:
+    """Da lista de um lado, as que formam fileira; vazio se não formarem."""
+    if len(entries) < MIN_LABELS_IN_A_ROW:
+        return []
+    positions = sorted(position for _box, position in entries)
+    median = positions[len(positions) // 2]
+    row = [box for box, position in entries if abs(position - median) <= _COLLINEAR_TOLERANCE_PT]
+    return row if len(row) >= MIN_LABELS_IN_A_ROW else []
+
+
+def _covering_runs(entries: list[fitz.Rect], span_start: float, span_end: float, horizontal: bool) -> list[fitz.Rect]:
+    """Corridas que, somadas, cobrem boa parte do lado do tabuleiro.
+
+    Uma corrida sozinha já é um sinal forte (ser um trecho contíguo de `abcdefgh`
+    não acontece por acaso), mas exigir cobertura evita adotar um `gh` perdido
+    longe do tabuleiro como se fosse a fileira inteira.
+    """
+    if not entries:
+        return []
+    side = abs(span_end - span_start)
+    if side <= 0:
+        return []
+    covered = sum(
+        (box.x1 - box.x0) if horizontal else (box.y1 - box.y0) for box in entries
+    )
+    return entries if covered >= side * MIN_RUN_COVERAGE else []
+
+
+def find_coordinate_labels(page: fitz.Page, rect_pdf: Rect) -> list[fitz.Rect]:
+    """Caixas das coordenadas do diagrama original em volta de `rect_pdf`."""
+    board = fitz.Rect(rect_pdf)
+    if board.is_empty:
+        return []
+    ring = _coordinate_ring_pt(board)
+    outer = fitz.Rect(board.x0 - ring, board.y0 - ring, board.x1 + ring, board.y1 + ring)
+    # Folga no alinhamento: a coordenada da coluna `a` fica centralizada na casa,
+    # e não exatamente na borda do tabuleiro.
+    slack = ring
+
+    # Cada lado é avaliado separadamente: uma fileira de letras embaixo não
+    # legitima um dígito solto na lateral.
+    singles: dict[str, list[tuple[fitz.Rect, float]]] = {
+        "above": [], "below": [], "left": [], "right": [],
+    }
+    runs: dict[str, list[fitz.Rect]] = {"above": [], "below": [], "left": [], "right": []}
+
+    for box, text in _page_words(page):
+        token = text.strip()
+        if not token:
+            continue
+        if (box & outer).is_empty:
+            continue
+
+        run_kind = _coordinate_run_kind(token)
+        is_file = run_kind == "file" or (len(token) == 1 and token.lower() in _FILE_LABELS)
+        is_rank = run_kind == "rank" or (len(token) == 1 and token in _RANK_LABELS)
+        if not (is_file or is_rank):
+            continue
+
+        center_x = (box.x0 + box.x1) / 2.0
+        center_y = (box.y0 + box.y1) / 2.0
+        # "Fora do tabuleiro" é medido pelo **centro**, não por interseção zero: a
+        # fileira de coordenadas encosta na borda, e a caixa da palavra invade o
+        # retângulo detectado por 1 ou 2 pt. Exigir interseção vazia descartava
+        # justamente as fileiras coladas — o caso mais comum.
+        if board.x0 < center_x < board.x1 and board.y0 < center_y < board.y1:
+            continue
+        side: Optional[str] = None
+        if is_file and board.x0 - slack <= center_x <= board.x1 + slack:
+            side = "below" if center_y > board.y1 else ("above" if center_y < board.y0 else None)
+        elif is_rank and board.y0 - slack <= center_y <= board.y1 + slack:
+            side = "right" if center_x > board.x1 else ("left" if center_x < board.x0 else None)
+        if side is None:
+            continue
+
+        if run_kind is not None:
+            runs[side].append(box)
+        else:
+            # A posição guardada é a do eixo em que a fileira se alinha.
+            singles[side].append((box, center_y if side in ("above", "below") else center_x))
+
+    found: list[fitz.Rect] = []
+    for entries in singles.values():
+        found.extend(_aligned_row(entries))
+    for side, entries in runs.items():
+        horizontal = side in ("above", "below")
+        found.extend(
+            _covering_runs(
+                entries,
+                board.x0 if horizontal else board.y0,
+                board.x1 if horizontal else board.y1,
+                horizontal,
+            )
+        )
+
+    return [
+        fitz.Rect(
+            box.x0 - _COORDINATE_PAD_PT,
+            box.y0 - _COORDINATE_PAD_PT,
+            box.x1 + _COORDINATE_PAD_PT,
+            box.y1 + _COORDINATE_PAD_PT,
+        )
+        & page.rect
+        for box in found
+    ]
 
 
 def _whiteout_rect(page: fitz.Page, op: OverlayOperation, fallback_margin_pt: float) -> fitz.Rect:
@@ -424,11 +680,16 @@ def apply_page_operations(
     whiteout: bool = True,
     whiteout_margin_pt: float = 0.5,
     include_lichess_link: bool = True,
+    erase_coordinates: bool = False,
 ) -> None:
     """Aplica apagamentos e substituicoes em UMA pagina ja aberta.
 
     Ponto unico de verdade compartilhado pela exportacao e pela previa: o que a
     previa mostra e exatamente o que o PDF exportado contem.
+
+    `erase_coordinates` inclui na mesma passada de redacao as coordenadas
+    (a-h/1-8) que o diagrama original deixou em volta — elas ficam fora do
+    whiteout e emolduram o diagrama novo com as letrinhas do antigo.
     """
     ops = [op for op in operations if not fitz.Rect(op.rect_pdf).is_empty]
     erases = list(erase_operations)
@@ -439,6 +700,11 @@ def apply_page_operations(
     if whiteout:
         for op in ops:
             redact_rects.append(_whiteout_rect(page, op, whiteout_margin_pt))
+    if erase_coordinates:
+        # Detectado antes da redacao, porque depois dela o texto nao existe mais
+        # para ser encontrado.
+        for op in ops:
+            redact_rects.extend(find_coordinate_labels(page, op.rect_pdf))
     _erase_rects(page, redact_rects)
 
     for op in ops:
@@ -474,6 +740,7 @@ def apply_operations_to_pdf(
     whiteout: bool = True,
     whiteout_margin_pt: float = 0.5,
     include_lichess_link: bool = True,
+    erase_coordinates: bool = False,
 ) -> None:
     in_path = Path(input_pdf)
     if not in_path.exists():
@@ -499,6 +766,7 @@ def apply_operations_to_pdf(
                 whiteout=whiteout,
                 whiteout_margin_pt=whiteout_margin_pt,
                 include_lichess_link=include_lichess_link,
+                erase_coordinates=erase_coordinates,
             )
 
         doc.save(output_pdf, deflate=True, garbage=3)

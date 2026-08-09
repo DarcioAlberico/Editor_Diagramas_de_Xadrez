@@ -95,6 +95,31 @@ def test_an_existing_candidate_queue_is_preserved() -> None:
     assert migrated["candidates"] == [candidate]
 
 
+def test_schema_8_gets_coordinate_erasing_turned_off() -> None:
+    """Um projeto do 8 foi exportado sem apagar coordenada nenhuma.
+
+    Reabri-lo não pode ligar a opção sozinho: o PDF que o usuário já conferiu
+    mudaria na próxima exportação, sem ele ter pedido.
+    """
+    migrated, report = migrate_payload(_payload(8))
+
+    assert migrated["erase_coordinates"] is False
+    assert any("8→9" in step for step in report.steps)
+
+
+def test_the_full_chain_runs_from_7_to_the_current() -> None:
+    migrated, report = migrate_payload(_payload(7))
+
+    assert migrated["candidates"] == []
+    assert migrated["erase_coordinates"] is False
+    assert [step.split(":")[0] for step in report.steps] == ["7→8", "8→9"]
+
+
+def test_an_explicit_coordinate_choice_is_preserved() -> None:
+    migrated, _ = migrate_payload(_payload(8, erase_coordinates=True))
+    assert migrated["erase_coordinates"] is True
+
+
 def test_the_current_version_is_not_reported_as_migrated() -> None:
     _, report = migrate_payload(_payload(CURRENT_SCHEMA_VERSION))
     assert not report.migrated

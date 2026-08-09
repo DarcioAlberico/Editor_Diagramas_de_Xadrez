@@ -1039,8 +1039,8 @@ síncrona e isolada em `PdfService`, então a mudança é local.
   `logger.warning(..., exc_info=True)` — continuam engolindo a exceção (o app não
   pode morrer porque um diagrama falhou), mas deixam rastro.
 
-- [ ] **Link Lichess pode colidir com o texto do livro.** Ele é inserido abaixo
-  do diagrama sem whiteout próprio e sem checar se há conteúdo ali.
+- [x] **Link Lichess pode colidir com o texto do livro** — feito no Sprint 9.4,
+  ver §32.1.
 
 ### 22.5 Novas ferramentas sugeridas
 
@@ -2031,3 +2031,118 @@ isso dá ~40 s, em segundo plano e com a grade preenchendo à medida que chega.
 - **nenhuma `QThread` sobrevive ao fechamento**, nem da galeria nem da janela;
 - clicar leva a janela à página certa, e índice fora de faixa é ignorado — a
   galeria é montada de uma cópia, e o usuário pode remover algo enquanto ela vive.
+
+---
+
+## 32) Sprint 9.4 — o que sobrava na página (implementado em 2026-08-08)
+
+Dois defeitos que só aparecem **no arquivo entregue**, não na tela do editor.
+
+### 32.1 O link Lichess escrevia por cima do livro (§22.4)
+
+O rótulo `Lichess` era desenhado logo abaixo do diagrama, sempre, sem olhar o que
+havia ali. E é exatamente onde o livro põe a legenda ("Diagrama 12", "as brancas
+jogam"): o texto azul saía sobreposto ao do autor e os dois ficavam ilegíveis.
+
+Agora o rótulo procura espaço: tenta abaixo, tenta acima, e **se não houver
+nenhum lugar livre, o diagrama inteiro vira a área clicável, sem texto visível**.
+Perde-se a descoberta visual; ganha-se não vandalizar a página. É a troca certa —
+o link continua existindo, e nada do livro é destruído.
+
+**A armadilha da API.** A primeira implementação usava
+`page.get_text("text", clip=rect)`. O `clip` do PyMuPDF devolve o texto *contido*
+no retângulo, não o que o cruza: uma legenda larga passando por trás de um rótulo
+estreito não aparecia, e a checagem dizia "livre" sobre texto. A versão boa lê
+todas as palavras com as suas caixas (`get_text("words")`) e decide a interseção
+aqui. O primeiro teste também não pegava isso — a legenda curta ficava à esquerda
+do rótulo centralizado e não encostava nele de verdade.
+
+Efeito colateral útil: o rótulo de uma operação conta como texto para a seguinte,
+então dois diagramas na mesma página não empilham os seus links.
+
+### 32.2 As coordenadas do diagrama original sobreviviam
+
+Reclamação do dono do produto, e um defeito de verdade: o diagrama do livro traz
+`a`-`h` e `1`-`8` impressos em volta do tabuleiro. O whiteout cobre o tabuleiro e
+um padding pequeno; as coordenadas ficam **fora** dele e sobrevivem à
+substituição, emoldurando o diagrama novo com as letrinhas do antigo.
+
+A saída documentada era manual — selecionar cada faixa e clicar em `Adicionar
+apagamento`, diagrama por diagrama. Num livro de 300 diagramas isso é trabalho de
+tarde inteira, e é o tipo de coisa que se erra por cansaço.
+
+`find_coordinate_labels` acha e apaga na mesma passada de redação do whiteout,
+com quatro filtros:
+
+1. só palavras de **um caractere** em `a`-`h` ou `1`-`8`;
+2. só na faixa em volta do tabuleiro, e fora dele;
+3. letras só acima/abaixo, dígitos só à esquerda/direita;
+4. e só quando formam **uma fileira**: pelo menos 4, alinhadas entre si.
+
+**A regra 4 não é excesso de zelo.** Em português, `a` e `e` são palavras
+inteiras. Uma legenda "Diagrama 12 - brancas jogam **e** ganham" logo abaixo do
+diagrama passa pelas regras 1 a 3 — e a primeira versão apagou esse `e`. O teste
+pegou. Sozinho, ele não forma fileira com ninguém; as oito coordenadas de verdade
+formam.
+
+Livro que imprime só as coordenadas dos cantos (2 por lado) fica de fora de
+propósito: com 2 amostras o risco de falso positivo é alto demais.
+
+**A opção é do projeto, não da instalação** (`schema_version` 9). Um projeto
+gravado no schema 8 foi exportado sem apagar coordenada nenhuma; reabri-lo com a
+opção ligada mudaria o PDF que o usuário já conferiu. A migração 8→9 grava
+`erase_coordinates: false` — foi a primeira vez que a cadeia do Sprint 8 foi usada
+para o que ela existe.
+
+#### O que só a medição em livro real mostrou
+
+A primeira versão achava **10 de 147** diagramas no Aagaard. Duas causas, as duas
+invisíveis nos testes sintéticos:
+
+1. **A fileira sai como uma palavra só.** O PDF guarda `a b c d e f g h` num único
+   text run, e a extração devolve `abcdefgh` — ou `abcdef` + `gh`, quando o
+   espaçamento quebra o run. A regra "palavra de um caractere", escrita a partir de
+   uma página de teste que eu mesmo desenhei letra por letra, rejeitava o caso
+   comum. Daí a segunda forma aceita: uma **corrida contígua e em ordem** de
+   `abcdefgh`/`12345678`. É o que separa `cdef` de `faced` — as duas só têm letras
+   de `a`-`h`, mas só a primeira é um pedaço da sequência.
+2. **A fileira encosta na borda.** A caixa da palavra invade o retângulo detectado
+   por 1 ou 2 pt, e a condição "não pode intersectar o tabuleiro" descartava
+   justamente as coladas. Passou a ser medido pelo **centro**.
+
+Com as duas correções: **142 de 147 (96,6%)**.
+
+#### Onde ela não alcança, e por quê
+
+Medido em quatro livros, páginas 20–60:
+
+| Livro | Detectados | Por quê |
+|---|---|---|
+| *A Matter of Endgame Technique* | 142/147 | coordenadas são texto |
+| *1001 Sacrificios* (Reinfeld) | 0/43 | o livro **não imprime** coordenadas |
+| *400 Quebra-cabeças* | 0/40 | idem |
+| *Chess Structures* | 0/85 | página **escaneada**: zero caractere de texto |
+
+Os dois zeros do meio são a resposta certa, não uma falha — aqueles livros
+desenham o diagrama em fonte figurina e não põem coordenada nenhuma.
+
+O último é o limite real: num PDF escaneado as coordenadas são pixels, e nenhuma
+leitura de texto vai encontrá-las. Ali a ferramenta continua sendo o **padding de
+whiteout por lado**, que já existe e já se aplica em massa. Detectar a faixa
+visualmente (OpenCV) seria possível, e fica registrado como próximo passo se o
+caso aparecer com frequência.
+
+### 32.3 Cobertura de teste
+
+`tests/test_lichess_link.py` (7) — o rótulo desce, sobe quando a legenda ocupa, e
+**vira o próprio diagrama quando não há espaço**, sempre preservando o texto do
+livro; dois diagramas na mesma página não sobrepõem os links.
+
+`tests/test_coordinates.py` (13) — metade prova o que ela **não** apaga: legenda
+com números, número de página alinhado com o tabuleiro, dígito solto na lateral,
+letra longe, e `i`/`z`/`9`/`0`, que não são coordenadas.
+
+Detalhe que a asserção precisou aprender: o PDF exportado **não** fica sem texto
+depois do apagamento, porque o diagrama que inserimos é vetorial com a fonte
+Merida, que mapeia as peças em letras ASCII (§22.2). O teste olha o que sobrou
+fora do tabuleiro, não a página inteira.

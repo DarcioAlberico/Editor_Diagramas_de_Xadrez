@@ -231,6 +231,26 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             lambda checked: self._schedule_preview_refresh(immediate=True)
         )
 
+        # As coordenadas do diagrama ORIGINAL (a-h/1-8) ficam fora do whiteout e
+        # sobrevivem à substituição, emoldurando o diagrama novo com as letrinhas
+        # do antigo. Até aqui a saída era um apagamento manual por diagrama.
+        self.erase_coordinates_check = QtWidgets.QCheckBox(
+            "Apagar coordenadas do diagrama original"
+        )
+        self.erase_coordinates_check.setChecked(
+            bool(self.settings.value("erase_coordinates", False, bool))
+        )
+        self.erase_coordinates_check.setToolTip(
+            "Apaga as letras e números que o livro imprimiu em volta do tabuleiro. "
+            "Só apaga onde encontra uma fileira delas, para não comer a legenda."
+        )
+        self.erase_coordinates_check.toggled.connect(
+            lambda checked: self.settings.setValue("erase_coordinates", bool(checked))
+        )
+        self.erase_coordinates_check.toggled.connect(
+            lambda checked: self._schedule_preview_refresh(immediate=True)
+        )
+
         self.before_after = BeforeAfterWidget()
         self.btn_toggle_preview = QtWidgets.QPushButton("Ver resultado na página")
         self.btn_toggle_preview.setCheckable(True)
@@ -569,7 +589,8 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         appearance_grid.addWidget(QtWidgets.QLabel("Análise"), 5, 0)
         appearance_grid.addWidget(self.lichess_link_label, 5, 1)
         appearance_grid.addWidget(self.include_lichess_link_check, 6, 0, 1, 2)
-        appearance_grid.addWidget(self.apply_style_all_check, 7, 0, 1, 2)
+        appearance_grid.addWidget(self.erase_coordinates_check, 7, 0, 1, 2)
+        appearance_grid.addWidget(self.apply_style_all_check, 8, 0, 1, 2)
         whiteout_tab_layout.addWidget(
             self._make_collapsible_group("Ajustes avançados", appearance_grid, checked=False)
         )
@@ -1102,6 +1123,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             erase_operations=self.erase_operations,
             whiteout=self.whiteout_check.isChecked(),
             include_lichess_link=self.include_lichess_link_check.isChecked(),
+            erase_coordinates=self.erase_coordinates_check.isChecked(),
             parent=self,
         )
         dialog.entry_activated.connect(self._focus_gallery_entry)
@@ -1260,6 +1282,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             candidates=self.candidates,
             current_page=self.current_page,
             include_lichess_link=self.include_lichess_link_check.isChecked(),
+            erase_coordinates=self.erase_coordinates_check.isChecked(),
             ocr_full_next_page=self.ocr_full_next_page,
         )
 
@@ -1785,6 +1808,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         zoom = float(self.zoom_spin.value())
         whiteout = self.whiteout_check.isChecked()
         include_link = self.include_lichess_link_check.isChecked()
+        erase_coordinates = self.erase_coordinates_check.isChecked()
 
         try:
             if want_page:
@@ -1795,6 +1819,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                     erase_operations=erasers,
                     whiteout=whiteout,
                     include_lichess_link=include_link,
+                    erase_coordinates=erase_coordinates,
                 )
                 self._showing_preview = True
                 self._apply_page_pixmap(self.current_preview_render, preserve_selection=True)
@@ -1813,6 +1838,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                     erase_operations=erasers,
                     whiteout=whiteout,
                     include_lichess_link=include_link,
+                    erase_coordinates=erase_coordinates,
                 )
                 self.before_after.set_images(before_png, after_png)
             elif self.compare_group.isChecked():
@@ -2825,6 +2851,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             erase_operations=self.erase_operations,
             whiteout=self.whiteout_check.isChecked(),
             include_lichess_link=self.include_lichess_link_check.isChecked(),
+            erase_coordinates=self.erase_coordinates_check.isChecked(),
             parent=self,
         )
         worker.done.connect(self._on_export_done)
@@ -2912,6 +2939,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.candidates = list(getattr(state, "candidates", []))
         self._position_anchor = None
         self.include_lichess_link_check.setChecked(bool(getattr(state, "include_lichess_link", True)))
+        self.erase_coordinates_check.setChecked(bool(getattr(state, "erase_coordinates", False)))
         self.ocr_full_next_page = max(0, int(getattr(state, "ocr_full_next_page", 0)))
         self.current_page = min(
             max(0, state.current_page),
