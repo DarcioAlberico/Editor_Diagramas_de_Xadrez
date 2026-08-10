@@ -557,6 +557,7 @@ Beta (meta):
 15. **Autosave durável de verdade** ✅ — ver §43.
 16. **Variante light do executável** ✅ — ver §44.
 17. **Redes contra perda silenciosa de campo** ✅ — ver §45.
+18. **Páginas com `/Rotate`** ✅ — ver §46.
 
 ### 15.1 O que falta (revisado em 2026-08-09)
 
@@ -3378,3 +3379,96 @@ Mutações conferidas à mão, que é o que prova que a rede tem dentes:
 - campo novo em `ReportRow` → derruba a comparação de colunas.
 
 Cada falha nomeia o campo e mostra o que foi gravado contra o que voltou.
+
+---
+
+## 46) Sprint 9.18 — páginas com `/Rotate` (2026-08-09)
+
+Bug de verdade, achado por hipótese: **livro escaneado de lado**. Um PDF pode declarar
+rotação na página (`/Rotate 90`, `180`, `270`), e livro digitalizado tem isso aos
+montes. O `pdf_service.py` não mencionava a palavra "rotação" em lugar nenhum, e
+nenhum teste cobria o caso.
+
+### 46.1 Os dois sintomas, medidos
+
+Numa página com `/Rotate 90`, fazendo o fluxo inteiro como o usuário faz — selecionar
+o que se vê, adicionar substituição, exportar:
+
+| | Antes |
+|---|---|
+| whiteout cobre o diagrama original | **não** — ele sobrevivia inteiro no PDF exportado |
+| tabuleiro novo cai onde foi selecionado | **não** — ia para outro canto da página |
+| tabuleiro sai de pé | **não** — saía deitado |
+
+Ou seja: o livro exportado ficava com o diagrama antigo intacto **e** um tabuleiro
+novo atravessado em outro lugar. Em `/Rotate 0` — a esmagadora maioria — tudo sempre
+funcionou, e é por isso que ninguém tinha visto.
+
+### 46.2 A causa: dois espaços de coordenada
+
+`page.rect` de uma página girada 90° é `(0,0,842,595)` — o espaço **girado**, o que o
+usuário vê e no qual ele desenha a seleção. Mas `page.mediabox` é `(0,0,595,842)`, e
+escrever no conteúdo da página (`show_pdf_page`, `add_redact_annot`, `draw_rect`) é em
+espaço **não-rotacionado**.
+
+O app guardava o retângulo no espaço girado e o entregava direto para a inserção. Os
+dois só coincidem quando a rotação é zero.
+
+A conversão existe pronta no PyMuPDF e foi conferida na mão:
+
+```text
+selecao (espaco girado)  Rect(382, 70, 581, 269)
+sel * derotation_matrix  Rect(70, 261, 269, 460)   <- onde o diagrama de fato esta
+```
+
+### 46.3 A correção, nas duas metades
+
+**Retângulo.** No topo de `apply_page_operations`, quando `page.rotation` não é zero,
+cada operação vira uma **cópia** com o retângulo derotacionado. Cópia e não mutação: a
+mesma lista é reusada pela prévia, pela galeria e pela exportação, e girar no lugar
+corromperia as outras. Como whiteout, coordenadas, borda e link Lichess todos derivam
+desse retângulo, a conversão num lugar só acerta a passada inteira.
+
+**Conteúdo.** `show_pdf_page`/`insert_image` recebem `rotate=page.rotation`. O valor
+não foi deduzido: as quatro opções foram construídas e comparadas, e só
+`rotate = page.rotation` devolve um recorte do tabuleiro **byte a byte idêntico** ao da
+mesma substituição numa página sem rotação.
+
+**Compatibilidade.** A semântica do `rect_pdf` salvo não muda — ele continua no espaço
+que o usuário vê. Então projeto salvo continua valendo, e em `/Rotate 0` a conversão
+nem roda (`if page.rotation:`), o que mantém o caso comum idêntico ao que era.
+
+### 46.4 Duas sondas erradas antes da certa
+
+Vale registrar, porque o erro é fácil de repetir.
+
+A primeira sonda pintava o diagrama de **cinza** e o procurava por proximidade de cor.
+Acusou divergência até em `/Rotate 0`, onde o app funciona: ela estava pegando pixels
+de antialiasing do texto da página. Trocada por **magenta**, que nenhum texto preto
+produz, o `/Rotate 0` passou a dar OK e o resultado ficou confiável.
+
+A segunda mediu "o magenta sobreviveu?" para dizer se o tabuleiro tapou o diagrama. Mas
+o tabuleiro tem as casas claras **transparentes** — o magenta aparece por baixo dele.
+Quem apaga o original é o whiteout, não o tabuleiro. As duas coisas passaram a ser
+medidas separadamente: magenta para o whiteout, tinta escura para a posição do
+tabuleiro.
+
+E a terceira versão do teste de posição falhou em `/Rotate 0` pelo mesmo motivo da
+primeira sonda: a caixa de "tinta escura" incluía o texto da página. Os testes que
+medem tinta usam fixture **sem texto**, e o `_make_pdf` diz isso no docstring.
+
+### 46.5 Cobertura de teste
+
+`tests/test_page_rotation.py` (18), parametrizado nas quatro rotações:
+
+- a seleção fecha no ida-e-volta imagem → PDF → imagem;
+- a fixture girada de fato renderiza em paisagem (sem isso o resto não provaria nada);
+- o whiteout cobre o diagrama original;
+- o tabuleiro cai onde foi selecionado (6 px de tolerância, por antialiasing);
+- o tabuleiro **não** sai deitado — recorte idêntico ao da página sem rotação;
+- apagamento sozinho também acerta o lugar;
+- e a exportação em `/Rotate 0` continua determinística.
+
+Mutações conferidas: tirar a derotação derruba **9** testes; deixar `rotate=0` derruba
+o da orientação, e só ele — as duas metades da correção são independentes e ambas
+necessárias.

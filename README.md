@@ -359,6 +359,16 @@ A grade serve para pegar problema grosso: borda que encostou no texto, padding q
 comeu a legenda, diagrama fora do padrao dos outros. Para acertar fracao de ponto
 num diagrama, a previa ao vivo continua sendo a ferramenta.
 
+## Livro escaneado de lado
+
+PDF de livro digitalizado costuma trazer paginas com rotacao declarada (`/Rotate 90`,
+`180`, `270`). O app trata isso: voce seleciona o diagrama **como ele aparece na tela**,
+e a substituicao cai no lugar certo, com o tabuleiro novo de pe.
+
+Isso valia so para paginas sem rotacao ate o Sprint 9.18. Antes, numa pagina girada, o
+diagrama antigo sobrevivia no PDF exportado e o tabuleiro novo ia para outro canto,
+deitado.
+
 ## Coordenadas do diagrama original
 
 O diagrama do livro quase sempre traz as coordenadas impressas em volta do

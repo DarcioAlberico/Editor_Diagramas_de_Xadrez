@@ -673,6 +673,16 @@ def _whiteout_rect(page: fitz.Page, op: OverlayOperation, fallback_margin_pt: fl
     ) & page.rect
 
 
+def _derotated_operation(page: fitz.Page, op):
+    """Cópia da operação com o retângulo em espaço não-rotacionado (§46).
+
+    Cópia, e não mutação: a mesma lista de operações é reusada pela prévia, pela
+    galeria e pela exportação, e girar o retângulo no lugar corromperia as outras.
+    """
+    rect = fitz.Rect(op.rect_pdf) * page.derotation_matrix
+    return replace(op, rect_pdf=(rect.x0, rect.y0, rect.x1, rect.y1))
+
+
 def apply_page_operations(
     page: fitz.Page,
     operations: Iterable[OverlayOperation],
@@ -694,6 +704,14 @@ def apply_page_operations(
     ops = [op for op in operations if not fitz.Rect(op.rect_pdf).is_empty]
     erases = list(erase_operations)
 
+    # Página com `/Rotate` (livro escaneado de lado): o retângulo guardado está no
+    # espaço que o usuário vê — o mesmo de `page.rect` —, mas escrever no conteúdo
+    # da página é em espaço não-rotacionado. Sem converter, o whiteout não cobria o
+    # diagrama original e o tabuleiro novo ia para outro lugar, deitado (§46).
+    if page.rotation:
+        ops = [_derotated_operation(page, op) for op in ops]
+        erases = [_derotated_operation(page, op) for op in erases]
+
     redact_rects: list[fitz.Rect] = []
     for erase_op in erases:
         redact_rects.append(fitz.Rect(erase_op.rect_pdf) & page.rect)
@@ -713,16 +731,25 @@ def apply_page_operations(
             _points_to_pixels(rect.width, dpi=450),
             _points_to_pixels(rect.height, dpi=450),
         )
+        # Numa página girada o conteúdo inserido tem de girar junto, senão o
+        # tabuleiro sai deitado para quem lê o PDF. Medido: `rotate = page.rotation`
+        # devolve um recorte **idêntico** ao da mesma posição numa página sem
+        # rotação (§46.3).
+        rotate = int(page.rotation) % 360
         pdf_bytes = _cached_board_pdf(op.fen, size_px)
         if pdf_bytes:
             src = fitz.open("pdf", pdf_bytes)
             try:
-                page.show_pdf_page(rect, src, 0, overlay=True, keep_proportion=False)
+                page.show_pdf_page(
+                    rect, src, 0, overlay=True, keep_proportion=False, rotate=rotate
+                )
             finally:
                 src.close()
         else:
             png_bytes = _cached_board_png(op.fen, size_px)
-            page.insert_image(rect, stream=png_bytes, overlay=True, keep_proportion=False)
+            page.insert_image(
+                rect, stream=png_bytes, overlay=True, keep_proportion=False, rotate=rotate
+            )
 
         border_width = max(0.0, float(getattr(op, "border_width_pt", 0.0)))
         if border_width > 0:
