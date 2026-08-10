@@ -6,6 +6,11 @@
 # Os testes de GUI rodam offscreen (`QT_QPA_PLATFORM=offscreen`), entao nao
 # precisam de servidor grafico — no Linux o PySide6 ainda exige as libs de
 # sistema que o passo `apt-get` instala.
+#
+# As acoes ficam presas ao **major** (`@v7`), nao a uma versao exata: e assim que
+# elas chegam aqui desde o Sprint 5.4, e correcao de patch entra sozinha. Quem
+# quiser reprodutibilidade byte a byte troca por SHA — e passa a ter de atualizar
+# a mao.
 name: tests
 
 on:
@@ -39,9 +44,9 @@ jobs:
       CHESS_PDF_EDITOR_LOG_DIR: ${{ github.workspace }}/.ci/logs
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -66,7 +71,7 @@ jobs:
 
       - name: Publicar o relatório
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pytest-report-${{ matrix.os }}-py${{ matrix.python-version }}
           path: pytest-report.xml
@@ -86,9 +91,9 @@ jobs:
       CHESS_PDF_EDITOR_LOG_DIR: ${{ github.workspace }}/.ci/logs
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -124,7 +129,7 @@ jobs:
 
       - name: Publicar o relatório
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pytest-report-local-ubuntu
           path: pytest-report.xml
