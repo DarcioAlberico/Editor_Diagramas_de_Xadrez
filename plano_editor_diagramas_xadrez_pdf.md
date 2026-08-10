@@ -3538,9 +3538,46 @@ prévia mostra a mensagem no painel de conferência. Não foi preciso UI nova.
 - rotação + CropBox deslocada é recusada nas três rotações, com a mensagem nomeando
   `CropBox` e o ângulo, e **sem** deixar PDF pela metade.
 
-### 47.5 Para quem retomar
+### 47.5 Para quem retomar: a calibração medida
 
-O dado útil está na tabela da §47.2: a terceira linha apaga parte do diagrama, então a
-magnitude do deslocamento está certa e o eixo não. O próximo passo natural é medir a
-transformação empiricamente com `page.get_drawings()` como verdade — lembrando que ela
-devolve coordenadas relativas à CropBox, que foi a sonda nº 2 desta lista.
+Depois de errar a sonda três vezes, o único método que deu dado confiável foi calibrar
+o **caminho de escrita**: numa página que **já** está girada e cropada, desenhar
+marcadores em coordenadas conhecidas e medir onde eles aparecem, convertendo o render
+para o espaço de `page.rect`.
+
+CropBox `(40, 60, 555, 782)`, página 595×842, `page.rect` girado = `(0,0,722,515)`:
+
+| rotação | escrevi em | aparece em `page.rect` |
+|---|---|---|
+| 0 | (120,120) / (320,120) / (120,420) | (119,119) / (319,119) / (119,419) — **identidade** |
+| 90 | (120,120) / (320,120) / (120,420) | (541,79) / (541,279) / (241,79) |
+| 270 | (120,120) / (320,120) / (120,420) | (179,434) / (179,234) / (479,434) |
+
+Resolvendo para 90°:
+
+```text
+page.rect_X = (largura − cropY) − escrita_y   =  662 − y
+page.rect_Y = escrita_x − cropX               =    x − 40
+```
+
+E para 270°:
+
+```text
+page.rect_X = escrita_y + cropY               =    y + 60
+page.rect_Y = (altura + cropX) − escrita_x    =  555 − x
+```
+
+Ou seja: o deslocamento da CropBox entra com **sinal invertido num dos eixos**, e qual
+eixo depende da rotação. É a explicação do "magnitude certa, eixo errado" da §47.2.
+
+**Por que isso não virou código.** Nenhuma composição de `rotation_matrix`,
+`derotation_matrix`, `transformation_matrix` e `cropbox_position` que se tentou
+reproduz essas duas fórmulas, e escrever a matriz à mão a partir de três pontos por
+rotação seria embarcar uma calibração sem entender a regra que a gera — exatamente o
+tipo de chute que a recusa da §47.3 existe para evitar. Fica a tabela, que é o insumo
+para quem quiser fechar isto.
+
+**Uma armadilha para não repetir:** `page.get_drawings()` **não** serve de verdade aqui.
+Ele devolve coordenadas num espaço que não é o das APIs de escrita nessa geometria — um
+retângulo que bate perfeitamente com o `get_drawings` erra o alvo quando usado em
+`show_pdf_page` ou `add_redact_annot`. Foi a sonda que me enganou duas vezes.
