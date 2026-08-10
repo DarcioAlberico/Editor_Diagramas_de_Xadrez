@@ -673,6 +673,37 @@ def _whiteout_rect(page: fitz.Page, op: OverlayOperation, fallback_margin_pt: fl
     ) & page.rect
 
 
+class UnsupportedPageGeometry(RuntimeError):
+    """Geometria de página que este código não sabe converter com segurança."""
+
+
+def _cropbox_is_offset(page: fitz.Page) -> bool:
+    position = page.cropbox_position
+    return abs(position.x) > 0.01 or abs(position.y) > 0.01
+
+
+def _check_page_geometry(page: fitz.Page) -> None:
+    """Recusa a combinação de rotação **com** CropBox deslocada (§47).
+
+    Rotação sozinha está resolvida (§46) e CropBox deslocada sozinha sempre
+    funcionou — as duas juntas, não. Foram medidas quatro composições de matriz e
+    nenhuma acerta; o registro do que se mediu está na §47.2.
+
+    Falhar aqui é deliberado. O sintoma da versão anterior era um PDF exportado com
+    o diagrama antigo intacto e o novo atravessado noutro lugar — e ninguém percebe
+    isso num livro de 900 páginas até distribuí-lo. Erro alto custa uma exportação;
+    saída errada em silêncio custa o livro.
+    """
+    if page.rotation and _cropbox_is_offset(page):
+        raise UnsupportedPageGeometry(
+            f"A página {page.number + 1} combina rotação (/Rotate {page.rotation}) com "
+            "uma CropBox deslocada da MediaBox, e esta versão não sabe posicionar o "
+            "diagrama nesse caso — exportar produziria o diagrama no lugar errado. "
+            "Contorno: gire/normalize o PDF antes (por exemplo, imprimindo-o para PDF) "
+            "e reabra."
+        )
+
+
 def _derotated_operation(page: fitz.Page, op):
     """Cópia da operação com o retângulo em espaço não-rotacionado (§46).
 
@@ -709,6 +740,7 @@ def apply_page_operations(
     # da página é em espaço não-rotacionado. Sem converter, o whiteout não cobria o
     # diagrama original e o tabuleiro novo ia para outro lugar, deitado (§46).
     if page.rotation:
+        _check_page_geometry(page)
         ops = [_derotated_operation(page, op) for op in ops]
         erases = [_derotated_operation(page, op) for op in erases]
 

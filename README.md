@@ -369,6 +369,12 @@ Isso valia so para paginas sem rotacao ate o Sprint 9.18. Antes, numa pagina gir
 diagrama antigo sobrevivia no PDF exportado e o tabuleiro novo ia para outro canto,
 deitado.
 
+**Limitacao conhecida:** pagina que combina rotacao **com** uma `CropBox` deslocada da
+`MediaBox` ainda nao e suportada. Nesse caso o app **recusa a exportacao** com uma
+mensagem clara, em vez de gravar o diagrama no lugar errado. Contorno: normalize o PDF
+antes (imprimir para PDF resolve) e reabra. `CropBox` deslocada **sem** rotacao funciona
+normalmente.
+
 ## Coordenadas do diagrama original
 
 O diagrama do livro quase sempre traz as coordenadas impressas em volta do

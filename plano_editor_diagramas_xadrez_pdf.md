@@ -558,12 +558,12 @@ Beta (meta):
 16. **Variante light do executável** ✅ — ver §44.
 17. **Redes contra perda silenciosa de campo** ✅ — ver §45.
 18. **Páginas com `/Rotate`** ✅ — ver §46.
+19. **Rotação + CropBox: recusa explícita** ✅ — ver §47 (a combinação em si fica **aberta**).
 
 ### 15.1 O que falta (revisado em 2026-08-09)
 
 As listas de trabalho do plano estão fechadas: §19 (backlog técnico), §20.2 (redesign
-da interface) e §22.5 (as oito ferramentas sugeridas). Sobram **cinco** itens, e
-**nenhum** deles é código:
+da interface) e §22.5 (as oito ferramentas sugeridas). Sobram **seis** itens:
 
 | Item | Onde | Por que está aberto |
 |---|---|---|
@@ -572,6 +572,7 @@ da interface) e §22.5 (as oito ferramentas sugeridas). Sobram **cinco** itens, 
 | Assinatura de código | §28.4 | precisa de um certificado |
 | Validação em Windows sem Python | §28.4 | precisa da máquina limpa |
 | Painel sem rolagem em 1500×900 | §20.5 | **decidido não forçar**: faltam 191 px e o caminho já foi medido e reprovado (§41.2, §34.3) |
+| Rotação **com** CropBox deslocada | §47.2 | transformação não identificada; o app **recusa** em vez de exportar errado |
 
 Os quatro primeiros são dependências físicas, não decisões pendentes. O quinto é uma
 decisão registrada, com o número medido: o fluxo cabe a partir de 1.100 px de altura.
@@ -3472,3 +3473,74 @@ medem tinta usam fixture **sem texto**, e o `_make_pdf` diz isso no docstring.
 Mutações conferidas: tirar a derotação derruba **9** testes; deixar `rotate=0` derruba
 o da orientação, e só ele — as duas metades da correção são independentes e ambas
 necessárias.
+
+---
+
+## 47) Sprint 9.19 — rotação **com** CropBox deslocada: recusa em vez de erro silencioso
+
+Continuação da §46, mesma linha de investigação: que outra propriedade de PDF real o
+código não menciona? A resposta foi `CropBox`, e o resultado tem duas metades — uma boa
+e uma que fica registrada em aberto.
+
+### 47.1 CropBox sozinha: já funcionava
+
+`page.cropbox` diferente da `mediabox` é comum em livro preparado para impressão (marcas
+de corte removidas). Medido nas quatro rotações **sem** rotação: o PyMuPDF normaliza
+`page.rect` para a origem e cuida do deslocamento sozinho, tanto no render quanto na
+inserção. Nada a corrigir — mas agora há teste, porque era um caso vivo e não coberto.
+
+### 47.2 As duas juntas: não resolvido, e o que se mediu
+
+Rotação **e** CropBox deslocada na mesma página continuam errando: o whiteout não cobre
+o diagrama e o tabuleiro cai deslocado.
+
+Quatro composições de matriz foram construídas e medidas no pipeline real:
+
+| Transformação do retângulo | Resultado |
+|---|---|
+| `sel` como está (espaço de `page.rect`) | erra |
+| `sel * derotation_matrix` (a correção da §46) | erra |
+| `sel * derotation * (+origem da CropBox)` | **apaga parte** do diagrama — mais perto, ainda errado |
+| `sel * (+origem da CropBox)` | erra |
+
+O sinal parcial da terceira sugere que o deslocamento da CropBox precisa entrar num
+frame que ainda não identifiquei — provavelmente girado junto. Não foi resolvido.
+
+**Três sondas erradas pelo caminho**, todas minhas, todas registradas porque cada uma me
+fez concluir coisa errada por um momento:
+
+1. `DIAG * rotation_matrix` **não** dá o espaço de `page.rect` quando a CropBox está
+   deslocada — a tabela construída com isso "provou" uma transformação que estava errada;
+2. `get_drawings()` devolve coordenadas **relativas à CropBox**, enquanto o content
+   stream tem as absolutas — comparar com a fonte errada inverteu a conclusão;
+3. uma redação escrita à mão no teste reprovava até o caso `rot 0 + CropBox` que o
+   pipeline real aprova. Lição: medir com as funções do app, não reimplementá-las.
+
+### 47.3 O que entrou: recusa alta
+
+Sem entender a transformação, embarcar matemática de coordenada seria chute. Então o
+app **recusa** a combinação, com `UnsupportedPageGeometry` e uma mensagem que diz o
+contorno (normalizar o PDF antes).
+
+A escolha é a mesma da §33: erro alto custa uma exportação, saída errada em silêncio
+custa o livro — e um livro de 900 páginas com o diagrama antigo intacto e o novo
+atravessado não se percebe antes de distribuir. A recusa não deixa arquivo pela metade,
+e há teste para isso.
+
+O caminho de erro já existia: `ExportWorker` captura `Exception` e vira diálogo, e a
+prévia mostra a mensagem no painel de conferência. Não foi preciso UI nova.
+
+### 47.4 Cobertura
+
+`tests/test_page_rotation.py` foi de 18 para 22:
+
+- CropBox deslocada **sozinha** continua funcionando (o caso que já valia);
+- rotação + CropBox deslocada é recusada nas três rotações, com a mensagem nomeando
+  `CropBox` e o ângulo, e **sem** deixar PDF pela metade.
+
+### 47.5 Para quem retomar
+
+O dado útil está na tabela da §47.2: a terceira linha apaga parte do diagrama, então a
+magnitude do deslocamento está certa e o eixo não. O próximo passo natural é medir a
+transformação empiricamente com `page.get_drawings()` como verdade — lembrando que ela
+devolve coordenadas relativas à CropBox, que foi a sonda nº 2 desta lista.

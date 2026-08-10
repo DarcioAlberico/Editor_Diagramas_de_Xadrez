@@ -253,3 +253,77 @@ def test_an_unrotated_page_is_untouched_by_the_fix(tmp_path: Path) -> None:
             after.close()
 
     assert outputs[0] == outputs[1], "a exportação deixou de ser determinística"
+
+
+# ---------------------------------------------------------------------------
+# Rotação junto com CropBox deslocada: recusa explícita (§47)
+# ---------------------------------------------------------------------------
+
+CROPBOX = (40.0, 60.0, 555.0, 782.0)
+
+
+def _make_pdf_with_cropbox(path: Path, rotation: int, cropbox=CROPBOX) -> Path:
+    _make_pdf(path, 0, with_text=False)
+    document = fitz.open(str(path))
+    try:
+        page = document[0]
+        if cropbox:
+            page.set_cropbox(fitz.Rect(*cropbox))
+        if rotation:
+            page.set_rotation(rotation)
+        document.save(str(path), incremental=True, encryption=0)
+    finally:
+        document.close()
+    return path
+
+
+def _export(source: Path, output: Path) -> None:
+    service = PdfService(str(source))
+    try:
+        render = service.render_page(0, zoom=ZOOM)
+        selection = _selection_as_the_user_would(service, render)
+    finally:
+        service.close()
+    apply_operations_to_pdf(
+        str(source),
+        str(output),
+        [OverlayOperation(page_num=0, rect_pdf=selection, fen=FEN)],
+        include_lichess_link=False,
+    )
+
+
+def test_an_offset_cropbox_alone_still_works(tmp_path: Path) -> None:
+    """CropBox deslocada sem rotação sempre funcionou, e continua funcionando."""
+    source = _make_pdf_with_cropbox(tmp_path / "crop.pdf", rotation=0)
+    output = tmp_path / "crop-out.pdf"
+
+    _export(source, output)
+
+    after = PdfService(str(output))
+    try:
+        magenta, _ink = _boxes(after.render_page(0, zoom=ZOOM).image_png)
+    finally:
+        after.close()
+    assert magenta is None, "o diagrama original sobreviveu"
+
+
+@pytest.mark.parametrize("rotation", (90, 180, 270))
+def test_rotation_with_an_offset_cropbox_is_refused_loudly(tmp_path: Path, rotation: int) -> None:
+    """Combinação não resolvida (§47): o app **recusa** em vez de exportar errado.
+
+    O sintoma que isto substitui era pior que um erro: PDF com o diagrama antigo
+    intacto e o novo atravessado noutro lugar, que ninguém percebe num livro de 900
+    páginas até distribuí-lo.
+    """
+    from chess_pdf_editor.pdf_service import UnsupportedPageGeometry
+
+    source = _make_pdf_with_cropbox(tmp_path / f"both{rotation}.pdf", rotation=rotation)
+    output = tmp_path / f"both{rotation}-out.pdf"
+
+    with pytest.raises(UnsupportedPageGeometry) as raised:
+        _export(source, output)
+
+    message = str(raised.value)
+    assert "CropBox" in message
+    assert str(rotation) in message
+    assert not output.exists(), "recusou, mas deixou um PDF pela metade"
