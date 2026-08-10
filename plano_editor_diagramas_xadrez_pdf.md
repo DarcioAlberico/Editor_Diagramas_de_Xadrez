@@ -40,6 +40,7 @@ Technique*, 898 páginas). O que existe hoje:
 | **Correções realimentando o dataset de treino** | ✅ **novo — ver §27.5** |
 | **Migrações do projeto salvo entre schemas** | ✅ **novo — ver §28.1** |
 | **Empacotamento (executável Windows)** | ✅ **novo — ver §28.2** |
+| **Página com `/Rotate` e/ou CropBox deslocada** | ✅ **novo — ver §46 e §48** |
 | Instalador assinado / validação em máquina limpa | ❌ pendente — ver §28.4 |
 
 **O desvio da §5/§6 foi fechado.** Até a versão 1.5 o reconhecimento existia só
@@ -558,12 +559,14 @@ Beta (meta):
 16. **Variante light do executável** ✅ — ver §44.
 17. **Redes contra perda silenciosa de campo** ✅ — ver §45.
 18. **Páginas com `/Rotate`** ✅ — ver §46.
-19. **Rotação + CropBox: recusa explícita** ✅ — ver §47 (a combinação em si fica **aberta**).
+19. **Rotação + CropBox: recusa explícita** ✅ — ver §47.
+20. **Rotação + CropBox: resolvida** ✅ — ver §48. Com ela, a §47 fecha.
 
 ### 15.1 O que falta (revisado em 2026-08-09)
 
 As listas de trabalho do plano estão fechadas: §19 (backlog técnico), §20.2 (redesign
-da interface) e §22.5 (as oito ferramentas sugeridas). Sobram **seis** itens:
+da interface) e §22.5 (as oito ferramentas sugeridas). Sobram **cinco** itens, e
+**nenhum deles é uma tarefa de código**:
 
 | Item | Onde | Por que está aberto |
 |---|---|---|
@@ -572,10 +575,12 @@ da interface) e §22.5 (as oito ferramentas sugeridas). Sobram **seis** itens:
 | Assinatura de código | §28.4 | precisa de um certificado |
 | Validação em Windows sem Python | §28.4 | precisa da máquina limpa |
 | Painel sem rolagem em 1500×900 | §20.5 | **decidido não forçar**: faltam 191 px e o caminho já foi medido e reprovado (§41.2, §34.3) |
-| Rotação **com** CropBox deslocada | §47.2 | transformação não identificada; o app **recusa** em vez de exportar errado |
 
 Os quatro primeiros são dependências físicas, não decisões pendentes. O quinto é uma
 decisão registrada, com o número medido: o fluxo cabe a partir de 1.100 px de altura.
+
+A sexta linha desta tabela — rotação **com** CropBox deslocada — saiu no Sprint 9.20
+(§48): era o único item aberto que dependia de escrever código.
 
 Duas pendências de sprint continuam anotadas de propósito, e **não** são tarefas:
 o render de prévia síncrono (§25.7, medido em 119 ms — "não incomoda") e o
@@ -3581,3 +3586,114 @@ para quem quiser fechar isto.
 Ele devolve coordenadas num espaço que não é o das APIs de escrita nessa geometria — um
 retângulo que bate perfeitamente com o `get_drawings` erra o alvo quando usado em
 `show_pdf_page` ou `add_redact_annot`. Foi a sonda que me enganou duas vezes.
+
+> **Fechado no Sprint 9.20 (§48).** A tabela acima estava certa e a conclusão tirada
+> dela, errada: a fixture era **simétrica**, e por isso não dava para identificar a
+> regra. Ver §48.1.
+
+---
+
+## 48) Sprint 9.20 — rotação com CropBox: a fixture é que era ambígua (2026-08-09)
+
+A §47 mediu certo, refez a conta certo, e mesmo assim não achou a regra. O motivo não
+estava na matemática: estava na página escolhida para medir.
+
+### 48.1 A fixture simétrica escondia a regra
+
+A calibração da §47.5 usava CropBox `(40, 60, 555, 782)` numa página 595×842. As margens
+que isso produz:
+
+| | esquerda | direita | topo | base |
+|---|---|---|---|---|
+| margem | 40 | **40** | 60 | **60** |
+
+Esquerda igual a direita, topo igual a base. Então, nas fórmulas resolvidas a partir
+dela, cada `cropX` podia ser a margem esquerda **ou** a direita, e cada `cropY` a do topo
+**ou** a da base — quatro leituras diferentes, todas compatíveis com os mesmos números. A
+§47.5 leu uma delas ("o deslocamento entra com sinal invertido num dos eixos") e
+concluiu, razoavelmente, que nenhuma composição de matriz reproduzia aquilo. Nenhuma
+reproduzia mesmo: a fórmula não era identificável a partir daquela página.
+
+Refeita a medição com as quatro margens **diferentes** — `(30, 45, 500, 772)`, margens
+30 / 95 / 45 / 70 — a regra apareceu na primeira tentativa, e não tem sinal invertido
+nenhum.
+
+### 48.2 A regra
+
+Há dois espaços, e o segundo é o que `page.transformation_matrix` produz:
+
+```text
+page.rect = (escrita − origem) * rotation_matrix
+escrita   = page.rect * derotation_matrix + origem
+```
+
+onde `origem` é o canto superior-esquerdo da CropBox **no espaço de escrita** —
+`(cropbox nativa) * transformation_matrix`. É composição das matrizes do próprio
+PyMuPDF, não calibração embarcada: nenhum número medido entrou no código.
+
+O que a §47.5 viu como assimetria era a `origem` valendo `(esquerda, −base)` quando há
+rotação e `(0, 0)` quando não há — a `transformation_matrix` já embute o deslocamento da
+CropBox no caso sem rotação. Daí as duas metades da fórmula parecerem discordar.
+
+Com isso, os dois casos que já funcionavam saem de graça, e é isso que dá confiança de
+que a regra é a certa e não um ajuste: sem CropBox a `origem` é `(0,0)` e sobra a
+derotação da §46; sem rotação a `rotation_matrix` é identidade **e** a `origem` é
+`(0,0)`, e sobra a identidade. O caminho comum não tem caso especial e não mudou.
+
+**Medido em 80 geometrias** — quatro rotações × seis CropBoxes (inclusive nenhuma, não
+inteiras, e encostadas numa borda) × MediaBoxes na origem, deslocada e negativa. Resíduo
+máximo 0,00 pt em todas. A calibração mede o **caminho de escrita**, como a §47.5 já
+tinha estabelecido: marcadores coloridos em coordenadas conhecidas, render, centroide.
+
+Uma correção ao método da §47.5, que custou cinco falsos negativos: marcador que
+encosta na borda da CropBox tem o centroide puxado pelo recorte, e mede a borda em vez
+da regra. Só entram na conta os marcadores inteiramente dentro da região visível.
+
+### 48.3 Três defeitos do mesmo tipo, achados junto
+
+Identificado o espaço de escrita, ficou fácil ver quem mais estava no espaço errado. Os
+três já existiam; os dois primeiros **desde a §46**, e nenhum teste os pegava.
+
+1. **`& page.rect` recorta o que é válido.** Numa página `/Rotate 90`, `page.rect` tem
+   842×595 e o espaço de escrita 595×842 — largura e altura trocadas. Um diagrama no
+   rodapé vira `y ≈ 800` depois de convertido, o recorte zerava o whiteout inteiro e o
+   diagrama original sobrevivia. O diagrama das fixtures da §46 fica em `y ≤ 460` e nunca
+   chegava lá. O limite correto é a região visível **no espaço de escrita**.
+
+2. **O rótulo Lichess** procurava espaço livre contra `page.rect` pelo mesmo motivo.
+
+3. **`get_text(clip=...)` é em espaço de escrita**, e recebia o retângulo da seleção. Em
+   qualquer página girada devolvia string vazia, sem erro nenhum — e o modo de estudo lê
+   o texto da página por ali (`extract_text_from_pdf_rect`).
+
+O terceiro veio de uma medição que vale registrar, porque contraria o que se esperaria:
+`page.get_text("words")` devolve caixas em espaço de **escrita**, enquanto `get_links`
+devolve em espaço de `page.rect`. Leitura de texto e leitura de link não concordam entre
+si. Foi conferido nas quatro rotações.
+
+### 48.4 O que saiu
+
+`UnsupportedPageGeometry` e a recusa da §47.3 foram removidas — não há mais geometria a
+recusar. A escolha da §47.3 continua tendo sido a certa para o que se sabia na hora:
+recusar custa uma exportação, exportar errado custa o livro.
+
+### 48.5 Cobertura de teste
+
+`tests/test_page_rotation.py` foi de 22 para 34. A fixture de CropBox passou a ter as
+quatro margens diferentes — numa simétrica, uma conversão com o eixo trocado passa.
+
+- rotação + CropBox nas três rotações: o whiteout cobre o original, o tabuleiro cai onde
+  foi selecionado, e não sai deitado;
+- diagrama no rodapé de página girada, com e sem CropBox (o recorte da §48.3);
+- extração de texto pelo caminho do usuário, nas quatro rotações.
+
+Mutações conferidas, cada metade removida por vez:
+
+| removido | testes que caem |
+|---|---|
+| a origem da CropBox (volta ao comportamento da §46) | 9 |
+| a conversão inteira (volta ao pré-§46) | 20 |
+| o recorte pela região visível | 4 |
+| `extract_text` no espaço certo | 3 |
+
+Nenhuma das quatro passa despercebida, e as 558 da suíte inteira continuam passando.

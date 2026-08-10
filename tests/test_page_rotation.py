@@ -39,7 +39,9 @@ ROTATIONS = (0, 90, 180, 270)
 TOLERANCE_PX = 6
 
 
-def _make_pdf(path: Path, rotation: int, with_text: bool = True) -> Path:
+def _make_pdf(
+    path: Path, rotation: int, with_text: bool = True, diagram: tuple = DIAGRAM
+) -> Path:
     """Página de livro girada, com o "diagrama" magenta.
 
     `with_text=False` para os testes que medem a **tinta escura** do tabuleiro: o texto
@@ -50,7 +52,7 @@ def _make_pdf(path: Path, rotation: int, with_text: bool = True) -> Path:
     page = doc.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
     if with_text:
         page.insert_text(fitz.Point(60, 60), f"pagina girada {rotation}", fontsize=12)
-    page.draw_rect(fitz.Rect(*DIAGRAM), color=None, fill=MAGENTA)
+    page.draw_rect(fitz.Rect(*diagram), color=None, fill=MAGENTA)
     page.set_rotation(rotation)
     doc.save(str(path))
     doc.close()
@@ -87,9 +89,17 @@ def _selection_as_the_user_would(service: PdfService, render) -> tuple:
     return service.image_rect_to_pdf_rect(0, seen, render.matrix)
 
 
-def _substitute(tmp_path: Path, rotation: int, with_text: bool = True, **kwargs):
+def _substitute(
+    tmp_path: Path,
+    rotation: int,
+    with_text: bool = True,
+    diagram: tuple = DIAGRAM,
+    **kwargs,
+):
     """Faz o fluxo inteiro numa página girada e devolve o que se vê depois."""
-    source = _make_pdf(tmp_path / f"in{rotation}.pdf", rotation, with_text=with_text)
+    source = _make_pdf(
+        tmp_path / f"in{rotation}.pdf", rotation, with_text=with_text, diagram=diagram
+    )
     service = PdfService(str(source))
     try:
         render = service.render_page(0, zoom=ZOOM)
@@ -256,14 +266,29 @@ def test_an_unrotated_page_is_untouched_by_the_fix(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rotação junto com CropBox deslocada: recusa explícita (§47)
+# Rotação junto com CropBox deslocada (§48)
+#
+# A §47 recusava esta combinação por não ter identificado a transformação. A
+# calibração que a identificou estava medida numa CropBox **simétrica** —
+# margens esquerda e direita iguais, topo e base iguais —, e por isso cada termo
+# das fórmulas era ambíguo entre duas grandezas diferentes. Com margens
+# desiguais a regra aparece de primeira.
+#
+# Daí a fixture: as quatro margens desta CropBox são **todas diferentes**
+# (30 / 95 / 45 / 70). Uma conversão que troque eixo ou sinal passa numa CropBox
+# simétrica e falha aqui — que é exatamente o que se quer de uma fixture.
 # ---------------------------------------------------------------------------
 
-CROPBOX = (40.0, 60.0, 555.0, 782.0)
+CROPBOX = (30.0, 45.0, 500.0, 772.0)
+#: Um diagrama no rodapé: em página girada o retângulo convertido cai fora de
+#: `page.rect`, que tem largura e altura trocadas. Era o recorte que o apagava.
+LOW_DIAGRAM = (70.0, 620.0, 270.0, 820.0)
 
 
-def _make_pdf_with_cropbox(path: Path, rotation: int, cropbox=CROPBOX) -> Path:
-    _make_pdf(path, 0, with_text=False)
+def _make_pdf_with_cropbox(
+    path: Path, rotation: int, cropbox=CROPBOX, diagram: tuple = DIAGRAM
+) -> Path:
+    _make_pdf(path, 0, with_text=False, diagram=diagram)
     document = fitz.open(str(path))
     try:
         page = document[0]
@@ -277,11 +302,12 @@ def _make_pdf_with_cropbox(path: Path, rotation: int, cropbox=CROPBOX) -> Path:
     return path
 
 
-def _export(source: Path, output: Path) -> None:
+def _export(source: Path, output: Path) -> tuple:
     service = PdfService(str(source))
     try:
         render = service.render_page(0, zoom=ZOOM)
         selection = _selection_as_the_user_would(service, render)
+        seen_before, _ = _boxes(render.image_png)
     finally:
         service.close()
     apply_operations_to_pdf(
@@ -290,6 +316,15 @@ def _export(source: Path, output: Path) -> None:
         [OverlayOperation(page_num=0, rect_pdf=selection, fen=FEN)],
         include_lichess_link=False,
     )
+    return seen_before, selection
+
+
+def _after(output: Path) -> tuple:
+    service = PdfService(str(output))
+    try:
+        return _boxes(service.render_page(0, zoom=ZOOM).image_png)
+    finally:
+        service.close()
 
 
 def test_an_offset_cropbox_alone_still_works(tmp_path: Path) -> None:
@@ -299,31 +334,136 @@ def test_an_offset_cropbox_alone_still_works(tmp_path: Path) -> None:
 
     _export(source, output)
 
-    after = PdfService(str(output))
-    try:
-        magenta, _ink = _boxes(after.render_page(0, zoom=ZOOM).image_png)
-    finally:
-        after.close()
+    magenta, _ink = _after(output)
     assert magenta is None, "o diagrama original sobreviveu"
 
 
 @pytest.mark.parametrize("rotation", (90, 180, 270))
-def test_rotation_with_an_offset_cropbox_is_refused_loudly(tmp_path: Path, rotation: int) -> None:
-    """Combinação não resolvida (§47): o app **recusa** em vez de exportar errado.
-
-    O sintoma que isto substitui era pior que um erro: PDF com o diagrama antigo
-    intacto e o novo atravessado noutro lugar, que ninguém percebe num livro de 900
-    páginas até distribuí-lo.
-    """
-    from chess_pdf_editor.pdf_service import UnsupportedPageGeometry
-
+def test_the_whiteout_covers_the_diagram_with_rotation_and_cropbox(
+    tmp_path: Path, rotation: int
+) -> None:
+    """A combinação que a §47 recusava: agora exporta, e exporta certo."""
     source = _make_pdf_with_cropbox(tmp_path / f"both{rotation}.pdf", rotation=rotation)
     output = tmp_path / f"both{rotation}-out.pdf"
 
-    with pytest.raises(UnsupportedPageGeometry) as raised:
-        _export(source, output)
+    _export(source, output)
 
-    message = str(raised.value)
-    assert "CropBox" in message
-    assert str(rotation) in message
-    assert not output.exists(), "recusou, mas deixou um PDF pela metade"
+    magenta, _ink = _after(output)
+    assert magenta is None, f"o diagrama original sobreviveu em {magenta}"
+
+
+@pytest.mark.parametrize("rotation", (90, 180, 270))
+def test_the_board_lands_where_selected_with_rotation_and_cropbox(
+    tmp_path: Path, rotation: int
+) -> None:
+    """Cobrir o original não basta: o tabuleiro novo tem de cair no lugar dele.
+
+    É o teste que pega a conversão com a magnitude certa e o eixo errado — o
+    sintoma medido na §47.2.
+    """
+    source = _make_pdf_with_cropbox(tmp_path / f"pos{rotation}.pdf", rotation=rotation)
+    output = tmp_path / f"pos{rotation}-out.pdf"
+
+    seen_before, _selection = _export(source, output)
+
+    _magenta, ink = _after(output)
+    assert ink is not None, "nenhum tabuleiro foi desenhado"
+    assert all(abs(ink[i] - seen_before[i]) <= TOLERANCE_PX for i in range(4)), (
+        f"o tabuleiro caiu em {ink}, e a seleção era {seen_before}"
+    )
+
+
+def test_the_board_is_not_lying_on_its_side_with_a_cropbox(tmp_path: Path) -> None:
+    """As duas metades da §46 continuam independentes: posição e orientação."""
+    crops: dict[int, tuple] = {}
+    for rotation in ROTATIONS:
+        source = _make_pdf_with_cropbox(tmp_path / f"ori{rotation}.pdf", rotation=rotation)
+        output = tmp_path / f"ori{rotation}-out.pdf"
+        _seen, selection = _export(source, output)
+        document = fitz.open(str(output))
+        try:
+            pixmap = document[0].get_pixmap(
+                matrix=fitz.Matrix(1.0, 1.0), clip=fitz.Rect(selection), colorspace=fitz.csRGB
+            )
+            crops[rotation] = (pixmap.width, pixmap.height, pixmap.samples)
+        finally:
+            document.close()
+
+    for rotation in (90, 180, 270):
+        assert crops[rotation] == crops[0], f"o tabuleiro em /Rotate {rotation} saiu girado"
+
+
+# ---------------------------------------------------------------------------
+# O recorte que apagava trabalho válido (§48.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("rotation", (90, 270))
+def test_a_diagram_low_on_a_rotated_page_is_still_covered(
+    tmp_path: Path, rotation: int
+) -> None:
+    """Defeito que já existia desde a §46, e que nenhum teste pegava.
+
+    Convertido para espaço de escrita, um diagrama no rodapé fica em y ≈ 800 —
+    além dos 595 de altura de `page.rect` numa página girada. O recorte
+    `& page.rect` zerava o whiteout inteiro e o diagrama original sobrevivia.
+    O diagrama das outras fixtures fica em y ≤ 460 e nunca chegava lá.
+    """
+    _before, magenta, _ink, _sel, _out = _substitute(
+        tmp_path, rotation, with_text=False, diagram=LOW_DIAGRAM
+    )
+
+    assert magenta is None, f"o whiteout foi recortado e o original sobreviveu em {magenta}"
+
+
+@pytest.mark.parametrize("rotation", (90, 270))
+def test_a_low_diagram_with_a_cropbox_is_also_covered(tmp_path: Path, rotation: int) -> None:
+    """O mesmo recorte, agora com a CropBox deslocada junto."""
+    source = _make_pdf_with_cropbox(
+        tmp_path / f"low{rotation}.pdf", rotation=rotation, diagram=(70.0, 560.0, 250.0, 740.0)
+    )
+    output = tmp_path / f"low{rotation}-out.pdf"
+
+    _export(source, output)
+
+    magenta, _ink = _after(output)
+    assert magenta is None, f"o diagrama original sobreviveu em {magenta}"
+
+
+# ---------------------------------------------------------------------------
+# Ler texto da página também é em espaço de escrita (§48.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("rotation", ROTATIONS)
+def test_text_extraction_from_a_selection_works_on_a_rotated_page(
+    tmp_path: Path, rotation: int
+) -> None:
+    """`get_text(clip=...)` é em espaço de escrita, e recebia o da seleção.
+
+    O modo de estudo lê a página por aqui: em qualquer página girada a resposta
+    era string vazia, sem erro nenhum.
+    """
+    path = tmp_path / f"txt{rotation}.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
+    page.insert_text(fitz.Point(100, 300), "Diagrama 12", fontsize=14)
+    page.set_rotation(rotation)
+    doc.save(str(path))
+    doc.close()
+
+    service = PdfService(str(path))
+    try:
+        # Pelo caminho do usuário: ele vê o texto, arrasta em volta dele, e a
+        # interface converte com `image_rect_to_pdf_rect`.
+        render = service.render_page(0, zoom=ZOOM)
+        _magenta, ink = _boxes(render.image_png)
+        assert ink is not None, "o texto não foi encontrado no render"
+        margin = 4 * ZOOM  # a caixa medida vem da amostragem de 2 px do `_boxes`
+        around = (ink[0] - margin, ink[1] - margin, ink[2] + margin, ink[3] + margin)
+        selection = service.image_rect_to_pdf_rect(0, around, render.matrix)
+        text = service.extract_text_from_pdf_rect(0, selection)
+    finally:
+        service.close()
+
+    assert "Diagrama 12" in text, f"não leu o texto da seleção: {text!r}"

@@ -369,11 +369,11 @@ Isso valia so para paginas sem rotacao ate o Sprint 9.18. Antes, numa pagina gir
 diagrama antigo sobrevivia no PDF exportado e o tabuleiro novo ia para outro canto,
 deitado.
 
-**Limitacao conhecida:** pagina que combina rotacao **com** uma `CropBox` deslocada da
-`MediaBox` ainda nao e suportada. Nesse caso o app **recusa a exportacao** com uma
-mensagem clara, em vez de gravar o diagrama no lugar errado. Contorno: normalize o PDF
-antes (imprimir para PDF resolve) e reabra. `CropBox` deslocada **sem** rotacao funciona
-normalmente.
+Rotacao combinada com uma `CropBox` deslocada da `MediaBox` — livro escaneado de lado
+**e** preparado para impressao — ficou de fora ate o Sprint 9.19, quando o app passou a
+recusar a exportacao em vez de grava-la errada. Desde o Sprint 9.20 essa combinacao
+tambem e suportada: as quatro rotacoes, com qualquer `CropBox` e qualquer `MediaBox`.
+Nao ha mais limitacao conhecida de geometria de pagina.
 
 ## Coordenadas do diagrama original
 

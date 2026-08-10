@@ -107,6 +107,51 @@ def _render_page_object(page: fitz.Page, page_num: int, zoom: float) -> Rendered
     )
 
 
+# ---------------------------------------------------------------------------
+# Os dois espaços de coordenada de uma página (§48)
+#
+# Tudo que o usuário vê e escolhe está no espaço de `page.rect`: a seleção, a
+# galeria, o `rect_pdf` gravado no projeto. Mas **escrever** na página —
+# `show_pdf_page`, `insert_image`, `add_redact_annot`, `draw_rect`,
+# `insert_text`, `insert_link` — e **ler texto** dela — `get_text`, inclusive o
+# `clip=` — são no espaço de escrita, que é o que `page.transformation_matrix`
+# produz. Os dois só coincidem quando não há rotação nem CropBox deslocada.
+#
+# A conversão é uma só, e vale para as quatro rotações combinadas com qualquer
+# CropBox e qualquer MediaBox (medido em 80 geometrias, §48.2):
+#
+#     page.rect = (escrita − origem) * rotation_matrix
+#     escrita   = page.rect * derotation_matrix + origem
+#
+# onde `origem` é o canto superior-esquerdo da CropBox **no espaço de escrita**.
+# Sem rotação essa origem é (0, 0) — a `transformation_matrix` já embute o
+# deslocamento da CropBox —, e por isso o caso comum passa por aqui inalterado.
+# ---------------------------------------------------------------------------
+
+
+def _write_space_cropbox(page: fitz.Page) -> fitz.Rect:
+    """A CropBox — a região visível — em coordenadas de escrita.
+
+    É também o recorte correto para qualquer retângulo já convertido: em página
+    girada, `page.rect` tem largura e altura trocadas em relação ao espaço de
+    escrita, e usá-lo como limite corta o que é válido (§48.3).
+    """
+    media = page.mediabox
+    crop = page.cropbox
+    native = fitz.Rect(crop.x0, media.y1 - crop.y1, crop.x1, media.y1 - crop.y0)
+    return native * page.transformation_matrix
+
+
+def _to_write_space(page: fitz.Page, rect: Rect) -> fitz.Rect:
+    """Retângulo do espaço que o usuário vê para o espaço de escrita."""
+    origin = _write_space_cropbox(page).tl
+    return (
+        fitz.Rect(rect)
+        * page.derotation_matrix
+        * fitz.Matrix(1, 0, 0, 1, origin.x, origin.y)
+    )
+
+
 def _render_page_region(page: fitz.Page, zoom: float, rect_pdf: Rect) -> bytes:
     matrix = fitz.Matrix(zoom, zoom)
     clip = fitz.Rect(rect_pdf) & page.rect
@@ -310,7 +355,10 @@ class PdfService:
 
     def extract_text_from_pdf_rect(self, page_num: int, rect_pdf: Rect) -> str:
         page = self.doc[page_num]
-        rect = fitz.Rect(rect_pdf) & page.rect
+        # O `clip=` do `get_text` é em espaço de escrita, não no de `page.rect`
+        # (medido: §48.3). Passar a seleção crua devolvia string vazia em toda
+        # página girada — e o estudo lê o texto da página por aqui.
+        rect = _to_write_space(page, rect_pdf) & _write_space_cropbox(page)
         if rect.is_empty:
             return ""
         return page.get_text("text", clip=rect).strip()
@@ -413,10 +461,12 @@ def _link_label_slots(page: fitz.Page, rect: fitz.Rect, font_size: float) -> lis
         rect.y1 + LINK_GAP_PT + font_size,  # abaixo do diagrama
         rect.y0 - LINK_GAP_PT,              # acima
     ]
+    # `rect` já é de escrita, então o limite da página também tem de ser (§48.3).
+    visible = _write_space_cropbox(page)
     return [
         baseline
         for baseline in slots
-        if baseline + 2.0 <= page.rect.y1 and baseline - font_size >= page.rect.y0
+        if baseline + 2.0 <= visible.y1 and baseline - font_size >= visible.y0
     ]
 
 
@@ -436,14 +486,15 @@ def _insert_lichess_link_below_diagram(page: fitz.Page, rect: fitz.Rect, op: Ove
     font_size = min(12.0, max(7.0, rect.height * 0.09))
     text_width = fitz.get_text_length(LINK_TEXT, fontname="helv", fontsize=font_size)
     center_x = (rect.x0 + rect.x1) / 2.0
-    x0 = max(page.rect.x0 + 1.0, center_x - (text_width / 2.0) - 2.0)
-    x1 = min(page.rect.x1 - 1.0, center_x + (text_width / 2.0) + 2.0)
+    visible = _write_space_cropbox(page)
+    x0 = max(visible.x0 + 1.0, center_x - (text_width / 2.0) - 2.0)
+    x1 = min(visible.x1 - 1.0, center_x + (text_width / 2.0) + 2.0)
 
     uri = _operation_lichess_url(op)
 
     if x1 > x0:
         for baseline_y in _link_label_slots(page, rect, font_size):
-            label_rect = fitz.Rect(x0, baseline_y - font_size, x1, baseline_y + 2.0) & page.rect
+            label_rect = fitz.Rect(x0, baseline_y - font_size, x1, baseline_y + 2.0) & visible
             if not _region_is_free(page, label_rect):
                 continue
             page.insert_text(
@@ -457,7 +508,7 @@ def _insert_lichess_link_below_diagram(page: fitz.Page, rect: fitz.Rect, op: Ove
             page.insert_link({"kind": fitz.LINK_URI, "from": label_rect, "uri": uri})
             return
 
-    fallback = fitz.Rect(rect) & page.rect
+    fallback = fitz.Rect(rect) & visible
     if fallback.is_empty:
         return
     logger.info(
@@ -646,6 +697,10 @@ def find_coordinate_labels(page: fitz.Page, rect_pdf: Rect) -> list[fitz.Rect]:
             )
         )
 
+    # As caixas do `get_text` já são de escrita, e o limite delas é a região
+    # visível nesse mesmo espaço — não `page.rect`, que numa página girada tem
+    # largura e altura trocadas e cortaria coordenada válida (§48.3).
+    visible = _write_space_cropbox(page)
     return [
         fitz.Rect(
             box.x0 - _COORDINATE_PAD_PT,
@@ -653,7 +708,7 @@ def find_coordinate_labels(page: fitz.Page, rect_pdf: Rect) -> list[fitz.Rect]:
             box.x1 + _COORDINATE_PAD_PT,
             box.y1 + _COORDINATE_PAD_PT,
         )
-        & page.rect
+        & visible
         for box in found
     ]
 
@@ -670,47 +725,17 @@ def _whiteout_rect(page: fitz.Page, op: OverlayOperation, fallback_margin_pt: fl
         rect.y0 - pad_top,
         rect.x1 + pad_right,
         rect.y1 + pad_bottom,
-    ) & page.rect
+    ) & _write_space_cropbox(page)
 
 
-class UnsupportedPageGeometry(RuntimeError):
-    """Geometria de página que este código não sabe converter com segurança."""
-
-
-def _cropbox_is_offset(page: fitz.Page) -> bool:
-    position = page.cropbox_position
-    return abs(position.x) > 0.01 or abs(position.y) > 0.01
-
-
-def _check_page_geometry(page: fitz.Page) -> None:
-    """Recusa a combinação de rotação **com** CropBox deslocada (§47).
-
-    Rotação sozinha está resolvida (§46) e CropBox deslocada sozinha sempre
-    funcionou — as duas juntas, não. Foram medidas quatro composições de matriz e
-    nenhuma acerta; o registro do que se mediu está na §47.2.
-
-    Falhar aqui é deliberado. O sintoma da versão anterior era um PDF exportado com
-    o diagrama antigo intacto e o novo atravessado noutro lugar — e ninguém percebe
-    isso num livro de 900 páginas até distribuí-lo. Erro alto custa uma exportação;
-    saída errada em silêncio custa o livro.
-    """
-    if page.rotation and _cropbox_is_offset(page):
-        raise UnsupportedPageGeometry(
-            f"A página {page.number + 1} combina rotação (/Rotate {page.rotation}) com "
-            "uma CropBox deslocada da MediaBox, e esta versão não sabe posicionar o "
-            "diagrama nesse caso — exportar produziria o diagrama no lugar errado. "
-            "Contorno: gire/normalize o PDF antes (por exemplo, imprimindo-o para PDF) "
-            "e reabra."
-        )
-
-
-def _derotated_operation(page: fitz.Page, op):
-    """Cópia da operação com o retângulo em espaço não-rotacionado (§46).
+def _operation_in_write_space(page: fitz.Page, op):
+    """Cópia da operação com o retângulo em espaço de escrita (§46, §48).
 
     Cópia, e não mutação: a mesma lista de operações é reusada pela prévia, pela
-    galeria e pela exportação, e girar o retângulo no lugar corromperia as outras.
+    galeria e pela exportação, e converter o retângulo no lugar corromperia as
+    outras.
     """
-    rect = fitz.Rect(op.rect_pdf) * page.derotation_matrix
+    rect = _to_write_space(page, op.rect_pdf)
     return replace(op, rect_pdf=(rect.x0, rect.y0, rect.x1, rect.y1))
 
 
@@ -735,18 +760,21 @@ def apply_page_operations(
     ops = [op for op in operations if not fitz.Rect(op.rect_pdf).is_empty]
     erases = list(erase_operations)
 
-    # Página com `/Rotate` (livro escaneado de lado): o retângulo guardado está no
-    # espaço que o usuário vê — o mesmo de `page.rect` —, mas escrever no conteúdo
-    # da página é em espaço não-rotacionado. Sem converter, o whiteout não cobria o
-    # diagrama original e o tabuleiro novo ia para outro lugar, deitado (§46).
-    if page.rotation:
-        _check_page_geometry(page)
-        ops = [_derotated_operation(page, op) for op in ops]
-        erases = [_derotated_operation(page, op) for op in erases]
+    # Página com `/Rotate` (livro escaneado de lado) ou com CropBox deslocada
+    # (livro preparado para impressão): o retângulo guardado está no espaço que o
+    # usuário vê — o mesmo de `page.rect` —, mas escrever no conteúdo da página é
+    # no espaço de escrita. Sem converter, o whiteout não cobria o diagrama
+    # original e o tabuleiro novo ia para outro lugar, deitado (§46, §48).
+    #
+    # Daqui para baixo, **todo** retângulo está em espaço de escrita, e quem
+    # limita é `visible`, não `page.rect`.
+    visible = _write_space_cropbox(page)
+    ops = [_operation_in_write_space(page, op) for op in ops]
+    erases = [_operation_in_write_space(page, op) for op in erases]
 
     redact_rects: list[fitz.Rect] = []
     for erase_op in erases:
-        redact_rects.append(fitz.Rect(erase_op.rect_pdf) & page.rect)
+        redact_rects.append(fitz.Rect(erase_op.rect_pdf) & visible)
     if whiteout:
         for op in ops:
             redact_rects.append(_whiteout_rect(page, op, whiteout_margin_pt))
