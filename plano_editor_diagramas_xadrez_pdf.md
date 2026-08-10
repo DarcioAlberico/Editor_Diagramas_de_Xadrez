@@ -556,6 +556,7 @@ Beta (meta):
 14. **Auto-orientar reversível** ✅ — ver §42.
 15. **Autosave durável de verdade** ✅ — ver §43.
 16. **Variante light do executável** ✅ — ver §44.
+17. **Redes contra perda silenciosa de campo** ✅ — ver §45.
 
 ### 15.1 O que falta (revisado em 2026-08-09)
 
@@ -3300,3 +3301,80 @@ Testam o que **muda de comportamento** quando o bundle se declara light:
 Instalador (`.msi`/Inno Setup), assinatura de código e validação em máquina Windows sem
 Python. Os três dependem de coisas que não existem nesta máquina — respectivamente o
 Inno Setup, um certificado e a própria máquina limpa.
+
+---
+
+## 45) Sprint 9.17 — redes para a perda silenciosa de campo (2026-08-09)
+
+Com as listas de §19, §20.2 e §22.5 fechadas, este sprint não veio do plano: veio de
+uma hipótese sobre uma **classe** de defeito que o projeto tem duas vezes.
+
+### 45.1 A hipótese, confirmada de propósito
+
+`save_project_state` grava com `asdict(state)` — genérico, pega qualquer campo novo.
+`_load_operation` lê **campo por campo**, com kwargs escritos à mão. Os dois não estão
+amarrados por nada.
+
+Então acrescentar um campo a `OverlayOperation` sem tocar no carregador deveria perder
+o valor. Simulado antes de escrever teste nenhum:
+
+```text
+gravado no JSON: True
+valor apos recarregar: 'padrao'
+PERDEU EM SILENCIO
+```
+
+O valor do usuário vai para o arquivo e volta como default. Sem exceção, sem log, sem
+aviso. Num app cujo sprint fundador se chama "nunca perder trabalho", é a pior forma
+de perder trabalho: a que ninguém vê.
+
+Conferido também que **hoje não há perda**: os quatro dataclasses do formato
+(`OverlayOperation`, `EraseOperation`, `StudyPosition` e os escalares de
+`ProjectState`) sobrevivem inteiros ao round-trip. O que faltava era a rede.
+
+### 45.2 A rede enumera os campos pelo dataclass
+
+Os testes novos não listam campos: eles percorrem `dataclasses.fields()`, põem em cada
+um um valor diferente do default, gravam, recarregam e comparam **tudo**. Campo novo
+entra na conferência sozinho, que é o ponto.
+
+Dois cuidados que fazem a rede valer:
+
+- **Tipo desconhecido falha o teste**, em vez de ser pulado. Um campo novo de um tipo
+  que o gerador não sabe nudgar produz `pytest.fail` com o nome do campo e o pedido de
+  acrescentar o caso — força uma decisão em vez de passar batido.
+- `side_to_move` e `move_comments` têm valores específicos, porque o carregador
+  **normaliza** os dois: valor genérico ali round-trip-aria sem provar nada.
+
+`schema_version` fica fora da conferência de propósito — o carregador o reescreve para
+a versão corrente, e é o comportamento certo (ver `load_project_state`): gravar o
+número antigo faria a próxima abertura migrar de novo.
+
+### 45.3 O mesmo defeito um arquivo ao lado
+
+`report.CSV_COLUMNS` é uma tupla mantida à mão ao lado do dataclass `ReportRow`. Medido
+o que acontece quando as duas divergem, com o `csv.DictWriter` que o módulo usa:
+
+| Divergência | O que acontece |
+|---|---|
+| campo novo sem coluna | `ValueError` — alto, mas só quando alguém exporta |
+| coluna sem campo | grava a coluna **vazia**, calado |
+
+O segundo é o que assusta: sobra uma coluna fantasma no relatório de todo mundo. Um
+teste compara a tupla com os campos do dataclass, **na ordem** — o cabeçalho do módulo
+promete rótulos estáveis para quem faz diff entre dois relatórios, e reordenar colunas
+quebra esse diff tanto quanto renomear uma.
+
+### 45.4 Cobertura
+
+`tests/test_project_state.py` foi de 6 para 11 testes; `tests/test_report.py` de 10
+para 11. Total da suíte: **524**.
+
+Mutações conferidas à mão, que é o que prova que a rede tem dentes:
+
+- campo novo em `OverlayOperation` → derruba 2 testes (substituição e candidato, que
+  usam o mesmo carregador por listas diferentes);
+- campo novo em `StudyPosition` → derruba o seu;
+- campo novo em `ReportRow` → derruba a comparação de colunas.
+
+Cada falha nomeia o campo e mostra o que foi gravado contra o que voltou.

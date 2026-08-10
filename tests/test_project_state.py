@@ -207,3 +207,162 @@ def test_load_project_state_legacy_uniform_padding_to_sides(tmp_path):
     assert op.whiteout_padding_top_pt == 2.0
     assert op.whiteout_padding_right_pt == 2.0
     assert op.whiteout_padding_bottom_pt == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Cobertura de campos do formato salvo (§45)
+# ---------------------------------------------------------------------------
+#
+# Os testes acima conferem campos escolhidos a dedo. O risco que eles não cobrem é
+# outro: alguém acrescenta um campo a `OverlayOperation` e esquece de lê-lo em
+# `_load_operation`. O `asdict` grava o campo novo no JSON, o carregador o ignora, e o
+# valor do usuário volta como default — **sem erro nenhum**. Conferido de propósito
+# antes de escrever isto: um campo novo desaparece em silêncio.
+#
+# Os testes daqui enumeram os campos pelo próprio dataclass, então campo novo entra
+# na conferência sozinho. Tipo que o gerador não conheça **falha** o teste, em vez de
+# ser pulado — a intenção é forçar uma decisão, não passar batido.
+
+import dataclasses
+
+import pytest
+
+
+def _nudged(value: object, field_name: str) -> object:
+    """Um valor diferente do que está ali, para qualquer perda ficar visível."""
+    # `side_to_move` só aceita w/b, e `move_comments` tem forma fixa: o carregador
+    # normaliza os dois, então valor genérico não provaria nada.
+    if field_name == "side_to_move":
+        return "b" if value != "b" else "w"
+    if field_name == "move_comments":
+        return {"5": {"before": "antes do lance", "after": "depois do lance"}}
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, tuple):
+        return tuple(float(item) + 1.5 for item in value)
+    if isinstance(value, dict):
+        return {"sha256": "outro", "size": 99}
+    if isinstance(value, int):
+        return int(value) + 7
+    if isinstance(value, float):
+        return float(value) + 1.25
+    if isinstance(value, str):
+        return f"{value}-alterado" if value else "preenchido"
+    if value is None:
+        # `confidence` nasce `None`; o que importa é que um número sobreviva.
+        return 0.5
+    if isinstance(value, list):
+        return value
+    pytest.fail(
+        f"o gerador não sabe criar valor para `{field_name}` ({type(value).__name__}); "
+        "acrescente o caso em `_nudged` e confira que o campo sobrevive ao round-trip"
+    )
+
+
+def _fill_every_field(instance):
+    """Cópia do objeto com **todos** os campos diferentes do default."""
+    changes = {
+        field.name: _nudged(getattr(instance, field.name), field.name)
+        for field in dataclasses.fields(instance)
+    }
+    return dataclasses.replace(instance, **changes)
+
+
+def _assert_survives(original, reloaded, label: str) -> None:
+    lost = []
+    for field in dataclasses.fields(original):
+        before = getattr(original, field.name)
+        after = getattr(reloaded, field.name)
+        if isinstance(before, tuple) or isinstance(after, tuple):
+            before, after = tuple(before), tuple(after)
+        if before != after:
+            lost.append(f"{field.name}: gravou {before!r}, voltou {after!r}")
+    assert not lost, f"{label} perdeu {len(lost)} campo(s) no round-trip:\n  " + "\n  ".join(lost)
+
+
+BASE_OPERATION = OverlayOperation(page_num=0, rect_pdf=(1.0, 2.0, 3.0, 4.0), fen="8/8/8/8/8/8/8/8")
+BASE_ERASE = EraseOperation(page_num=0, rect_pdf=(1.0, 2.0, 3.0, 4.0))
+BASE_STUDY = StudyPosition(page_num=0, rect_pdf=(1.0, 2.0, 3.0, 4.0), fen="8/8/8/8/8/8/8/8")
+
+
+def test_every_field_of_a_substitution_survives_the_roundtrip(tmp_path) -> None:
+    filled = _fill_every_field(BASE_OPERATION)
+    path = tmp_path / "state.json"
+    save_project_state(
+        str(path),
+        ProjectState(source_pdf="l.pdf", source_pdf_fingerprint={}, operations=[filled]),
+    )
+
+    _assert_survives(filled, load_project_state(str(path)).operations[0], "OverlayOperation")
+
+
+def test_every_field_of_a_candidate_survives_the_roundtrip(tmp_path) -> None:
+    """Candidato usa o mesmo carregador, mas por outra lista: vale conferir os dois."""
+    filled = _fill_every_field(BASE_OPERATION)
+    path = tmp_path / "state.json"
+    save_project_state(
+        str(path),
+        ProjectState(
+            source_pdf="l.pdf", source_pdf_fingerprint={}, operations=[], candidates=[filled]
+        ),
+    )
+
+    _assert_survives(filled, load_project_state(str(path)).candidates[0], "candidato")
+
+
+def test_every_field_of_an_erasure_survives_the_roundtrip(tmp_path) -> None:
+    filled = _fill_every_field(BASE_ERASE)
+    path = tmp_path / "state.json"
+    save_project_state(
+        str(path),
+        ProjectState(
+            source_pdf="l.pdf",
+            source_pdf_fingerprint={},
+            operations=[],
+            erase_operations=[filled],
+        ),
+    )
+
+    _assert_survives(filled, load_project_state(str(path)).erase_operations[0], "EraseOperation")
+
+
+def test_every_field_of_a_study_position_survives_the_roundtrip(tmp_path) -> None:
+    filled = _fill_every_field(BASE_STUDY)
+    path = tmp_path / "state.json"
+    save_project_state(
+        str(path),
+        ProjectState(
+            source_pdf="l.pdf",
+            source_pdf_fingerprint={},
+            operations=[],
+            study_positions=[filled],
+        ),
+    )
+
+    _assert_survives(filled, load_project_state(str(path)).study_positions[0], "StudyPosition")
+
+
+def test_every_scalar_of_the_project_survives_the_roundtrip(tmp_path) -> None:
+    """Inclui `current_page`, `ocr_full_next_page` e os dois ajustes do livro."""
+    base = ProjectState(source_pdf="l.pdf", source_pdf_fingerprint={}, operations=[])
+    scalars = {
+        field.name: _nudged(getattr(base, field.name), field.name)
+        for field in dataclasses.fields(base)
+        if field.name not in {"operations", "erase_operations", "study_positions", "candidates"}
+    }
+    # A versão do schema é reescrita pelo carregador de propósito (ver
+    # `load_project_state`): gravar o número antigo faria a próxima abertura migrar
+    # de novo. Então ela não entra na conferência.
+    scalars.pop("schema_version", None)
+    filled = dataclasses.replace(base, **scalars)
+
+    path = tmp_path / "state.json"
+    save_project_state(str(path), filled)
+    reloaded = load_project_state(str(path))
+
+    lost = [
+        f"{name}: gravou {value!r}, voltou {getattr(reloaded, name)!r}"
+        for name, value in scalars.items()
+        if getattr(reloaded, name) != value
+    ]
+    assert not lost, "o projeto perdeu escalares:\n  " + "\n  ".join(lost)

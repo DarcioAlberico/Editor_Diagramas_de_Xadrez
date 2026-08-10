@@ -127,3 +127,30 @@ def test_json_carries_the_summary_and_the_source(tmp_path: Path) -> None:
 def test_an_unknown_extension_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         export_report(str(tmp_path / "relatorio.txt"), operations=[_operation()])
+
+
+# ---------------------------------------------------------------------------
+# As colunas do CSV e os campos da linha (§45)
+# ---------------------------------------------------------------------------
+
+
+def test_the_csv_columns_match_the_row_fields_exactly() -> None:
+    """`CSV_COLUMNS` é mantida à mão ao lado de `ReportRow`, e as duas divergem calado.
+
+    Medido com o `csv.DictWriter` que o módulo usa:
+
+    * campo novo sem coluna → `ValueError`, mas só na hora em que alguém exporta;
+    * coluna sem campo → grava a coluna **vazia**, sem reclamar nada.
+
+    O segundo é o pior: sobra uma coluna fantasma no relatório de todo mundo. Este
+    teste traz as duas falhas para a suíte.
+
+    A **ordem** também entra na comparação de propósito: o cabeçalho do módulo promete
+    rótulos estáveis para quem faz diff entre dois relatórios, e reordenar colunas
+    quebra esse diff tanto quanto renomear uma.
+    """
+    import dataclasses
+
+    from chess_pdf_editor.report import CSV_COLUMNS, ReportRow
+
+    assert tuple(field.name for field in dataclasses.fields(ReportRow)) == tuple(CSV_COLUMNS)
