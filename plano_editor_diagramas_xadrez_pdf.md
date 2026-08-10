@@ -41,6 +41,7 @@ Technique*, 898 páginas). O que existe hoje:
 | **Migrações do projeto salvo entre schemas** | ✅ **novo — ver §28.1** |
 | **Empacotamento (executável Windows)** | ✅ **novo — ver §28.2** |
 | **Página com `/Rotate` e/ou CropBox deslocada** | ✅ **novo — ver §46 e §48** |
+| **Script do instalador (Inno Setup)** | ✅ **novo — ver §49**; falta compilar |
 | Instalador assinado / validação em máquina limpa | ❌ pendente — ver §28.4 |
 
 **O desvio da §5/§6 foi fechado.** Até a versão 1.5 o reconhecimento existia só
@@ -561,6 +562,7 @@ Beta (meta):
 18. **Páginas com `/Rotate`** ✅ — ver §46.
 19. **Rotação + CropBox: recusa explícita** ✅ — ver §47.
 20. **Rotação + CropBox: resolvida** ✅ — ver §48. Com ela, a §47 fecha.
+21. **Instalador Windows (o script)** ✅ — ver §49. Falta compilá-lo.
 
 ### 15.1 O que falta (revisado em 2026-08-09)
 
@@ -571,7 +573,7 @@ da interface) e §22.5 (as oito ferramentas sugeridas). Sobram **cinco** itens, 
 | Item | Onde | Por que está aberto |
 |---|---|---|
 | Rodar em 3 PDFs reais diferentes | §18 | precisa dos livros em mão; os outros 5 itens da lista têm teste automatizado, este não pode ter |
-| Instalador (`.msi`/Inno Setup) | §28.4 | precisa do Inno Setup instalado |
+| **Compilar** o instalador | §49 | o `.iss` existe; falta o Inno Setup 6 instalado para rodar o `ISCC.exe` |
 | Assinatura de código | §28.4 | precisa de um certificado |
 | Validação em Windows sem Python | §28.4 | precisa da máquina limpa |
 | Painel sem rolagem em 1500×900 | §20.5 | **decidido não forçar**: faltam 191 px e o caminho já foi medido e reprovado (§41.2, §34.3) |
@@ -579,8 +581,15 @@ da interface) e §22.5 (as oito ferramentas sugeridas). Sobram **cinco** itens, 
 Os quatro primeiros são dependências físicas, não decisões pendentes. O quinto é uma
 decisão registrada, com o número medido: o fluxo cabe a partir de 1.100 px de altura.
 
-A sexta linha desta tabela — rotação **com** CropBox deslocada — saiu no Sprint 9.20
-(§48): era o único item aberto que dependia de escrever código.
+Duas linhas saíram desta tabela desde a revisão anterior, e por motivos diferentes:
+
+- rotação **com** CropBox deslocada, no Sprint 9.20 (§48) — resolvida;
+- "instalador", no Sprint 9.21 (§49) — **não** resolvida, mas mal descrita. Estava
+  como bloqueada pelo Inno Setup, quando o Inno Setup só é preciso para compilar. A
+  linha agora diz o que de fato falta, e o que faltava de código foi escrito.
+
+**Nenhum dos cinco depende de escrever código.** É o critério de encerramento desta
+fase de implementação.
 
 Duas pendências de sprint continuam anotadas de propósito, e **não** são tarefas:
 o render de prévia síncrono (§25.7, medido em 119 ms — "não incomoda") e o
@@ -1899,8 +1908,10 @@ procedimento para mudar o schema do projeto salvo.
 - **Validação em máquina limpa.** O `--self-test` roda de outra pasta de trabalho,
   o que pega caminho relativo errado, mas não pega DLL do sistema que só existe
   nesta máquina. Só instalar num Windows sem Python responde isso.
-- **Instalador.** Hoje a entrega é uma pasta de 719 MB; falta um `.msi`/Inno Setup
-  e assinatura de código (sem ela o SmartScreen avisa).
+- ~~**Instalador.**~~ Escrito no Sprint 9.21, ver §49: `packaging/installer.iss` e
+  `build_exe.py --installer`. Falta **compilá-lo** — precisa do Inno Setup 6, que
+  não existe nesta máquina. Assinatura de código continua pendente (sem ela o
+  SmartScreen avisa), e essa precisa de um certificado.
 - ~~**Tamanho.**~~ Feito no Sprint 9.16, ver §44: `build_exe.py --light` gera um
   pacote de **193 MB** (contra 719 MB) em 1,1 min. A estimativa de ~200 MB estava
   certa.
@@ -3309,6 +3320,10 @@ Instalador (`.msi`/Inno Setup), assinatura de código e validação em máquina 
 Python. Os três dependem de coisas que não existem nesta máquina — respectivamente o
 Inno Setup, um certificado e a própria máquina limpa.
 
+> **Corrigido no Sprint 9.21 (§49).** O primeiro estava mal atribuído: o Inno Setup é
+> preciso para *compilar* o instalador, não para escrevê-lo. O `.iss` e o passo
+> `--installer` existem desde a §49; falta só rodar o compilador.
+
 ---
 
 ## 45) Sprint 9.17 — redes para a perda silenciosa de campo (2026-08-09)
@@ -3697,3 +3712,87 @@ Mutações conferidas, cada metade removida por vez:
 | `extract_text` no espaço certo | 3 |
 
 Nenhuma das quatro passa despercebida, e as 558 da suíte inteira continuam passando.
+
+---
+
+## 49) Sprint 9.21 — o instalador, até onde esta máquina alcança (2026-08-10)
+
+A §44.5 registrava o instalador como bloqueado por "o Inno Setup não existe nesta
+máquina". Isso estava certo e incompleto: o Inno Setup é preciso para **compilar** o
+instalador, não para **escrevê-lo**. O `.iss` é código, e era a metade que faltava.
+
+### 49.1 O que foi feito
+
+`packaging/installer.iss` e um passo `--installer` no `scripts/build_exe.py`, que
+descobre o `ISCC.exe` (variável `INNO_SETUP_ISCC`, depois `PATH`, depois os caminhos
+padrão) e o chama com a versão vinda do `pyproject.toml` e a variante do build.
+
+O passo roda **depois** do auto-teste, não antes: comprimir 719 MB leva minutos, e
+gastá-los empacotando um bundle que o próprio build vai reprovar em seguida é
+desperdício com cara de progresso.
+
+Sem o Inno Setup, `--installer` **falha** em vez de pular. É a mesma escolha da §33 e
+da §47, aplicada a um caso menor: quem pediu um instalador e recebeu um build verde
+sem instalador foi enganado pelo próprio build. A mensagem diz onde baixar, cita a
+variável de ambiente, e diz que o resto da entrega não depende disso.
+
+### 49.2 Duas decisões de instalação que não são óbvias
+
+**Instalação por usuário por padrão.** `PrivilegesRequired=lowest`, com o diálogo
+oferecendo "para todos" a quem quiser. Sem assinatura de código o SmartScreen já
+avisa; exigir UAC por cima disso é somar um segundo obstáculo a quem só quer abrir um
+livro.
+
+**O `[InstallDelete]` do `_internal`.** Esta é a que importa. Instalar a variante
+**leve** por cima da **completa** deixaria o torch da instalação anterior em
+`_internal`, porque o Inno não remove o que não está na lista de arquivos novos. O
+marcador do bundle passaria a dizer `light` com o motor local ainda importável ao
+lado — o contrato que a §44.4 criou o auto-teste do executável para garantir,
+quebrado depois, pela instalação, onde nenhum auto-teste olha.
+
+A limpeza mira só o `_internal` do próprio bundle. Apagar `{app}` inteiro seria largo
+demais: se alguém instalou numa pasta compartilhada, varreria o que não é nosso.
+
+Por isso também o `AppId` é **um só** para as duas variantes. Com AppIds diferentes
+elas apareceriam lado a lado na lista de programas, e o `[InstallDelete]` nunca veria
+a pasta da outra.
+
+### 49.3 Escrever para uma ferramenta que não se pode rodar
+
+Duas construções do pré-processador foram trocadas por causa disso, e as duas ficam
+registradas porque a razão é a mesma:
+
+- `AddBackslash("..\dist") + DistName` em vez de `"..\dist\" + DistName`. Um literal
+  terminado em contrabarra depende de como o ISPP trata a barra antes das aspas, e
+  aqui não há como compilar para tirar a dúvida. A função embutida não tem ambiguidade.
+- `ArchitecturesAllowed=x64` em vez de `x64compatible`. O segundo só existe a partir
+  do Inno Setup 6.3 e num 6.0–6.2 seria **erro**; o primeiro é aceito em todo o 6.x,
+  nas versões novas com aviso de obsolescência. Sem saber qual versão a máquina de
+  release terá, avisar é o modo certo de errar.
+
+A regra que as duas seguem: onde não dá para medir, escolher a construção cujo modo de
+falha é o mais barato.
+
+### 49.4 O que os testes provam, e o que não provam
+
+`tests/test_installer.py` (13). Nenhum roda o Inno Setup. O que dá para provar sem o
+compilador é que o `.iss` e o build **concordam** — e cada par abaixo é mantido à mão
+nos dois lados, exatamente a forma de defeito que a §45 documentou:
+
+- a versão padrão do `.iss` contra o `pyproject.toml`;
+- o nome do executável contra o `APP_NAME` do `.spec`;
+- o nome da pasta de cada variante contra o `dist_dir()` do script;
+- o nome do instalador produzido contra o `OutputBaseFilename` — se as duas variantes
+  saíssem com o mesmo nome, a segunda sobrescreveria a primeira em `dist/`;
+- o `[InstallDelete]` presente e mirado no `_internal`, não em `{app}`;
+- um `AppId` só;
+- o passo depois do auto-teste, lido da ordem no `main()`.
+
+Mutações conferidas, seis, todas pegas por exatamente um teste cada: versão atrasada,
+nome de pasta divergente, `[InstallDelete]` removido, `AppId` por variante,
+instaladores com o mesmo nome, e instalador antes do auto-teste.
+
+**O que continua sem prova:** que o instalador instala. Isso precisa de um `ISCC.exe`
+para compilar e de um Windows sem Python para instalar — as duas coisas que a §28.4
+lista e que não existem aqui. O que este sprint muda é que agora falta **só rodar**,
+não escrever.

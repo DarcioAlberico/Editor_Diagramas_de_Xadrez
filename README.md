@@ -716,7 +716,32 @@ Sai em `dist/ChessPdfEditor/`. E `--onedir`, nao `--onefile`: com torch e Qt
 dentro, o `--onefile` extrairia ~2 GB a cada abertura.
 
 Opcoes: `--check` (so confere), `--no-clean` (reaproveita `build/`),
-`--skip-smoke`, `--light`.
+`--skip-smoke`, `--light`, `--installer`.
+
+#### Instalador
+
+```powershell
+python scripts/build_exe.py --installer
+```
+
+Compila `packaging/installer.iss` com o **Inno Setup 6** e sai em
+`dist/ChessPdfEditor-<versao>-<variante>-setup.exe`. Roda depois do `--self-test`,
+para nao gastar minutos comprimindo um bundle que o proprio build vai reprovar.
+
+Precisa do Inno Setup instalado — o script o procura no `PATH` e nos caminhos
+padrao, ou na variavel `INNO_SETUP_ISCC`. Sem ele, `--installer` **falha** dizendo
+onde baixar: quem pediu um instalador e recebeu um build verde sem instalador foi
+enganado pelo proprio build. O resto da entrega nao depende disso — a pasta em
+`dist/` continua valendo.
+
+A instalacao e **por usuario** por padrao, sem exigir administrador; quem quiser
+para a maquina toda escolhe no dialogo. Sem assinatura de codigo o SmartScreen
+avisa de todo modo, e exigir UAC por cima disso so somaria obstaculo.
+
+Instalar a variante leve **por cima** da completa troca de variante de verdade: o
+instalador limpa o `_internal` anterior antes de copiar. Sem isso o torch da
+instalacao antiga ficaria para tras, e o pacote se diria `light` com o motor local
+ainda ao lado.
 
 #### Build leve (sem reconhecimento local)
 
