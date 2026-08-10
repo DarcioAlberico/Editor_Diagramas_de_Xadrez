@@ -18,6 +18,25 @@ dependencies = [
 
 [project.optional-dependencies]
 vector = ["cairosvg>=2.7.0"]
+# Reconhecimento local (Sprint 7): detector OpenCV + classificador PyTorch. Opcional
+# de proposito — sem estes pacotes o app continua abrindo e usa o motor remoto, que e
+# o comportamento que existia antes. `opencv-python-headless` e nao `opencv-python`
+# porque este ultimo embute o seu proprio Qt e conflita com o PySide6 no Windows.
+local = [
+  "numpy>=1.24.0",
+  "opencv-python-headless>=4.8.0",
+  "torch>=2.0.0",
+  "torchvision>=0.15.0",
+]
+dev = [
+  "pytest>=7.0",
+  "ruff>=0.5",
+]
+# Empacotamento do executavel Windows (Sprint 8.1). Separado de `dev` porque so
+# faz sentido em quem gera release, e o PyInstaller nao e usado nos testes.
+build = [
+  "pyinstaller>=6.0",
+]
 
 [project.scripts]
 chess-pdf-editor = "chess_pdf_editor.app:main"

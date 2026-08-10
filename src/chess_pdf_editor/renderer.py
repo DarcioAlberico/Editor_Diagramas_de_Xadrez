@@ -8,6 +8,9 @@ from typing import Optional
 from PIL import Image, ImageDraw, ImageFont
 
 from .fen import board_to_matrix, to_full_fen
+from .logging_config import get_logger
+
+logger = get_logger("renderer")
 
 LIGHT_SQUARE = (240, 217, 181)
 DARK_SQUARE = (181, 136, 99)
@@ -69,6 +72,25 @@ def render_board_pdf(piece_placement: str, size_px: int = 1024) -> Optional[byte
     return _render_with_python_chess_pdf(piece_placement, size_px=size_px)
 
 
+def render_board_svg(piece_placement: str, size_px: int = 1024) -> str:
+    """SVG do tabuleiro, via `python-chess`.
+
+    Não passa pela Merida nem pelo CairoSVG: o `chess.svg` **gera** o SVG, e o
+    CairoSVG só serve para convertê-lo em raster. Ou seja, este é o único formato de
+    saída que não depende de nada opcional — `python-chess` é dependência base.
+
+    O desenho é o do `python-chess`, e não o da Merida que vai para o PDF. Quem
+    exporta SVG quer editar o vetor em outro programa; ali a fidelidade ao PDF
+    exportado importa menos que ter caminhos editáveis em vez de glifos de uma fonte
+    que o outro programa talvez não tenha.
+    """
+    import chess
+    import chess.svg
+
+    board = chess.Board(to_full_fen(piece_placement))
+    return chess.svg.board(board=board, size=int(size_px), coordinates=False)
+
+
 def render_board_png(piece_placement: str, size_px: int = 1024) -> bytes:
     merida_bytes = _render_with_merida_font(piece_placement, size_px=size_px)
     if merida_bytes is not None:
@@ -86,6 +108,8 @@ def _render_with_python_chess(piece_placement: str, size_px: int) -> Optional[by
         import chess.svg
         import cairosvg
     except Exception:
+        # cairosvg e opcional (exige runtime nativo no Windows): nao e erro.
+        logger.debug("cairosvg indisponivel; caminho raster do python-chess desativado")
         return None
 
     try:
@@ -98,6 +122,7 @@ def _render_with_python_chess(piece_placement: str, size_px: int) -> Optional[by
         )
         return png_bytes
     except Exception:
+        logger.warning("Falha no PNG via cairosvg para %r; caindo no Pillow", piece_placement, exc_info=True)
         return None
 
 
@@ -107,6 +132,7 @@ def _render_with_python_chess_pdf(piece_placement: str, size_px: int) -> Optiona
         import chess.svg
         import cairosvg
     except Exception:
+        logger.debug("cairosvg indisponivel; caminho vetorial do python-chess desativado")
         return None
 
     try:
@@ -119,31 +145,26 @@ def _render_with_python_chess_pdf(piece_placement: str, size_px: int) -> Optiona
         )
         return pdf_bytes
     except Exception:
+        logger.warning("Falha no PDF via cairosvg para %r; caindo no raster", piece_placement, exc_info=True)
         return None
 
 
 def _find_merida_font() -> Optional[Path]:
+    from .resources import asset_candidates
+
     env_font = os.getenv("CHESS_MERIDA_FONT", "").strip()
     candidates = []
     if env_font:
         candidates.append(Path(env_font))
 
-    root = Path(__file__).resolve().parents[2]
-    candidates.extend(
-        [
-            root / "assets" / "fonts" / "Merida.ttf",
-            root / "assets" / "fonts" / "MERIDA.TTF",
-            root / "assets" / "fonts" / "Merida.otf",
-            root / "assets" / "fonts" / "MERIDA.OTF",
-            root / "chessmerida.otf",
-            Path.cwd() / "assets" / "fonts" / "Merida.ttf",
-            Path.cwd() / "assets" / "fonts" / "MERIDA.TTF",
-            Path.cwd() / "assets" / "fonts" / "Merida.otf",
-            Path.cwd() / "assets" / "fonts" / "MERIDA.OTF",
-            Path.cwd() / "chessmerida.otf",
-        ]
-    )
-    for fonts_dir in [root / "assets" / "fonts", Path.cwd() / "assets" / "fonts"]:
+    # As raizes cobrem repositorio, pasta de trabalho e — no executavel — o
+    # diretorio extraido pelo PyInstaller e a pasta ao lado do proprio `.exe`,
+    # que e onde o usuario de um build largaria a fonte dele.
+    for name in ("Merida.ttf", "MERIDA.TTF", "Merida.otf", "MERIDA.OTF"):
+        candidates.extend(asset_candidates("assets", "fonts", name))
+    candidates.extend(asset_candidates("chessmerida.otf"))
+
+    for fonts_dir in asset_candidates("assets", "fonts"):
         if not fonts_dir.exists() or not fonts_dir.is_dir():
             continue
         for ext in ("*.ttf", "*.TTF", "*.otf", "*.OTF"):
@@ -208,6 +229,7 @@ def _render_with_merida_font_pdf(piece_placement: str, size_px: int) -> Optional
         doc.close()
         return out
     except Exception:
+        logger.warning("Falha no PDF vetorial com Merida para %r", piece_placement, exc_info=True)
         return None
 
 
@@ -216,32 +238,28 @@ def _render_with_merida_font(piece_placement: str, size_px: int) -> Optional[byt
     if font_path is None:
         return None
 
-    matrix = board_to_matrix(piece_placement)
+    # A Merida e uma fonte legada: as pecas estao mapeadas em letras ASCII
+    # (com variantes por cor de casa), nao nos code points Unicode de xadrez.
+    # Usar PIECE_UNICODE aqui produziria apenas glifos ".notdef".
+    rows = _merida_rows(piece_placement)
     image = Image.new("RGB", (size_px, size_px), "white")
     draw = ImageDraw.Draw(image)
     sq = size_px / 8.0
-    font = ImageFont.truetype(str(font_path), max(22, int(sq * 0.82)))
+    font = ImageFont.truetype(str(font_path), max(22, int(sq * 0.98)))
 
-    for rank in range(8):
-        for file_idx in range(8):
+    for rank, row in enumerate(rows):
+        for file_idx, glyph in enumerate(row):
             x0 = int(file_idx * sq)
             y0 = int(rank * sq)
-            x1 = int((file_idx + 1) * sq)
-            y1 = int((rank + 1) * sq)
-            color = LIGHT_SQUARE if (rank + file_idx) % 2 == 0 else DARK_SQUARE
-            draw.rectangle([x0, y0, x1, y1], fill=color)
+            if glyph == " ":
+                # Casa clara vazia: a fonte nao desenha nada, pintar o fundo.
+                draw.rectangle([x0, y0, int((file_idx + 1) * sq), int((rank + 1) * sq)], fill=(255, 255, 255))
+                continue
+            tx0, ty0, tx1, ty1 = draw.textbbox((0, 0), glyph, font=font)
+            px = int(x0 + (sq - (tx1 - tx0)) / 2 - tx0)
+            py = int(y0 + (sq - (ty1 - ty0)) / 2 - ty0)
+            draw.text((px, py), glyph, fill=(0, 0, 0), font=font)
 
-            piece = matrix[rank][file_idx]
-            if piece != ".":
-                glyph = PIECE_UNICODE.get(piece, piece)
-                tx0, ty0, tx1, ty1 = draw.textbbox((0, 0), glyph, font=font)
-                tw = tx1 - tx0
-                th = ty1 - ty0
-                px = int(x0 + (sq - tw) / 2)
-                py = int(y0 + (sq - th) / 2)
-                draw.text((px, py), glyph, fill=(16, 16, 16), font=font)
-
-    draw.rectangle([0, 0, size_px - 1, size_px - 1], outline=(30, 30, 30), width=3)
     buffer = io.BytesIO()
     image.save(buffer, format="PNG", optimize=True)
     return buffer.getvalue()

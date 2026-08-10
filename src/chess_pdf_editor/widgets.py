@@ -8,6 +8,7 @@ import chess
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .fen import board_to_matrix, extract_piece_placement, matrix_to_piece_placement
+from .resources import asset_candidates
 from .study import StudyGame
 
 PIECE_VALUES = [".", "P", "N", "B", "R", "Q", "K", "p", "n", "b", "r", "q", "k"]
@@ -49,17 +50,14 @@ def _find_piece_image_dir() -> Optional[Path]:
     if env_dir:
         candidates.append(Path(env_dir))
 
-    root = Path(__file__).resolve().parents[2]
-    candidates.extend(
-        [
-            root / "assets" / "piece_images",
-            root / "Python-Easy-Chess-GUI-master" / "Images" / "60",
-            root / "Images" / "60",
-            Path.cwd() / "assets" / "piece_images",
-            Path.cwd() / "Python-Easy-Chess-GUI-master" / "Images" / "60",
-            Path.cwd() / "Images" / "60",
-        ]
-    )
+    # `asset_candidates` cobre repositório, pasta de trabalho e — no executável —
+    # o diretório extraído pelo PyInstaller e a pasta do próprio `.exe`.
+    for parts in (
+        ("assets", "piece_images"),
+        ("Python-Easy-Chess-GUI-master", "Images", "60"),
+        ("Images", "60"),
+    ):
+        candidates.extend(asset_candidates(*parts))
 
     for folder in candidates:
         if not folder.exists() or not folder.is_dir():
@@ -109,6 +107,37 @@ def _set_button_piece_visual(button: QtWidgets.QPushButton, piece: str, icon_siz
 class SelectablePageWidget(QtWidgets.QLabel):
     selection_changed = QtCore.Signal(object)
     point_clicked = QtCore.Signal(object)
+    #: Nova posição da linha da cortina, em fração da largura (Sprint 9.7).
+    curtain_moved = QtCore.Signal(float)
+
+    #: Alças desenhadas em volta da seleção (Sprint 6.1).
+    _HANDLE_KEYS = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
+    _HANDLE_SIZE = 8.0
+    #: Tolerância de clique — maior que o desenho, senão acertar a alça vira sorte.
+    _HANDLE_HIT = 11.0
+    #: Abaixo disso só as alças de canto cabem sem se sobrepor.
+    _MIN_EDGE_HANDLES_PX = 34.0
+    #: Cortina de comparação (Sprint 9.7): meia-largura da alça e tolerância de
+    #: clique na linha. A tolerância é maior que o desenho pelo mesmo motivo das
+    #: alças da seleção — acertar 3 px de linha seria sorte.
+    _CURTAIN_GRIP_HALF = 7.0
+    _CURTAIN_HIT = 12.0
+    #: Abaixo desta largura os rótulos `antes`/`depois` não caberiam sem cobrir
+    #: a própria página.
+    _CURTAIN_LABELS_MIN_PX = 220.0
+    _CURSORS = {
+        "nw": QtCore.Qt.SizeFDiagCursor,
+        "se": QtCore.Qt.SizeFDiagCursor,
+        "ne": QtCore.Qt.SizeBDiagCursor,
+        "sw": QtCore.Qt.SizeBDiagCursor,
+        "n": QtCore.Qt.SizeVerCursor,
+        "s": QtCore.Qt.SizeVerCursor,
+        "e": QtCore.Qt.SizeHorCursor,
+        "w": QtCore.Qt.SizeHorCursor,
+    }
+    #: Passo das setas do teclado, em pontos PDF (Shift = passo fino).
+    STEP_PT = 1.0
+    FINE_STEP_PT = 0.25
 
     def __init__(self) -> None:
         super().__init__()
@@ -116,23 +145,53 @@ class SelectablePageWidget(QtWidgets.QLabel):
         self.setMouseTracking(True)
         self.setBackgroundRole(QtGui.QPalette.Base)
         self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        # Sem foco de teclado as setas nunca chegariam aqui.
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
 
         self._selection_rect: Optional[QtCore.QRectF] = None
         self._drag_start: Optional[QtCore.QPointF] = None
         self._dragging = False
+        # Modo do arrasto em curso: "new" | "move" | "resize".
+        self._drag_mode: Optional[str] = None
+        self._active_handle: Optional[str] = None
+        self._rect_at_press: Optional[QtCore.QRectF] = None
+        # Pixels de tela por ponto PDF: converte o passo do teclado (em pt) para
+        # o espaço em que este widget trabalha.
+        self._px_per_pt = 2.0
         self._operation_rects: list[QtCore.QRectF] = []
         self._eraser_rects: list[QtCore.QRectF] = []
         self._study_rects: list[QtCore.QRectF] = []
+        self._candidate_rects: list[QtCore.QRectF] = []
+        # Cortina: imagem do "depois", revelada à direita da linha. O pixmap base
+        # continua sendo o "antes", então cortina desligada = página original.
+        self._curtain_pixmap: Optional[QtGui.QPixmap] = None
+        self._curtain_fraction = 0.5
 
     def set_page_pixmap(self, pixmap: QtGui.QPixmap) -> None:
         self.setPixmap(pixmap)
         self.setFixedSize(pixmap.size())
         self.clear_selection()
+        # O "depois" pertence à página que estava na tela; deixá-lo sobreviver a
+        # uma troca de bitmap seria mostrar o resultado de uma página sobre outra.
+        self._curtain_pixmap = None
+
+    def set_points_scale(self, px_per_pt: float) -> None:
+        """Zoom em vigor, para o passo do teclado ser em pontos PDF de verdade."""
+        try:
+            value = float(px_per_pt)
+        except (TypeError, ValueError):
+            return
+        if value > 0:
+            self._px_per_pt = value
 
     def clear_selection(self) -> None:
         self._selection_rect = None
         self._drag_start = None
         self._dragging = False
+        self._drag_mode = None
+        self._active_handle = None
+        self._rect_at_press = None
+        self.unsetCursor()
         self.update()
         self.selection_changed.emit(None)
 
@@ -157,6 +216,55 @@ class SelectablePageWidget(QtWidgets.QLabel):
         ]
         self.update()
 
+    def set_candidate_rects(self, rects: list[tuple[float, float, float, float]]) -> None:
+        self._candidate_rects = [
+            QtCore.QRectF(QtCore.QPointF(x0, y0), QtCore.QPointF(x1, y1)).normalized()
+            for (x0, y0, x1, y1) in rects
+        ]
+        self.update()
+
+    # -- cortina de comparação (Sprint 9.7) ----------------------------
+
+    def set_curtain_pixmap(self, pixmap: Optional[QtGui.QPixmap]) -> None:
+        """Imagem do resultado. `None` desliga a cortina."""
+        self._curtain_pixmap = pixmap if pixmap is not None and not pixmap.isNull() else None
+        self.update()
+
+    def has_curtain(self) -> bool:
+        return self._curtain_pixmap is not None
+
+    def curtain_fraction(self) -> float:
+        return self._curtain_fraction
+
+    def set_curtain_fraction(self, fraction: float) -> None:
+        try:
+            value = float(fraction)
+        except (TypeError, ValueError):
+            return
+        self._curtain_fraction = min(1.0, max(0.0, value))
+        self.update()
+
+    def _page_size(self) -> tuple[float, float]:
+        pixmap = self.pixmap()
+        if pixmap is None:
+            return (float(self.width()), float(self.height()))
+        return (float(pixmap.width()), float(pixmap.height()))
+
+    def curtain_split_x(self) -> float:
+        """Onde a linha está, em pixels do widget."""
+        return self._page_size()[0] * self._curtain_fraction
+
+    def _near_curtain(self, point: QtCore.QPointF) -> bool:
+        if self._curtain_pixmap is None:
+            return False
+        return abs(point.x() - self.curtain_split_x()) <= self._CURTAIN_HIT
+
+    def _curtain_fraction_at(self, point: QtCore.QPointF) -> float:
+        width = self._page_size()[0]
+        if width <= 0:
+            return self._curtain_fraction
+        return min(1.0, max(0.0, point.x() / width))
+
     def selection_rect(self) -> Optional[tuple[float, float, float, float]]:
         if self._selection_rect is None:
             return None
@@ -169,35 +277,167 @@ class SelectablePageWidget(QtWidgets.QLabel):
         self.update()
         self.selection_changed.emit(self.selection_rect())
 
+    # ------------------------------------------------------------------
+    # Ajuste fino da seleção (Sprint 6.1)
+    # ------------------------------------------------------------------
+    #
+    # Antes só existia "arrastar do zero": corrigir um recorte 2 pt torto exigia
+    # apagar e redesenhar a seleção inteira. Agora o retângulo é um objeto vivo —
+    # alças para redimensionar, corpo para deslocar, setas para o ajuste fino.
+
+    def _handle_centers(self) -> dict[str, QtCore.QPointF]:
+        if self._selection_rect is None:
+            return {}
+        r = self._selection_rect.normalized()
+        cx = (r.left() + r.right()) / 2.0
+        cy = (r.top() + r.bottom()) / 2.0
+        centers = {
+            "nw": QtCore.QPointF(r.left(), r.top()),
+            "ne": QtCore.QPointF(r.right(), r.top()),
+            "se": QtCore.QPointF(r.right(), r.bottom()),
+            "sw": QtCore.QPointF(r.left(), r.bottom()),
+        }
+        # Numa seleção minúscula as alças de borda cobririam as de canto.
+        if r.width() >= self._MIN_EDGE_HANDLES_PX:
+            centers["n"] = QtCore.QPointF(cx, r.top())
+            centers["s"] = QtCore.QPointF(cx, r.bottom())
+        if r.height() >= self._MIN_EDGE_HANDLES_PX:
+            centers["w"] = QtCore.QPointF(r.left(), cy)
+            centers["e"] = QtCore.QPointF(r.right(), cy)
+        return centers
+
+    def _handle_at(self, point: QtCore.QPointF) -> Optional[str]:
+        tolerance = self._HANDLE_HIT
+        best: Optional[str] = None
+        best_distance = tolerance
+        for key, center in self._handle_centers().items():
+            distance = max(abs(point.x() - center.x()), abs(point.y() - center.y()))
+            if distance <= best_distance:
+                best = key
+                best_distance = distance
+        return best
+
+    def _resized_rect(self, handle: str, base: QtCore.QRectF, point: QtCore.QPointF) -> QtCore.QRectF:
+        left, top, right, bottom = base.left(), base.top(), base.right(), base.bottom()
+        if "w" in handle:
+            left = point.x()
+        if "e" in handle:
+            right = point.x()
+        if "n" in handle:
+            top = point.y()
+        if "s" in handle:
+            bottom = point.y()
+        return QtCore.QRectF(QtCore.QPointF(left, top), QtCore.QPointF(right, bottom)).normalized()
+
+    def _moved_rect(self, base: QtCore.QRectF, dx: float, dy: float) -> QtCore.QRectF:
+        """Desloca mantendo o tamanho: encostar na borda não encolhe a seleção."""
+        moved = QtCore.QRectF(base)
+        moved.translate(dx, dy)
+        if self.pixmap() is not None:
+            max_x = max(0.0, float(self.pixmap().width() - 1) - moved.width())
+            max_y = max(0.0, float(self.pixmap().height() - 1) - moved.height())
+            moved.moveLeft(min(max(0.0, moved.left()), max_x))
+            moved.moveTop(min(max(0.0, moved.top()), max_y))
+        return moved
+
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() != QtCore.Qt.LeftButton or self.pixmap() is None:
             return super().mousePressEvent(event)
+        self.setFocus(QtCore.Qt.MouseFocusReason)
         p = self._clamp_point(event.position())
         self._drag_start = p
-        self._selection_rect = QtCore.QRectF(p, p)
         self._dragging = True
+
+        # A cortina vem antes da seleção: a linha cruza a página inteira, então
+        # se o clique nela caísse na seleção, arrastar para comparar viraria
+        # "mover seleção" — e o usuário perderia o enquadramento sem querer.
+        if self._near_curtain(p):
+            self._drag_mode = "curtain"
+            self._active_handle = None
+            self._rect_at_press = None
+            self.setCursor(QtCore.Qt.SplitHCursor)
+            self.update()
+            return
+
+        if self._selection_rect is not None:
+            handle = self._handle_at(p)
+            if handle is not None:
+                self._drag_mode = "resize"
+                self._active_handle = handle
+                self._rect_at_press = QtCore.QRectF(self._selection_rect)
+                self.update()
+                return
+            if self._selection_rect.normalized().contains(p):
+                self._drag_mode = "move"
+                self._active_handle = None
+                self._rect_at_press = QtCore.QRectF(self._selection_rect)
+                self.setCursor(QtCore.Qt.ClosedHandCursor)
+                self.update()
+                return
+
+        self._drag_mode = "new"
+        self._active_handle = None
+        self._rect_at_press = None
+        self._selection_rect = QtCore.QRectF(p, p)
         self.update()
 
     def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
         if not self._dragging or self._drag_start is None:
+            self._update_hover_cursor(event.position())
             return super().mouseMoveEvent(event)
+
         p = self._clamp_point(event.position())
-        self._selection_rect = QtCore.QRectF(self._drag_start, p).normalized()
+        if self._drag_mode == "curtain":
+            self.set_curtain_fraction(self._curtain_fraction_at(p))
+            self.curtain_moved.emit(self._curtain_fraction)
+            return
+        if self._drag_mode == "resize" and self._rect_at_press is not None and self._active_handle:
+            self._selection_rect = self._resized_rect(self._active_handle, self._rect_at_press, p)
+        elif self._drag_mode == "move" and self._rect_at_press is not None:
+            self._selection_rect = self._moved_rect(
+                self._rect_at_press,
+                p.x() - self._drag_start.x(),
+                p.y() - self._drag_start.y(),
+            )
+        else:
+            self._selection_rect = QtCore.QRectF(self._drag_start, p).normalized()
         self.update()
         self.selection_changed.emit(self.selection_rect())
 
     def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() != QtCore.Qt.LeftButton or not self._dragging:
             return super().mouseReleaseEvent(event)
+        mode = self._drag_mode
         self._dragging = False
-        if self._selection_rect and self._drag_start is not None:
+        self._drag_mode = None
+        self._active_handle = None
+        self._rect_at_press = None
+        self.unsetCursor()
+
+        if mode == "curtain":
+            # Arrastar a cortina não é seleção: nada de `selection_changed` nem
+            # de `point_clicked` no fim do arrasto.
+            self.update()
+            return
+
+        if mode in ("new", "move") and self._selection_rect and self._drag_start is not None:
             p = self._clamp_point(event.position())
             dx = p.x() - self._drag_start.x()
             dy = p.y() - self._drag_start.y()
+            is_short_distance = (dx * dx + dy * dy) <= (10.0 * 10.0)
+            # Arrastar dentro de uma seleção existente é deslocamento; só o
+            # clique parado continua valendo como "focar o que está aqui".
+            if mode == "move":
+                if is_short_distance:
+                    self.point_clicked.emit((p.x(), p.y()))
+                    self.clear_selection()
+                    return
+                self.update()
+                self.selection_changed.emit(self.selection_rect())
+                return
             r = self._selection_rect.normalized()
             # Trata como clique mesmo com pequeno tremor/arrasto curto.
             is_short_drag = (r.width() <= 18.0 and r.height() <= 18.0)
-            is_short_distance = (dx * dx + dy * dy) <= (10.0 * 10.0)
             if is_short_drag or is_short_distance:
                 self.point_clicked.emit((p.x(), p.y()))
                 self.clear_selection()
@@ -208,10 +448,76 @@ class SelectablePageWidget(QtWidgets.QLabel):
         self.update()
         self.selection_changed.emit(self.selection_rect())
 
+    def _update_hover_cursor(self, position: QtCore.QPointF) -> None:
+        if self._near_curtain(position):
+            self.setCursor(QtCore.Qt.SplitHCursor)
+            return
+        if self._selection_rect is None:
+            self.unsetCursor()
+            return
+        handle = self._handle_at(position)
+        if handle is not None:
+            self.setCursor(self._CURSORS[handle])
+        elif self._selection_rect.normalized().contains(position):
+            self.setCursor(QtCore.Qt.OpenHandCursor)
+        else:
+            self.unsetCursor()
+
+    # -- teclado -------------------------------------------------------
+
+    _ARROW_DELTAS = {
+        QtCore.Qt.Key_Left: (-1.0, 0.0),
+        QtCore.Qt.Key_Right: (1.0, 0.0),
+        QtCore.Qt.Key_Up: (0.0, -1.0),
+        QtCore.Qt.Key_Down: (0.0, 1.0),
+    }
+
+    def _handles_key(self, event: QtGui.QKeyEvent) -> bool:
+        return self._selection_rect is not None and event.key() in self._ARROW_DELTAS
+
+    def event(self, event: QtCore.QEvent) -> bool:
+        # `←`/`→` são atalhos de janela (navegar página). Sem aceitar o
+        # ShortcutOverride, o atalho dispararia antes do keyPressEvent e as setas
+        # nunca chegariam à seleção. Só interceptamos quando há o que mover.
+        if event.type() == QtCore.QEvent.ShortcutOverride and self._handles_key(event):
+            event.accept()
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if not self._handles_key(event):
+            return super().keyPressEvent(event)
+
+        modifiers = event.modifiers()
+        step_pt = self.FINE_STEP_PT if modifiers & QtCore.Qt.ShiftModifier else self.STEP_PT
+        step_px = max(0.05, step_pt * self._px_per_pt)
+        dx, dy = self._ARROW_DELTAS[event.key()]
+        base = QtCore.QRectF(self._selection_rect).normalized()
+
+        if modifiers & QtCore.Qt.ControlModifier:
+            # Ctrl redimensiona pela borda inferior-direita; mover e redimensionar
+            # com o mesmo passo mantém o ajuste previsível.
+            grown = QtCore.QRectF(
+                base.left(),
+                base.top(),
+                max(2.0, base.width() + dx * step_px),
+                max(2.0, base.height() + dy * step_px),
+            )
+            self._selection_rect = self._clamp_rect(grown)
+        else:
+            self._selection_rect = self._moved_rect(base, dx * step_px, dy * step_px)
+
+        event.accept()
+        self.update()
+        self.selection_changed.emit(self.selection_rect())
+
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         super().paintEvent(event)
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
+
+        if self._curtain_pixmap is not None:
+            self._paint_curtain(painter)
 
         if self._operation_rects:
             pen = QtGui.QPen(QtGui.QColor(20, 140, 255), 2)
@@ -234,12 +540,110 @@ class SelectablePageWidget(QtWidgets.QLabel):
             for rect in self._study_rects:
                 painter.drawRect(rect)
 
+        if self._candidate_rects:
+            # Deteccoes aguardando conferencia: roxo pontilhado.
+            pen = QtGui.QPen(QtGui.QColor(150, 70, 200), 2, QtCore.Qt.DotLine)
+            painter.setPen(pen)
+            painter.setBrush(QtGui.QColor(150, 70, 200, 30))
+            for rect in self._candidate_rects:
+                painter.drawRect(rect)
+
         if self._selection_rect is None:
             return
         pen = QtGui.QPen(QtGui.QColor(230, 40, 40), 2)
         painter.setPen(pen)
-        painter.setBrush(QtGui.QColor(255, 0, 0, 40))
+        if self._curtain_pixmap is None:
+            painter.setBrush(QtGui.QColor(255, 0, 0, 40))
+        else:
+            # Comparando, o véu vermelho cai sobre os dois lados e tinge
+            # justamente o que se está tentando comparar. O contorno e as alças
+            # ficam — dá para ajustar a seleção sem desligar a cortina.
+            painter.setBrush(QtCore.Qt.NoBrush)
         painter.drawRect(self._selection_rect)
+
+        # Alças: branco com contorno escuro para aparecer sobre página clara ou
+        # sobre o próprio diagrama.
+        half = self._HANDLE_SIZE / 2.0
+        painter.setPen(QtGui.QPen(QtGui.QColor(120, 20, 20), 1))
+        painter.setBrush(QtGui.QColor(255, 255, 255, 235))
+        for center in self._handle_centers().values():
+            painter.drawRect(
+                QtCore.QRectF(
+                    center.x() - half,
+                    center.y() - half,
+                    self._HANDLE_SIZE,
+                    self._HANDLE_SIZE,
+                )
+            )
+
+    def curtain_band(self) -> QtCore.QRectF:
+        """Faixa da página que está de fato à vista.
+
+        A página é bem mais alta que o visor: alça e rótulos ancorados no topo ou
+        no meio do *bitmap* passam a vida inteira fora da tela. Ancorá-los no que
+        está visível é o que os faz existir para o usuário. Fora de um visor
+        (`render()` num widget nunca exibido) a faixa é a página toda.
+        """
+        visible = self.visibleRegion().boundingRect()
+        width, height = self._page_size()
+        if visible.isEmpty():
+            return QtCore.QRectF(0.0, 0.0, width, height)
+        return QtCore.QRectF(visible)
+
+    def _paint_curtain(self, painter: QtGui.QPainter) -> None:
+        """Revela o resultado à direita da linha, sobre a página original."""
+        if self._curtain_pixmap is None:
+            return
+        width, height = self._page_size()
+        split = self.curtain_split_x()
+        band = self.curtain_band()
+
+        painter.save()
+        painter.setClipRect(QtCore.QRectF(split, 0.0, max(0.0, width - split), height))
+        painter.drawPixmap(0, 0, self._curtain_pixmap)
+        painter.restore()
+
+        # A linha em si: clara com contorno escuro, para aparecer tanto sobre o
+        # papel branco quanto sobre o diagrama. Ela vai de ponta a ponta, então o
+        # usuário pode agarrá-la na altura em que estiver olhando.
+        painter.setPen(QtGui.QPen(QtGui.QColor(30, 30, 30, 200), 1))
+        painter.setBrush(QtGui.QColor(250, 250, 250, 240))
+        painter.drawRect(QtCore.QRectF(split - 1.5, 0.0, 3.0, height))
+
+        # Alça: sem ela a linha não se anuncia como arrastável.
+        painter.drawRoundedRect(
+            QtCore.QRectF(
+                split - self._CURTAIN_GRIP_HALF,
+                band.center().y() - self._CURTAIN_GRIP_HALF * 2.0,
+                self._CURTAIN_GRIP_HALF * 2.0,
+                self._CURTAIN_GRIP_HALF * 4.0,
+            ),
+            3.0,
+            3.0,
+        )
+
+        if width >= self._CURTAIN_LABELS_MIN_PX:
+            self._paint_curtain_labels(painter, split, width, band)
+
+    def _paint_curtain_labels(
+        self, painter: QtGui.QPainter, split: float, width: float, band: QtCore.QRectF
+    ) -> None:
+        """Diz qual lado é qual: uma linha sozinha não informa a direção."""
+        metrics = QtGui.QFontMetricsF(painter.font())
+        pad = 5.0
+        top = band.top() + 8.0
+        for text, at_left in (("antes", True), ("depois", False)):
+            box_width = metrics.horizontalAdvance(text) + pad * 2.0
+            box_height = metrics.height() + pad
+            left = split - 8.0 - box_width if at_left else split + 8.0
+            if left < 0.0 or left + box_width > width:
+                continue
+            box = QtCore.QRectF(left, top, box_width, box_height)
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QColor(25, 25, 25, 175))
+            painter.drawRoundedRect(box, 4.0, 4.0)
+            painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255)))
+            painter.drawText(box, QtCore.Qt.AlignCenter, text)
 
     def _clamp_point(self, point: QtCore.QPointF) -> QtCore.QPointF:
         if self.pixmap() is None:
@@ -249,6 +653,108 @@ class SelectablePageWidget(QtWidgets.QLabel):
         x = min(max(0.0, point.x()), width)
         y = min(max(0.0, point.y()), height)
         return QtCore.QPointF(x, y)
+
+    def _clamp_rect(self, rect: QtCore.QRectF) -> QtCore.QRectF:
+        r = rect.normalized()
+        if self.pixmap() is None:
+            return r
+        return QtCore.QRectF(
+            self._clamp_point(r.topLeft()),
+            self._clamp_point(r.bottomRight()),
+        ).normalized()
+
+
+class BeforeAfterWidget(QtWidgets.QWidget):
+    """Miniaturas lado a lado do diagrama: como esta hoje x como vai ficar."""
+
+    def __init__(self, thumb_height: int = 150) -> None:
+        super().__init__()
+        self._thumb_height = max(80, int(thumb_height))
+        self._before_png: Optional[bytes] = None
+        self._after_png: Optional[bytes] = None
+
+        self.before_label = self._make_thumb_label()
+        self.after_label = self._make_thumb_label()
+        self.message_label = QtWidgets.QLabel("Selecione um diagrama para comparar.")
+        self.message_label.setWordWrap(True)
+        self.message_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.message_label.setStyleSheet("QLabel { color: palette(mid); padding: 12px; }")
+
+        self.thumbs = QtWidgets.QWidget()
+        thumbs_layout = QtWidgets.QHBoxLayout(self.thumbs)
+        thumbs_layout.setContentsMargins(0, 0, 0, 0)
+        thumbs_layout.setSpacing(10)
+        thumbs_layout.addLayout(self._make_column("Antes", self.before_label), 1)
+        thumbs_layout.addLayout(self._make_column("Depois", self.after_label), 1)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(self.message_label)
+        root.addWidget(self.thumbs)
+        self.thumbs.setVisible(False)
+
+    @staticmethod
+    def _make_column(title: str, label: QtWidgets.QLabel) -> QtWidgets.QVBoxLayout:
+        caption = QtWidgets.QLabel(title)
+        caption.setAlignment(QtCore.Qt.AlignCenter)
+        caption.setStyleSheet("QLabel { font-weight: 600; }")
+        column = QtWidgets.QVBoxLayout()
+        column.setSpacing(3)
+        column.addWidget(caption)
+        column.addWidget(label, 1)
+        return column
+
+    def _make_thumb_label(self) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel()
+        label.setAlignment(QtCore.Qt.AlignCenter)
+        label.setMinimumHeight(self._thumb_height)
+        label.setStyleSheet(
+            "QLabel { background-color: palette(base); border: 1px solid palette(mid); "
+            "border-radius: 4px; }"
+        )
+        label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+        return label
+
+    def set_message(self, message: str) -> None:
+        self._before_png = None
+        self._after_png = None
+        self.before_label.clear()
+        self.after_label.clear()
+        self.message_label.setText(message)
+        self.message_label.setVisible(True)
+        self.thumbs.setVisible(False)
+
+    def set_images(self, before_png: Optional[bytes], after_png: Optional[bytes]) -> None:
+        self._before_png = before_png
+        self._after_png = after_png
+        self.message_label.setVisible(False)
+        self.thumbs.setVisible(True)
+        self._apply_pixmap(self.before_label, before_png)
+        self._apply_pixmap(self.after_label, after_png)
+
+    def _apply_pixmap(self, label: QtWidgets.QLabel, png_bytes: Optional[bytes]) -> None:
+        if not png_bytes:
+            label.clear()
+            return
+        pixmap = QtGui.QPixmap()
+        if not pixmap.loadFromData(png_bytes, "PNG"):
+            label.clear()
+            return
+        available_width = max(48, label.width() - 6)
+        label.setPixmap(
+            pixmap.scaled(
+                available_width,
+                self._thumb_height - 6,
+                QtCore.Qt.KeepAspectRatio,
+                QtCore.Qt.SmoothTransformation,
+            )
+        )
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        if self._before_png or self._after_png:
+            self._apply_pixmap(self.before_label, self._before_png)
+            self._apply_pixmap(self.after_label, self._after_png)
 
 
 class _CellButton(QtWidgets.QPushButton):
@@ -362,9 +868,18 @@ class BoardEditorWidget(QtWidgets.QWidget):
             selected = piece == self._active_piece
             bg = "#e8f1ff" if selected else "#ffffff"
             border = "#1f6feb" if selected else "#c8d0da"
+            # O fundo do botao e sempre claro (para as pecas aparecerem), entao o
+            # texto precisa de cor fixa escura: herdar do tema deixaria o "x" da
+            # casa vazia branco no branco no modo escuro.
+            # As duas primeiras linhas são f-string e as duas últimas não: as chaves
+            # só se desdobram na f-string, então `}}` numa linha normal chega ao Qt
+            # como duas chaves e ele **descarta a folha inteira** em silêncio — era
+            # o que acontecia até aqui, e com ela ia embora a cor fixa do texto que
+            # o comentário acima promete.
             button.setStyleSheet(
-                f"QPushButton {{ background-color: {bg}; border: 2px solid {border}; "
-                "border-radius: 4px; font-size: 18px; font-weight: bold; }} "
+                f"QPushButton {{ background-color: {bg}; color: #1b1b1b; "
+                f"border: 2px solid {border}; "
+                f"border-radius: 4px; font-size: 18px; font-weight: bold; }} "
                 "QPushButton:hover { border-color: #1f6feb; }"
             )
 
@@ -383,8 +898,9 @@ class BoardEditorWidget(QtWidgets.QWidget):
         light = "#f0d9b5"
         dark = "#b58863"
         bg = light if (row + col) % 2 == 0 else dark
+        # Cor de texto fixa: as casas tem cor de madeira em qualquer tema.
         return (
-            f"QPushButton {{ background-color: {bg}; border: none; "
+            f"QPushButton {{ background-color: {bg}; color: #101010; border: none; "
             "font-size: 22px; font-weight: bold; } "
             "QPushButton:hover { border: none; }"
         )
@@ -495,7 +1011,7 @@ class StudyBoardWidget(QtWidgets.QWidget):
         self._selected_square = None
         self._legal_targets.clear()
         self._refresh()
-        self._emit_state_changed("Posicao de estudo carregada.")
+        self._emit_state_changed("Posição de estudo carregada.")
 
     def load_pgn_text(self, pgn_text: str) -> dict[int, dict[str, str]]:
         move_comments = self._game.load_pgn(pgn_text)
@@ -734,8 +1250,9 @@ class StudyBoardWidget(QtWidgets.QWidget):
             bg = "#7fae6d" if is_dark else "#b8d89f"
         else:
             bg = "#b58863" if is_dark else "#f0d9b5"
+        # Idem: fundo de tabuleiro nao acompanha o tema, o texto tambem nao pode.
         return (
-            f"QPushButton {{ background-color: {bg}; border: none; "
+            f"QPushButton {{ background-color: {bg}; color: #101010; border: none; "
             "font-size: 24px; font-weight: bold; } "
             "QPushButton:hover { border: none; }"
         )

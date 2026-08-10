@@ -1,0 +1,12 @@
+{
+  "board_1.png": {
+    "fen": "3k4/3P4/8/7K/P6p/5p1P/1p1R4/1r6",
+    "origem": "board_20260225_221547_414412.png",
+    "confianca": 0.9964
+  },
+  "board_2.png": {
+    "fen": "8/5kp1/7p/1bP5/1P1B2P1/7P/8/6K1",
+    "origem": "board_20260226_000046_337935.png",
+    "confianca": 0.9995
+  }
+}
