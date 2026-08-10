@@ -258,3 +258,39 @@ def test_the_advanced_group_also_remembers_being_opened(qapp, tmp_path) -> None:
         assert reopened.isChecked() is True
     finally:
         second.close()
+
+
+# ---------------------------------------------------------------------------
+# §20.2: o fluxo numerado
+# ---------------------------------------------------------------------------
+
+
+def test_the_numbered_flow_keeps_all_its_steps(main_window, tmp_path) -> None:
+    """As etapas de 1 a 5 têm de continuar numeradas depois de o painel atualizar.
+
+    O passo 5 perdia o número: `Alterações (N)` sobrescrevia `5 · Alterações` no
+    primeiro refresh da lista, que acontece já no arranque. O fluxo ficava 1, 2, 3, 4
+    e um rótulo solto.
+    """
+    from conftest import DIAGRAM_RECT, make_pdf
+
+    main_window._open_pdf(str(make_pdf(tmp_path / "book.pdf")), clear_ops=True)
+    rect_img = main_window.pdf_service.pdf_rect_to_image_rect(
+        0, DIAGRAM_RECT, main_window.current_render.matrix
+    )
+    main_window.page_widget.set_selection_rect(rect_img)
+    main_window.board_editor.set_piece_placement("8/8/8/4k3/8/8/4K3/8")
+    main_window._add_operation()
+
+    numbered = {
+        text.split(" · ")[0]
+        for text in (
+            [label.text() for label in main_window.findChildren(QtWidgets.QLabel)]
+            + [group.title() for group in main_window.findChildren(QtWidgets.QGroupBox)]
+        )
+        if " · " in text
+    }
+
+    assert {"1", "2", "3", "4", "5"} <= numbered, f"etapas encontradas: {sorted(numbered)}"
+    # E a contagem continua visível junto do número.
+    assert main_window.changes_label.text() == "5 · Alterações (1)"

@@ -552,6 +552,32 @@ Beta (meta):
 10. **Diagrama por clique único** ✅ — ver §38.
 11. **Diagramas isolados** ✅ — ver §39.
 12. **Diff de projeto** ✅ — ver §40. Com ele, a §22.5 fecha.
+13. **Auditoria do painel lateral** ✅ — ver §41.
+14. **Auto-orientar reversível** ✅ — ver §42.
+15. **Autosave durável de verdade** ✅ — ver §43.
+16. **Variante light do executável** ✅ — ver §44.
+
+### 15.1 O que falta (revisado em 2026-08-09)
+
+As listas de trabalho do plano estão fechadas: §19 (backlog técnico), §20.2 (redesign
+da interface) e §22.5 (as oito ferramentas sugeridas). Sobram **cinco** itens, e
+**nenhum** deles é código:
+
+| Item | Onde | Por que está aberto |
+|---|---|---|
+| Rodar em 3 PDFs reais diferentes | §18 | precisa dos livros em mão; os outros 5 itens da lista têm teste automatizado, este não pode ter |
+| Instalador (`.msi`/Inno Setup) | §28.4 | precisa do Inno Setup instalado |
+| Assinatura de código | §28.4 | precisa de um certificado |
+| Validação em Windows sem Python | §28.4 | precisa da máquina limpa |
+| Painel sem rolagem em 1500×900 | §20.5 | **decidido não forçar**: faltam 191 px e o caminho já foi medido e reprovado (§41.2, §34.3) |
+
+Os quatro primeiros são dependências físicas, não decisões pendentes. O quinto é uma
+decisão registrada, com o número medido: o fluxo cabe a partir de 1.100 px de altura.
+
+Duas pendências de sprint continuam anotadas de propósito, e **não** são tarefas:
+o render de prévia síncrono (§25.7, medido em 119 ms — "não incomoda") e o
+reconhecimento de seleção síncrono (§27.8, ~350 ms com o motor local). Ambas têm a API
+já isolada, se algum dia incomodarem.
 
 ---
 
@@ -593,12 +619,14 @@ cairosvg>=2.7.0
 ---
 
 ## 18) Checklist de aceitação (MVP)
-- [ ] Selecionar diagrama manualmente e gerar FEN
-- [ ] Corrigir FEN no editor visual
-- [ ] Gerar diagrama HQ e inserir no PDF no mesmo lugar
-- [ ] Salvar PDF de saída sem quebrar layout
-- [ ] Reabrir projeto e continuar (checkpoint)
-- [ ] Rodar em pelo menos 3 PDFs reais diferentes
+- [x] Selecionar diagrama manualmente e gerar FEN
+- [x] Corrigir FEN no editor visual
+- [x] Gerar diagrama HQ e inserir no PDF no mesmo lugar
+- [x] Salvar PDF de saída sem quebrar layout
+- [x] Reabrir projeto e continuar (checkpoint)
+- [ ] Rodar em pelo menos 3 PDFs reais diferentes — **único item aberto desta
+      lista**, e depende de ter os livros em mão. Os cinco acima estão cobertos por
+      teste automatizado; este não pode ser.
 
 ---
 
@@ -608,13 +636,13 @@ Esta seção registra melhorias identificadas na revisão do projeto em 2026-05-
 
 ### 19.1 Prioridade alta
 
-- [ ] **Mover OCR e exportação para workers em segundo plano**
+- [x] **Mover OCR e exportação para workers em segundo plano** — feito no Sprint 5.1, ver §25.1.
   - Hoje o reconhecimento por OCR e a exportação do PDF rodam na thread principal da interface.
   - Para PDFs grandes ou endpoints lentos, a janela pode parecer travada.
   - Implementar com `QThread`, `QRunnable`/`QThreadPool` ou uma camada equivalente de worker.
   - Manter progresso, cancelamento e propagação clara de erros para a UI.
 
-- [ ] **Dividir `app.py` em módulos menores**
+- [x] **Dividir `app.py` em módulos menores** — feito no Sprint 9.2, ver §30.
   - O arquivo principal concentra UI, OCR, estado do projeto, estudo, overlays e exportação.
   - Separação sugerida:
     - `main_window.py`: janela principal e composição de telas.
@@ -624,20 +652,20 @@ Esta seção registra melhorias identificadas na revisão do projeto em 2026-05-
     - `settings.py`: preferências persistidas via `QSettings`.
   - Objetivo: reduzir acoplamento, facilitar testes e tornar futuras mudanças menos arriscadas.
 
-- [ ] **Adicionar GitHub Actions para testes**
+- [x] **Adicionar GitHub Actions para testes** — feito no Sprint 5.4, ver §25.4.
   - Rodar `pytest` automaticamente em push e pull request.
   - Começar com matriz simples em Windows e Python estável.
   - Validar pelo menos testes unitários sem dependência de interface gráfica real.
 
 ### 19.2 Prioridade média
 
-- [ ] **Melhorar configuração do OCR**
+- [x] **Melhorar configuração do OCR** — feito no Sprint 5, ver §22.4.
   - Evitar endpoint duplicado/hardcoded em múltiplos lugares.
   - Centralizar endpoint padrão, fallback e timeout.
   - Persistir endpoint escolhido pelo usuário em `QSettings`.
   - Permitir configuração por variável de ambiente para uso em scripts e ambientes automatizados.
 
-- [ ] **Adicionar logs estruturados**
+- [x] **Adicionar logs estruturados** — feito no Sprint 5, ver §22.4.
   - Registrar falhas de OCR, renderização, exportação e carregamento de projetos.
   - Evitar `except Exception` silencioso em pontos críticos.
   - Usar `logging` com arquivo local opcional, por exemplo `logs/chess_pdf_editor.log`.
@@ -646,7 +674,7 @@ Esta seção registra melhorias identificadas na revisão do projeto em 2026-05-
 - [x] **Criar migrações explícitas para `project_state.json`** — feito no Sprint 8,
   ver §28.1.
 
-- [ ] **Ampliar testes de integração**
+- [x] **Ampliar testes de integração** — feito ao longo dos Sprints 5–9.16: 35 arquivos de teste.
   - Testar aplicação de overlay em PDF real de amostra.
   - Testar inserção de link Lichess.
   - Testar salvar/carregar projeto com operações, apagamentos e posições de estudo.
@@ -681,26 +709,26 @@ Esta seção registra a análise de UX feita em 2026-05-17. O objetivo é reduzi
 
 ### 20.1 Diagnóstico atual
 
-- [ ] **Painel direito com excesso de responsabilidades**
+- [x] **Painel direito com excesso de responsabilidades** — atendido pelo fluxo em etapas e pelo `Avançado`.
   - O painel lateral mistura editor de tabuleiro, OCR, lista de substituições, áreas apagadas, FEN, acabamento, fonte Merida, endpoint OCR e estudo.
   - O usuário vê muitas decisões ao mesmo tempo, mesmo quando ainda não selecionou um diagrama.
 
-- [ ] **Muitos botões com o mesmo peso visual**
+- [x] **Muitos botões com o mesmo peso visual** — atendido; hierarquia fechada no Sprint 9.13, ver §41.4.
   - Ações como reconhecer seleção, reconhecer página, reconhecer PDF inteiro, substituir, apagar área, remover e limpar aparecem com destaque semelhante.
   - Falta uma ação principal clara para cada momento do fluxo.
 
-- [ ] **Configurações avançadas visíveis demais**
+- [x] **Configurações avançadas visíveis demais** — atendido; grupos recolhidos por padrão.
   - Endpoint OCR, caminho da fonte Merida, padding detalhado, borda e link Lichess são úteis, mas não deveriam competir com as ações principais.
 
-- [ ] **Comandos duplicados em painel, toolbar e menus**
+- [x] **Comandos duplicados em painel, toolbar e menus** — atendido no Sprint 9.6, ver §34.1.
   - A duplicação é boa para produtividade, mas aumenta a carga visual quando os mesmos comandos aparecem em vários lugares.
 
-- [ ] **Editor de tabuleiro pouco direto**
+- [x] **Editor de tabuleiro pouco direto** — atendido pela paleta visual de peças.
   - A seleção de peça por combo funciona, mas exige mais leitura e cliques do que uma paleta visual de peças.
 
 ### 20.2 Direção de redesign
 
-- [ ] **Organizar a edição como fluxo por etapas**
+- [x] **Organizar a edição como fluxo por etapas** — as etapas 1 a 5 estão no painel, numeradas.
   - Substituir ou reorganizar abas técnicas por etapas de trabalho:
     1. Selecionar
     2. Reconhecer
@@ -709,14 +737,14 @@ Esta seção registra a análise de UX feita em 2026-05-17. O objetivo é reduzi
     5. Exportar
   - O painel deve indicar a próxima ação provável, não mostrar todas as ações com o mesmo destaque.
 
-- [ ] **Criar painel contextual de edição**
+- [x] **Criar painel contextual de edição** — `edit_context_label` + uma ação em destaque por estado.
   - Quando não houver PDF aberto: mostrar estado vazio com ação `Abrir PDF`.
   - Quando houver PDF sem seleção: orientar para selecionar um diagrama.
   - Quando houver seleção: destacar `Reconhecer seleção`.
   - Quando houver FEN válido: destacar `Adicionar substituição`.
   - Quando houver operações: destacar `Exportar PDF`.
 
-- [ ] **Mover opções avançadas para área recolhível ou preferências**
+- [x] **Mover opções avançadas para área recolhível ou preferências** — dois grupos `Avançado`, recolhidos por padrão e com estado persistido (§41.3).
   - Mover para `Avançado`:
     - endpoint OCR;
     - fonte Merida;
@@ -726,7 +754,7 @@ Esta seção registra a análise de UX feita em 2026-05-17. O objetivo é reduzi
     - aplicar estilo em todas as substituições.
   - Alternativa futura: criar diálogo `Preferências`.
 
-- [ ] **Unificar listas operacionais**
+- [x] **Unificar listas operacionais** — lista única `5 · Alterações`.
   - Trocar listas separadas de substituições, apagamentos e FENs por uma lista principal de `Alterações`.
   - Cada item deve indicar tipo, página e resumo:
     - `Diagrama`, com FEN resumido;
@@ -734,7 +762,7 @@ Esta seção registra a análise de UX feita em 2026-05-17. O objetivo é reduzi
     - `Estudo`, se for mantido no mesmo painel.
   - Manter filtros ou abas secundárias apenas se a lista crescer demais.
 
-- [ ] **Simplificar toolbar**
+- [x] **Simplificar toolbar** — feito no Sprint 9.6: 2.223 px → 1.130 px, ver §34.1.
   - Manter na toolbar apenas comandos globais:
     - abrir PDF;
     - carregar/salvar projeto;
@@ -744,7 +772,7 @@ Esta seção registra a análise de UX feita em 2026-05-17. O objetivo é reduzi
     - zoom.
   - Remover ou evitar comandos de OCR/substituição na toolbar principal.
 
-- [ ] **Melhorar rótulos**
+- [x] **Melhorar rótulos** — os seis renomeados.
   - `Reconhecer pagina atual` -> `Reconhecer página`
   - `Encontrar diagramas no PDF` -> `Detectar no PDF`
   - `Substituir no PDF` -> `Adicionar substituição`
@@ -752,7 +780,7 @@ Esta seção registra a análise de UX feita em 2026-05-17. O objetivo é reduzi
   - `Acabamento` -> `Aparência`
   - `Posicoes` -> `FEN`
 
-- [ ] **Criar paleta visual de peças**
+- [x] **Criar paleta visual de peças** — 13 botões, sem combo.
   - Substituir o combo `Peça ativa` por botões/ícones de peças.
   - Incluir opção de casa vazia.
   - Manter clique direito para limpar casa.

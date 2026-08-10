@@ -3326,7 +3326,10 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.changes_list.clear()
         total_changes = len(self.operations) + len(self.erase_operations)
         if hasattr(self, "changes_label"):
-            self.changes_label.setText(f"Alterações ({total_changes})")
+            # O número da etapa fica: sem ele o fluxo da §20.2 mostrava 1, 2, 3, 4 e
+            # depois um "Alterações" solto — e a contagem some no primeiro refresh,
+            # que acontece já no arranque.
+            self.changes_label.setText(f"5 · Alterações ({total_changes})")
 
         if total_changes == 0:
             item = QtWidgets.QListWidgetItem("Nenhuma alteração adicionada.")
