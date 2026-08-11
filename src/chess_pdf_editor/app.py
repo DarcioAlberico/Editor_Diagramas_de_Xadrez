@@ -68,7 +68,7 @@ from .theme import (
     warning_text_color,
 )
 from .types import EraseOperation, OcrBoardResult, OverlayOperation, StudyPosition
-from .widgets import BeforeAfterWidget, BoardEditorWidget, SelectablePageWidget
+from .widgets import BeforeAfterWidget, BoardEditorWidget, SelectablePageWidget, board_transform_icon
 from .workers import BatchOcrWorker, DiagramExportWorker, ExportWorker
 
 logger = get_logger("app")
@@ -337,13 +337,6 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.changes_list.itemDoubleClicked.connect(self._on_change_double_clicked)
         self.changes_list_delete_shortcut = QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Delete), self.changes_list)
         self.changes_list_delete_shortcut.activated.connect(self._remove_selected_change)
-        self.fen_ops_list = QtWidgets.QListWidget()
-        self.fen_ops_list.itemClicked.connect(self._on_fen_operation_clicked)
-        self.fen_ops_list_delete_shortcut = QtGui.QShortcut(
-            QtGui.QKeySequence(QtCore.Qt.Key_Delete),
-            self.fen_ops_list,
-        )
-        self.fen_ops_list_delete_shortcut.activated.connect(self._remove_selected_fen_operation)
         self.fen_side_combo = QtWidgets.QComboBox()
         self.fen_side_combo.addItem("Brancas", "w")
         self.fen_side_combo.addItem("Pretas", "b")
@@ -367,10 +360,16 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.study_comment_after_edit.setMaximumHeight(78)
         self.study_comment_after_edit.textChanged.connect(self._on_study_comment_changed)
 
-        self.auto_apply_check = QtWidgets.QCheckBox("Aplicar automaticamente ao reconhecer página/PDF")
+        # Texto curto porque rótulo de `QCheckBox` **não quebra linha**: o mínimo
+        # dele é a frase inteira, e a frase inteira ("Aplicar automaticamente ao
+        # reconhecer página/PDF") pedia 600 px num painel de 598. O que sobra
+        # disso não é um rótulo apertado, é uma barra de rolagem horizontal na aba.
+        # O que se perdeu do texto está na dica, que é onde cabe.
+        self.auto_apply_check = QtWidgets.QCheckBox("Aplicar sem conferir")
         self.auto_apply_check.setChecked(bool(self.settings.value("auto_apply_recognition", False, bool)))
         self.auto_apply_check.setToolTip(
-            "Desligado: as detecções entram na fila de candidatos para você conferir antes de aplicar."
+            "Ligado: reconhecer página ou PDF aplica as detecções direto.\n"
+            "Desligado: elas entram na fila de conferência para você revisar antes."
         )
         self.auto_apply_check.toggled.connect(self._on_auto_apply_toggled)
 
@@ -501,23 +500,9 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.btn_add_eraser.clicked.connect(self._add_eraser_from_selection)
         self.btn_remove = QtWidgets.QPushButton("Remover")
         self.btn_remove.clicked.connect(self._remove_selected_change)
-        self.btn_remove_fen = QtWidgets.QPushButton("Remover posição")
-        self.btn_remove_fen.clicked.connect(self._remove_selected_fen_operation)
         self.btn_clear = QtWidgets.QPushButton("Limpar")
         self.btn_clear.clicked.connect(self._clear_changes)
 
-        # §20.5: comando destrutivo pesa menos que ação principal. Numa lista só,
-        # para o conjunto ser auditável — antes cada um destes tinha o mesmo peso
-        # visual de `Adicionar substituição`, e nada os distinguia.
-        self.destructive_buttons = (
-            self.btn_remove,
-            self.btn_remove_fen,
-            self.btn_clear,
-            self.btn_discard_candidate,
-            self.btn_discard_all_candidates,
-        )
-        for button in self.destructive_buttons:
-            button.setStyleSheet(self._DESTRUCTIVE_BUTTON_STYLE)
         self.btn_study_selection = QtWidgets.QPushButton("Estudar seleção")
         self.btn_study_selection.clicked.connect(self._study_selection)
         self.btn_study_initial = QtWidgets.QPushButton("Partida inicial")
@@ -531,27 +516,61 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.btn_remove_study_position = QtWidgets.QPushButton("Remover posição")
         self.btn_remove_study_position.clicked.connect(self._remove_selected_study_position)
 
-        self.btn_rotate = QtWidgets.QPushButton("Rotacionar 90°")
+        # Os quatro comandos do tabuleiro numa linha só (antes: três linhas,
+        # 72 px). Os rótulos inteiros não cabem — somam 794 px e a linha tem 422
+        # na largura mínima do painel —, então os três mecânicos viram ícone e
+        # `Auto-orientar` fica com o texto. A escolha de qual manter não é
+        # arbitrária: girar e espelhar o usuário confere olhando o tabuleiro, e
+        # auto-orientar é o único que decide sozinho, ou seja, o único que
+        # ninguém adivinha por um desenho.
+        self.btn_rotate = QtWidgets.QPushButton()
+        self.btn_rotate.setIcon(board_transform_icon("rotate"))
+        self.btn_rotate.setToolTip("Rotacionar 90° (Ctrl+R)")
         self.btn_rotate.clicked.connect(self.board_editor.rotate_clockwise)
-        self.btn_flip = QtWidgets.QPushButton("Espelhar Vertical")
+        self.btn_flip = QtWidgets.QPushButton()
+        self.btn_flip.setIcon(board_transform_icon("flip"))
+        self.btn_flip.setToolTip("Espelhar vertical (Ctrl+M)")
         self.btn_flip.clicked.connect(self.board_editor.flip_vertical)
         self.btn_auto_orient = QtWidgets.QPushButton("Auto-orientar")
         self.btn_auto_orient.setToolTip(
-            "Testa as 4 rotações e aplica a mais plausível (reis, peões e sentido do avanço)."
+            "Testa as 4 rotações e aplica a mais plausível (reis, peões e sentido do avanço). Ctrl+Shift+R"
         )
         self.btn_auto_orient.clicked.connect(self._auto_orient_position)
-        self.btn_clear_board = QtWidgets.QPushButton("Limpar Tabuleiro")
+        self.btn_clear_board = QtWidgets.QPushButton()
+        self.btn_clear_board.setIcon(board_transform_icon("clear"))
+        self.btn_clear_board.setToolTip("Limpar tabuleiro (Ctrl+Shift+L)")
         self.btn_clear_board.clicked.connect(self.board_editor.clear_board)
+
+        # §20.5: comando destrutivo pesa menos que ação principal. Numa lista só,
+        # para o conjunto ser auditável — antes cada um destes tinha o mesmo peso
+        # visual de `Adicionar substituição`, e nada os distinguia.
+        self.destructive_buttons = (
+            self.btn_remove,
+            self.btn_clear,
+            self.btn_discard_candidate,
+            self.btn_discard_all_candidates,
+            # `Limpar Tabuleiro` entrou aqui junto com a linha única. Nas três
+            # linhas ele tinha uma para si e o peso se lia da posição; lado a
+            # lado com girar e espelhar, ele passaria a ter o mesmo peso dos
+            # outros três — e é o único que joga trabalho fora.
+            self.btn_clear_board,
+        )
+        for button in self.destructive_buttons:
+            button.setStyleSheet(self._DESTRUCTIVE_BUTTON_STYLE)
 
         top_editor = QtWidgets.QWidget()
         top_editor_layout = QtWidgets.QVBoxLayout(top_editor)
         top_editor_layout.addWidget(QtWidgets.QLabel("Editor de Tabuleiro"))
         top_editor_layout.addWidget(self.board_editor, 0, QtCore.Qt.AlignLeft)
-        controls = QtWidgets.QGridLayout()
-        controls.addWidget(self.btn_auto_orient, 0, 0, 1, 2)
-        controls.addWidget(self.btn_rotate, 1, 0)
-        controls.addWidget(self.btn_flip, 1, 1)
-        controls.addWidget(self.btn_clear_board, 2, 0, 1, 2)
+        controls = QtWidgets.QHBoxLayout()
+        controls.addWidget(self.btn_auto_orient)
+        controls.addWidget(self.btn_rotate)
+        controls.addWidget(self.btn_flip)
+        # O vão separa o que constrói do que joga fora. Sem ele os quatro ficam
+        # equidistantes e `Limpar` vira o quarto botão de uma série, que é
+        # exatamente a leitura que a §41.4 evita.
+        controls.addStretch(1)
+        controls.addWidget(self.btn_clear_board)
         top_editor_layout.addLayout(controls)
         top_editor_layout.addStretch(1)
 
@@ -572,14 +591,23 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         ocr_actions.addWidget(self.btn_ocr_page)
         ocr_actions.addWidget(self.btn_ocr_full)
         ocr_tab_layout.addLayout(ocr_actions)
-        ocr_tab_layout.addWidget(self.auto_apply_check)
-        ocr_tab_layout.addWidget(self.engine_status_label)
+        # `auto_apply_check` e `engine_status_label` saíram daqui para a aba
+        # `Ajustes` (§51.3). Nenhum dos dois é etapa: um é preferência, o outro é
+        # um parágrafo de estado que não se lê duas vezes. Juntos custavam 87 px
+        # **acima** do passo 5, que é a única altura que conta para a rolagem.
 
-        # A secao de conferencia so aparece quando ha o que conferir.
+        # A fila de conferência tem aba própria (§51.2): conferir um lote é outra
+        # atividade, não o passo 2 de editar um diagrama. Aqui ficava uma seção
+        # que aparecia e sumia, empurrando os passos 3, 4 e 5 para baixo quando
+        # cheia — a lista sozinha pede 324 px.
+        candidates_tab = QtWidgets.QWidget()
+        candidates_tab_layout = QtWidgets.QVBoxLayout(candidates_tab)
+        candidates_tab_layout.setContentsMargins(0, 0, 0, 0)
         self.candidates_section = QtWidgets.QWidget()
+        candidates_tab_layout.addWidget(self.candidates_section)
         candidates_layout = QtWidgets.QVBoxLayout(self.candidates_section)
         candidates_layout.setContentsMargins(0, 0, 0, 0)
-        self.candidates_label = self._section_label("2 · Conferir")
+        self.candidates_label = self._section_label("Conferir")
         candidates_layout.addWidget(self.candidates_label)
         candidates_filter = QtWidgets.QHBoxLayout()
         candidates_filter.setContentsMargins(0, 0, 0, 0)
@@ -596,24 +624,34 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         candidate_actions.addWidget(self.btn_apply_all_candidates, 1, 0)
         candidate_actions.addWidget(self.btn_discard_all_candidates, 1, 1)
         candidates_layout.addLayout(candidate_actions)
+        # O `candidates_section` continua sendo um widget **dentro** da aba, e não
+        # a aba: quem o esconde é o mesmo código de antes (`ocr_workflow`), e com
+        # ele fica de pé o contrato que a §29 cobra — o filtro pode esvaziar a
+        # lista sem fazer sumir o controle que desliga o filtro. A aba tem a sua
+        # própria visibilidade, ligada a haver candidatos (`_sync_candidates_tab`).
         self.candidates_section.setVisible(False)
-        ocr_tab_layout.addWidget(self.candidates_section)
 
         preview_layout = QtWidgets.QVBoxLayout()
         preview_layout.addWidget(self.btn_toggle_preview)
         preview_layout.addWidget(self.btn_toggle_curtain)
         preview_layout.addWidget(self.before_after)
+        # O fluxo renumerou de 1–5 para 1–4 quando a conferência saiu para a sua
+        # aba (§51.2). A alternativa era manter os números antigos e conviver com
+        # um buraco no 2, que é pior que qualquer das duas opções: o número de uma
+        # etapa serve para dizer *quantas faltam*, e uma sequência furada não diz.
+        # `Conferir` fica fora da numeração de propósito — não é uma etapa deste
+        # fluxo, é o que se faz depois de um lote.
         self.compare_group = self._make_collapsible_group(
-            "3 · Conferir a prévia", preview_layout, checked=True, key="preview"
+            "2 · Conferir a prévia", preview_layout, checked=True, key="preview"
         )
         self.compare_group.toggled.connect(lambda checked: self._schedule_preview_refresh(immediate=True))
         ocr_tab_layout.addWidget(self.compare_group)
 
-        ocr_tab_layout.addWidget(self._section_label("4 · Aplicar"))
+        ocr_tab_layout.addWidget(self._section_label("3 · Aplicar"))
         ocr_tab_layout.addWidget(self.btn_add)
         ocr_tab_layout.addWidget(self.btn_add_eraser)
 
-        self.changes_label = self._section_label("5 · Alterações")
+        self.changes_label = self._section_label("4 · Alterações")
         ocr_tab_layout.addWidget(self.changes_label)
         self.changes_list.setMinimumHeight(110)
         ocr_tab_layout.addWidget(self.changes_list, 3)
@@ -623,46 +661,33 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         right_actions.addStretch(1)
         ocr_tab_layout.addLayout(right_actions)
 
-        ocr_advanced_layout = QtWidgets.QVBoxLayout()
-        ocr_advanced_layout.addWidget(self.whiteout_check)
-        ocr_advanced_layout.addWidget(self.click_detects_check)
-        ocr_advanced_layout.addWidget(QtWidgets.QLabel("Motor de reconhecimento"))
-        ocr_advanced_layout.addWidget(self.engine_combo)
-        ocr_advanced_layout.addWidget(QtWidgets.QLabel("Modelo local (.pt)"))
-        model_layout = QtWidgets.QHBoxLayout()
-        model_layout.addWidget(self.local_model_edit, 1)
-        model_layout.addWidget(self.btn_select_local_model)
-        ocr_advanced_layout.addLayout(model_layout)
-        ocr_advanced_layout.addWidget(QtWidgets.QLabel("Endpoint OCR"))
-        ocr_advanced_layout.addWidget(self.endpoint_edit)
-        ocr_advanced_layout.addWidget(QtWidgets.QLabel("Fonte Merida (.ttf/.otf)"))
-        font_layout = QtWidgets.QHBoxLayout()
-        font_layout.addWidget(self.merida_font_edit, 1)
-        font_layout.addWidget(self.btn_select_merida)
-        font_layout.addWidget(self.btn_clear_merida)
-        ocr_advanced_layout.addLayout(font_layout)
-        ocr_tab_layout.addWidget(self._make_collapsible_group(
-                "Avançado", ocr_advanced_layout, checked=False, key="ocr_advanced"
-            ))
+        # O grupo `Avançado` inteiro saiu da aba do fluxo para a aba `Ajustes`
+        # (§51.3), repartido em dois pelo assunto: o que muda a **aparência** do
+        # diagrama gravado e o que configura o **reconhecimento**. Estavam juntos
+        # aqui por serem ambos "avançado", que é uma categoria sobre o usuário e
+        # não sobre a coisa.
 
         fens_tab = QtWidgets.QWidget()
         fens_tab_layout = QtWidgets.QVBoxLayout(fens_tab)
         fens_tab_layout.addWidget(self._section_label("FEN"))
         fens_tab_layout.addWidget(self.fen_edit)
         fens_tab_layout.addWidget(self.warnings)
-        fens_tab_layout.addWidget(self._section_label("FENs das substituições"))
+        # A `fen_ops_list` saiu (§51.4). Ela era uma segunda vista da mesma lista
+        # de operações que a `changes_list` já mostra — com a sua própria seleção,
+        # o seu próprio botão de remover e o seu próprio atalho de apagar. A §20.4
+        # pedia "lista única de alterações" e só metade tinha sido feita:
+        # substituições e apagamentos foram unificados entre si, e esta continuou
+        # ao lado. Os campos abaixo agora seguem a seleção da lista única.
+        self.fen_meta_label = self._section_label("Substituição selecionada")
+        fens_tab_layout.addWidget(self.fen_meta_label)
         fen_meta = QtWidgets.QGridLayout()
         fen_meta.addWidget(QtWidgets.QLabel("Vez de jogar"), 0, 0)
         fen_meta.addWidget(self.fen_side_combo, 0, 1)
         fen_meta.addWidget(QtWidgets.QLabel("Número do lance"), 1, 0)
         fen_meta.addWidget(self.fen_move_spin, 1, 1)
         fens_tab_layout.addLayout(fen_meta)
-        self.fen_ops_list.setMinimumHeight(120)
-        fens_tab_layout.addWidget(self.fen_ops_list, 1)
-        fen_actions = QtWidgets.QHBoxLayout()
-        fen_actions.addWidget(self.btn_remove_fen)
-        fen_actions.addStretch(1)
-        fens_tab_layout.addLayout(fen_actions)
+        fens_tab_layout.addStretch(1)
+
         whiteout_tab = QtWidgets.QWidget()
         whiteout_tab_layout = QtWidgets.QVBoxLayout(whiteout_tab)
         appearance_grid = QtWidgets.QGridLayout()
@@ -681,18 +706,67 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         appearance_grid.addWidget(self.include_lichess_link_check, 6, 0, 1, 2)
         appearance_grid.addWidget(self.erase_coordinates_check, 7, 0, 1, 2)
         appearance_grid.addWidget(self.apply_style_all_check, 8, 0, 1, 2)
-        appearance_grid.addWidget(self.btn_style_batch, 9, 0, 1, 2)
-        whiteout_tab_layout.addWidget(
-            self._make_collapsible_group(
-                "Ajustes avançados", appearance_grid, checked=False, key="appearance_advanced"
-            )
+        appearance_grid.addWidget(self.whiteout_check, 10, 0, 1, 2)
+        appearance_grid.addWidget(QtWidgets.QLabel("Fonte Merida (.ttf/.otf)"), 11, 0, 1, 2)
+        # Campo numa linha e botões na seguinte, e não os três lado a lado: o
+        # `Caminho da fonte Merida (.ttf/.otf)` de placeholder mais `Selecionar
+        # Fonte...` mais `Limpar` estouram a largura do painel, e o que aparece
+        # não é um botão cortado — é uma **barra de rolagem horizontal** na aba
+        # inteira, que é o defeito mais caro que um layout pode ter aqui.
+        appearance_grid.addWidget(self.merida_font_edit, 12, 0, 1, 2)
+        font_buttons = QtWidgets.QHBoxLayout()
+        font_buttons.addWidget(self.btn_select_merida)
+        font_buttons.addWidget(self.btn_clear_merida)
+        font_buttons.addStretch(1)
+        appearance_grid.addLayout(font_buttons, 13, 0, 1, 2)
+        appearance_grid.addWidget(self.btn_style_batch, 14, 0, 1, 2)
+        appearance_group = self._make_collapsible_group(
+            "Aparência do diagrama", appearance_grid, checked=False, key="appearance_advanced"
         )
+        whiteout_tab_layout.addWidget(appearance_group)
+
+        # O reconhecimento é configuração, não etapa — e não é aparência. Fica na
+        # mesma aba porque as duas são "o que eu ajusto uma vez e esqueço", que é
+        # o que a aba passou a significar.
+        engine_layout = QtWidgets.QVBoxLayout()
+        engine_layout.addWidget(self.engine_status_label)
+        engine_layout.addWidget(self.auto_apply_check)
+        engine_layout.addWidget(self.click_detects_check)
+        engine_layout.addWidget(QtWidgets.QLabel("Motor de reconhecimento"))
+        engine_layout.addWidget(self.engine_combo)
+        engine_layout.addWidget(QtWidgets.QLabel("Modelo local (.pt)"))
+        engine_layout.addWidget(self.local_model_edit)
+        model_buttons = QtWidgets.QHBoxLayout()
+        model_buttons.addWidget(self.btn_select_local_model)
+        model_buttons.addStretch(1)
+        engine_layout.addLayout(model_buttons)
+        engine_layout.addWidget(QtWidgets.QLabel("Endpoint OCR"))
+        engine_layout.addWidget(self.endpoint_edit)
+        engine_group = self._make_collapsible_group(
+            "Reconhecimento", engine_layout, checked=False, key="ocr_advanced"
+        )
+        whiteout_tab_layout.addWidget(engine_group)
         whiteout_tab_layout.addStretch(1)
+
+        #: Os grupos de configuração da aba `Ajustes`, que a §20.5 exige recolhidos
+        #: por padrão. Declarados aqui em vez de reconhecidos pela palavra
+        #: "Avançado" no título: a auditoria os procurava por substring, o que
+        #: prendia o critério ao texto do rótulo — renomeá-los fazia o teste passar
+        #: a não olhar nada, em silêncio. Note que `compare_group` também é um
+        #: grupo recolhível e **não** entra aqui: ele abre expandido de propósito.
+        self.settings_groups = (appearance_group, engine_group)
+
         # Cada aba rola: sem isso o conteudo e comprimido abaixo do minimo e o
         # Qt corta o texto dos botoes e rotulos.
-        self.edit_tabs.addTab(self._scrollable(ocr_tab), "OCR")
+        self.edit_tabs.addTab(self._scrollable(ocr_tab), "Diagrama")
+        self._candidates_tab_index = self.edit_tabs.addTab(
+            self._scrollable(candidates_tab), "Conferir"
+        )
         self.edit_tabs.addTab(self._scrollable(fens_tab), "FEN")
-        self.edit_tabs.addTab(self._scrollable(whiteout_tab), "Aparência")
+        self.edit_tabs.addTab(self._scrollable(whiteout_tab), "Ajustes")
+        # A aba de conferência só existe quando há o que conferir. Sem isto ela
+        # seria uma aba permanentemente vazia em quem nunca roda um lote.
+        self.edit_tabs.setTabVisible(self._candidates_tab_index, False)
         self.edit_tabs.setMinimumHeight(220)
         bottom_layout.addWidget(self.edit_tabs, 2)
 
@@ -763,7 +837,14 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         # sizeHint minusculo: sem largura minima o splitter o esmagava ate ~58px
         # e o visor de PDF sumia numa instalacao nova.
         scroll.setMinimumWidth(360)
-        self.side_stack.setMinimumWidth(380)
+        # O 380 fixo que estava aqui virou uma pergunta ao próprio widget. Com a
+        # paleta ao lado do tabuleiro o topo passou a pedir 452 px, e um número
+        # escrito à mão teria de ser corrigido junto — o par mantido nos dois
+        # lados que a §45 documenta como forma de defeito. Pior: num tema com
+        # moldura mais grossa que a desta máquina o número certo é outro, e
+        # ninguém estaria aqui para medir. Abaixo do que o editor pede, ele sai
+        # cortado.
+        self.side_stack.setMinimumWidth(max(380, top_editor.minimumSizeHint().width()))
 
         self.main_splitter = QtWidgets.QSplitter()
         self.main_splitter.setChildrenCollapsible(False)
@@ -956,8 +1037,24 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             self._set_primary_button(None)
             return
 
-        self.edit_context_label.setText("Selecione um diagrama na página para começar.")
-        self._set_primary_button(None)
+        # O estado em que o PDF está aberto e ainda não há nada feito era o único
+        # do fluxo sem ação principal — o rótulo mandava selecionar um diagrama e
+        # nenhum botão se destacava. É justamente aqui que o lote responde melhor
+        # que a mão: `Detectar no PDF` acha os diagramas do livro inteiro e enche
+        # a fila de conferência (§23), em vez de exigir 898 seleções.
+        #
+        # `_set_primary_button` já listava os dois botões de lote entre os
+        # candidatos desde que foi escrito; o que faltava era um estado elegê-los.
+        # Só um de cada vez, que é a regra da §20.5, e o escolhido é o do livro
+        # inteiro: quem quer só esta página tem `Reconhecer página` ao lado, com
+        # o mesmo tamanho de sempre.
+        #
+        # O texto é curto de propósito. A primeira versão explicava o lote por
+        # extenso, quebrava em duas linhas e custava 28 px — num painel onde o
+        # que falta para o fluxo caber em 900 px são 79 (§50.6). O botão em
+        # destaque já diz o que ele faz.
+        self.edit_context_label.setText("Selecione um diagrama ou detecte todos.")
+        self._set_primary_button(self.btn_ocr_full)
 
     def _icon(self, standard: QtWidgets.QStyle.StandardPixmap) -> QtGui.QIcon:
         """Ícone do tema do sistema. Sem arquivos de asset para empacotar."""
@@ -1127,6 +1224,32 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.act_auto_orient.setShortcut(QtGui.QKeySequence("Ctrl+Shift+R"))
         self.act_auto_orient.triggered.connect(self._auto_orient_position)
 
+        # Girar, espelhar e limpar perderam o rótulo ao caber numa linha só, e a
+        # regra que o `test_toolbar` já cobra da barra vale aqui: quem ficou sem
+        # texto continua alcançável pelo teclado e se explica pela dica. Antes
+        # desta mudança os três existiam **só** como botão — sem ação, sem menu e
+        # sem atalho —, então isto não é compensação, é o que faltava.
+        self.act_rotate_board = QtGui.QAction(
+            board_transform_icon("rotate"), "Rotacionar 90°", self
+        )
+        self.act_rotate_board.setShortcut(QtGui.QKeySequence("Ctrl+R"))
+        self.act_rotate_board.setToolTip("Gira a posição 90° no sentido horário (Ctrl+R)")
+        self.act_rotate_board.triggered.connect(self.board_editor.rotate_clockwise)
+
+        self.act_flip_board = QtGui.QAction(
+            board_transform_icon("flip"), "Espelhar vertical", self
+        )
+        self.act_flip_board.setShortcut(QtGui.QKeySequence("Ctrl+M"))
+        self.act_flip_board.setToolTip("Troca as fileiras de cima pelas de baixo (Ctrl+M)")
+        self.act_flip_board.triggered.connect(self.board_editor.flip_vertical)
+
+        self.act_clear_board = QtGui.QAction(
+            board_transform_icon("clear"), "Limpar tabuleiro", self
+        )
+        self.act_clear_board.setShortcut(QtGui.QKeySequence("Ctrl+Shift+L"))
+        self.act_clear_board.setToolTip("Esvazia as 64 casas do editor (Ctrl+Shift+L)")
+        self.act_clear_board.triggered.connect(self.board_editor.clear_board)
+
         self.act_export_report = QtGui.QAction("Exportar relatório...", self)
         self.act_export_report.setShortcut(QtGui.QKeySequence("Ctrl+Shift+E"))
         self.act_export_report.triggered.connect(self._export_report_dialog)
@@ -1228,6 +1351,9 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         diagrams_menu.addSeparator()
         diagrams_menu.addAction(self.act_snap_selection)
         diagrams_menu.addAction(self.act_auto_orient)
+        diagrams_menu.addAction(self.act_rotate_board)
+        diagrams_menu.addAction(self.act_flip_board)
+        diagrams_menu.addAction(self.act_clear_board)
         diagrams_menu.addSeparator()
         diagrams_menu.addAction(self.act_recognize_selection)
         diagrams_menu.addAction(self.act_recognize_page)
@@ -2213,15 +2339,6 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             return idx
         return None
 
-    def _selected_fen_operation_index(self) -> Optional[int]:
-        item = self.fen_ops_list.currentItem()
-        if not item:
-            return None
-        idx = int(item.data(QtCore.Qt.UserRole))
-        if 0 <= idx < len(self.operations):
-            return idx
-        return None
-
     def _selected_change(self) -> Optional[tuple[str, int]]:
         item = self.changes_list.currentItem()
         if not item:
@@ -2267,14 +2384,10 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         return f"https://lichess.org/analysis/{piece_placement}{encoded_tail}"
 
     def _current_full_fen_for_lichess(self) -> Optional[str]:
+        # O desvio que existia aqui — "se nada está selecionado, olhe a seleção da
+        # aba FEN" — era o preço de haver duas listas com duas seleções. Com uma
+        # lista só, `_selected_operation_index` é a resposta inteira (§51.4).
         idx = self._selected_operation_index()
-        if idx is None:
-            fen_item = self.fen_ops_list.currentItem()
-            if fen_item is not None:
-                candidate = int(fen_item.data(QtCore.Qt.UserRole))
-                if 0 <= candidate < len(self.operations):
-                    idx = candidate
-
         if idx is not None and 0 <= idx < len(self.operations):
             return self._operation_full_fen(self.operations[idx])
 
@@ -2299,17 +2412,55 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.lichess_link_label.setToolTip(full_fen)
 
     def _select_operation_in_fen_tab(self, idx: int) -> None:
+        """Põe os campos da aba FEN na substituição `idx`.
+
+        Não mexe mais em lista nenhuma: a aba FEN deixou de ter a sua (§51.4) e
+        passou a mostrar os metadados de quem estiver selecionado na lista única.
+        """
         if not (0 <= idx < len(self.operations)):
             return
         self._syncing_fen_tab = True
         try:
-            self.fen_ops_list.setCurrentRow(idx)
             op = self.operations[idx]
             self.fen_side_combo.setCurrentIndex(0 if op.side_to_move != "b" else 1)
             self.fen_move_spin.setValue(max(1, int(op.fullmove_number)))
         finally:
             self._syncing_fen_tab = False
+        self._update_fen_meta_label(idx)
         self._update_lichess_link()
+
+    def _sync_candidates_tab(self) -> None:
+        """Mostra a aba de conferência quando há o que conferir, e vai para ela.
+
+        A ida é só na **transição** de vazia para cheia — que é o fim de um lote.
+        Trocar de aba a cada refresh arrancaria o usuário do lugar toda vez que ele
+        mexesse no filtro, e o filtro fica justamente dentro desta aba.
+        """
+        tabs = self.edit_tabs
+        index = self._candidates_tab_index
+        tinha = tabs.isTabVisible(index)
+        total = len(self.candidates)
+        tabs.setTabVisible(index, bool(total))
+        tabs.setTabText(index, f"Conferir ({total})" if total else "Conferir")
+        if total and not tinha:
+            tabs.setCurrentIndex(index)
+
+    def _update_fen_meta_label(self, idx: Optional[int]) -> None:
+        """Diz de quem são os campos abaixo.
+
+        Com a lista na outra aba, sem isto os dois campos ficariam sem dono
+        visível — e editá-los mexeria numa substituição que o usuário não está
+        vendo.
+        """
+        if idx is None or not (0 <= idx < len(self.operations)):
+            self.fen_meta_label.setText("Nenhuma substituição selecionada")
+            self.fen_side_combo.setEnabled(False)
+            self.fen_move_spin.setEnabled(False)
+            return
+        op = self.operations[idx]
+        self.fen_meta_label.setText(f"Substituição {idx + 1:03d} · pág {op.page_num + 1}")
+        self.fen_side_combo.setEnabled(True)
+        self.fen_move_spin.setEnabled(True)
 
     def _focus_operation(self, idx: int) -> None:
         if not (0 <= idx < len(self.operations)) or not self.pdf_service:
@@ -2608,7 +2759,9 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         if kind == "eraser":
             self._current_eraser_index = idx if 0 <= idx < len(self.erase_operations) else None
             self._set_current_operation(None)
-            self.fen_ops_list.setCurrentRow(-1)
+            # Um apagamento não tem FEN: os campos da aba FEN ficam sem dono, e
+            # dizê-lo é melhor que deixá-los mostrando os da substituição anterior.
+            self._update_fen_meta_label(None)
             self._update_lichess_link()
             self._schedule_preview_refresh()
 
@@ -2732,26 +2885,14 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             f"Estilo aplicado em {affected} de {len(self.operations)} substituição(ões)."
         )
 
-    def _on_fen_operation_clicked(self, item: QtWidgets.QListWidgetItem) -> None:
-        if self._syncing_fen_tab:
-            return
-        idx = int(item.data(QtCore.Qt.UserRole))
-        if not (0 <= idx < len(self.operations)):
-            return
-        self._set_current_operation(idx)
-        self._focus_operation(idx)
-
     def _on_fen_meta_changed(self, value: int) -> None:
         del value
         if self._loading_ui or self._syncing_fen_tab:
             return
+        # Mesmo desvio do `_current_full_fen_for_lichess`, e some pela mesma
+        # razão: só havia uma segunda seleção para consultar porque havia uma
+        # segunda lista (§51.4).
         idx = self._selected_operation_index()
-        if idx is None:
-            fen_item = self.fen_ops_list.currentItem()
-            if fen_item is not None:
-                candidate = int(fen_item.data(QtCore.Qt.UserRole))
-                if 0 <= candidate < len(self.operations):
-                    idx = candidate
         if idx is None:
             return
         op = self.operations[idx]
@@ -3291,25 +3432,15 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"Substituição adicionada. Total: {len(self.operations)}")
 
     def _refresh_operations_list(self) -> None:
+        # Só reconstruía a `fen_ops_list`, que saiu (§51.4). O que sobrou — manter
+        # os campos da aba FEN apontando para a substituição certa — continua
+        # sendo o serviço que este método presta a quem o chama.
         selected_idx = self._selected_operation_index()
-        if selected_idx is None:
-            fen_item = self.fen_ops_list.currentItem()
-            if fen_item is not None:
-                candidate = int(fen_item.data(QtCore.Qt.UserRole))
-                if 0 <= candidate < len(self.operations):
-                    selected_idx = candidate
-
-        self.fen_ops_list.clear()
-        for idx, op in enumerate(self.operations):
-            fen_item = QtWidgets.QListWidgetItem(
-                f"{idx + 1:03d} | pág {op.page_num + 1} | {self._operation_full_fen(op)}"
-            )
-            fen_item.setData(QtCore.Qt.UserRole, idx)
-            self.fen_ops_list.addItem(fen_item)
-
         if selected_idx is not None and 0 <= selected_idx < len(self.operations):
             self._current_operation_index = selected_idx
             self._select_operation_in_fen_tab(selected_idx)
+        else:
+            self._update_fen_meta_label(None)
         self._update_lichess_link()
         self._refresh_changes_list()
         self._update_edit_context_state()
@@ -3329,7 +3460,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             # O número da etapa fica: sem ele o fluxo da §20.2 mostrava 1, 2, 3, 4 e
             # depois um "Alterações" solto — e a contagem some no primeiro refresh,
             # que acontece já no arranque.
-            self.changes_label.setText(f"5 · Alterações ({total_changes})")
+            self.changes_label.setText(f"4 · Alterações ({total_changes})")
 
         if total_changes == 0:
             item = QtWidgets.QListWidgetItem("Nenhuma alteração adicionada.")
@@ -3457,12 +3588,6 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                 self._select_change("eraser", min(idx, len(self.erase_operations) - 1))
             self._commit_history("remover apagamento")
             self.statusBar().showMessage(f"Apagamento removido. Total: {len(self.erase_operations)}")
-
-    def _remove_selected_fen_operation(self) -> None:
-        idx = self._selected_fen_operation_index()
-        if idx is None:
-            return
-        self._remove_operation_at_index(idx)
 
     def _clear_operations(self) -> None:
         if not self.operations:

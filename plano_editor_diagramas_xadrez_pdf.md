@@ -42,6 +42,8 @@ Technique*, 898 páginas). O que existe hoje:
 | **Empacotamento (executável Windows)** | ✅ **novo — ver §28.2** |
 | **Página com `/Rotate` e/ou CropBox deslocada** | ✅ **novo — ver §46 e §48** |
 | **Script do instalador (Inno Setup)** | ✅ **novo — ver §49**; falta compilar |
+| **Painel: paleta ao lado, comandos numa linha** | ✅ **novo — ver §50** |
+| **Painel repartido em abas; fluxo sem rolagem em 900** | ✅ **novo — ver §51** |
 | Instalador assinado / validação em máquina limpa | ❌ pendente — ver §28.4 |
 
 **O desvio da §5/§6 foi fechado.** Até a versão 1.5 o reconhecimento existia só
@@ -563,6 +565,9 @@ Beta (meta):
 19. **Rotação + CropBox: recusa explícita** ✅ — ver §47.
 20. **Rotação + CropBox: resolvida** ✅ — ver §48. Com ela, a §47 fecha.
 21. **Instalador Windows (o script)** ✅ — ver §49. Falta compilá-lo.
+22. **Despoluir o painel: paleta ao lado, comandos numa linha** ✅ — ver §50.
+23. **Repartir o painel em abas por assunto** ✅ — ver §51. Com ele o critério de
+    rolagem da §20.5 fecha, e a "lista única" da §20.4 fica completa.
 
 ### 15.1 O que falta (revisado em 2026-08-09)
 
@@ -576,7 +581,7 @@ da interface) e §22.5 (as oito ferramentas sugeridas). Sobram **cinco** itens, 
 | **Compilar** o instalador | §49 | o `.iss` existe; falta o Inno Setup 6 instalado para rodar o `ISCC.exe` |
 | Assinatura de código | §28.4 | precisa de um certificado |
 | Validação em Windows sem Python | §28.4 | precisa da máquina limpa |
-| Painel sem rolagem em 1500×900 | §20.5 | **decidido não forçar**: faltam 191 px e o caminho já foi medido e reprovado (§41.2, §34.3) |
+| ~~Painel sem rolagem em 1500×900~~ | §20.5 | **cumprido** no Sprint 9.23 (§51), com a prévia expandida. Saiu desta tabela |
 
 Os quatro primeiros são dependências físicas, não decisões pendentes. O quinto é uma
 decisão registrada, com o número medido: o fluxo cabe a partir de 1.100 px de altura.
@@ -852,10 +857,14 @@ Painel lateral: Edição
    - Destacar uma ação principal por estado.
    - Exige cuidado com sinais/eventos da UI.
 
-4. **Lista única de alterações**
+4. **Lista única de alterações** ✅ — completada no Sprint 9.23, ver §51.4.
    - Consolidar substituições e apagamentos em uma visão principal.
    - Manter compatibilidade com as estruturas internas atuais.
    - Exige revisão de seleção, remoção, foco e overlays.
+   - Metade foi feita cedo (substituições e apagamentos unificados na `changes_list`)
+     e passou por pronta; a `fen_ops_list` continuou ao lado, na aba FEN, mostrando as
+     mesmas operações com a sua própria seleção. Saiu na §51.4, junto com os três
+     desvios de código que só existiam por causa dela.
 
 5. **Paleta visual de peças**
    - Substituir combo por botões de peças.
@@ -876,12 +885,19 @@ do único que não passou.
       Rótulo contextual por estado, com **um** botão em destaque de cada vez.
 - [x] Configurações avançadas não aparecem por padrão. Os dois grupos `Avançado`
       abrem recolhidos, e agora o estado que o usuário escolher persiste (§41.3).
-- [ ] O painel lateral não exige rolagem para executar o fluxo básico em tela
-      1500x900. **Não cumprido, medido:** faltam 191 px. O painel de cima fica preso
-      no seu mínimo de 538 px e o visor das abas fica com 222 px para 745 px de
-      conteúdo. O fluxo cabe a partir de **1.100 px** de altura (1.050 com a prévia
-      recolhida). Ver §41.2, incluindo por que forçar não valeria a pena.
-- [~] O fluxo básico é possível com estes passos visíveis:
+- [x] O painel lateral não exige rolagem para executar o fluxo básico em tela
+      1500x900. **Cumprido no Sprint 9.23 (§51), com a prévia expandida.** A §41.2
+      mediu isto como 191 px em falta e concluiu que não valia forçar; o caminho que
+      ela mesma apontava — mexer na divisão do painel, não no tabuleiro — resolveu em
+      dois sprints:
+      - 9.22 (§50): paleta ao lado do tabuleiro e os quatro comandos numa linha
+        devolveram 116 px. Faltavam 79.
+      - 9.23 (§51): o que não é etapa saiu da aba do fluxo (fila de conferência,
+        estado do motor, preferências, configuração do motor). Faltam 0.
+
+      O limiar de altura foi de 1.100/1.050 px para **880 px (prévia expandida) e
+      790 px (recolhida)**. Ver §51.6.
+- [x] O fluxo básico é possível com estes passos visíveis:
   1. abrir PDF;
   2. selecionar diagrama;
   3. reconhecer seleção;
@@ -889,8 +905,10 @@ do único que não passou.
   5. adicionar substituição;
   6. exportar PDF.
 
-      Todos existem e ficam habilitados no momento certo; o passo 5 exige rolagem em
-      900 px de altura, pela mesma causa do item acima.
+      Todos existem, ficam habilitados no momento certo e — desde o Sprint 9.23
+      (§51) — **cabem em 900 px de altura sem rolagem**, com a prévia expandida. O
+      passo 5 exigia rolagem, pela mesma causa do item acima, e deixou de exigir
+      pela mesma correção.
 - [x] A correção manual no tabuleiro exige menos cliques do que o combo atual.
       Paleta: 2 cliques (peça + casa). Combo: 3 (abrir, escolher, casa).
 - [x] Comandos destrutivos, como remover/limpar, têm menos destaque que ações
@@ -3052,6 +3070,22 @@ teste em vez de espalhado pelo construtor.
 | correção manual com menos cliques que o combo | **cumprido** — 2 cliques (peça + casa) contra 3 |
 | destrutivos com menos destaque | **cumprido** — a partir deste sprint (§41.4) |
 
+> **Atualizado nos Sprints 9.22 (§50) e 9.23 (§51).** As duas linhas de rolagem
+> mudaram de veredito, e no fim as duas ficaram **cumpridas** — com a prévia
+> expandida, sem esconder nada e sem remover controle nenhum.
+> O diagnóstico desta seção continua certo — o gargalo era o bloco de cima preso em
+> 538 px —, mas a conclusão de que não valia a pena mexer nele estava presa ao
+> tabuleiro: a §34.3 tinha reprovado *encolher o tabuleiro*, e daí se leu que o topo
+> não tinha o que ceder. Tinha, e por dois lados que esta seção não olhou:
+>
+> - **em volta do tabuleiro** — a paleta e os quatro comandos somavam 136 px sem
+>   tocar no tabuleiro; o Sprint 9.22 devolveu 116 (§50);
+> - **dentro da aba de baixo** — a fila de conferência, o estado do motor e duas
+>   preferências ocupavam a aba do fluxo sem serem etapa dele; o Sprint 9.23 tirou
+>   os 79 px que faltavam (§51).
+>
+> Ver §51.6 para a tabela dos três estados.
+
 ### 41.6 Cobertura de teste
 
 `tests/test_side_panel.py` (11), a contraparte do `test_toolbar.py`.
@@ -3796,3 +3830,334 @@ instaladores com o mesmo nome, e instalador antes do auto-teste.
 para compilar e de um Windows sem Python para instalar — as duas coisas que a §28.4
 lista e que não existem aqui. O que este sprint muda é que agora falta **só rodar**,
 não escrever.
+
+---
+
+## 50) Sprint 9.22 — despoluir o painel: a paleta ao lado, os comandos numa linha (2026-08-10)
+
+A §41.2 mediu o painel direito e parou num veredito: o fluxo básico não cabe em
+1500×900, faltam **191 px**, e forçar não valia a pena. A §15.1 registrou isso como
+decisão, não como tarefa. O que ela deixou escrito foi por onde alguém retomaria —
+"mexer na divisão do painel direito (não no widget, como a §34.3 já concluiu)".
+
+É o que este sprint faz. Três mudanças, e as duas primeiras atacam o mesmo recurso
+escasso: os 538 px em que o bloco de cima estava **preso no próprio mínimo**.
+
+### 50.1 De onde saem os 538 px
+
+Medido antes de mexer, e é a decomposição que decide tudo o que vem depois:
+
+| | px |
+|---|---|
+| rótulo `Editor de Tabuleiro` | 12 |
+| **paleta de peças**, 7 colunas × 2 linhas, *acima* do tabuleiro | **64** |
+| tabuleiro (casa de 42) | 336 |
+| **os 4 comandos**, em 3 linhas | **72** |
+| margens e espaçamentos | 54 |
+
+Os dois destacados somam 136 px e nenhum deles é o tabuleiro — que é o que a §34.3
+tentou encolher, mediu e reverteu. Essa é a razão de a §34.3 ter falhado e isto não:
+ela mexeu no widget que carrega o conteúdo, e aqui se mexe no que está em volta.
+
+### 50.2 A paleta girada, e o detalhe que não é giro
+
+7×2 acima virou 2×7 ao lado: **−70 px de altura, +70 px de largura**. A altura é o
+recurso escasso (a largura sobra: o painel tem 598 px), então a troca é boa pelo
+mesmo motivo que a da §34.3 era ruim.
+
+O agrupamento sobrevive à rotação, e é isso que a torna barata: era linha de cima
+(vazia + brancas) e linha de baixo (pretas), virou coluna da esquerda e da direita.
+
+**Mas a transposição pura estava errada**, e só se viu renderizando. Na ordem do
+`PIECE_VALUES` a casa vazia vem primeiro, e em duas colunas ela empurrava as brancas
+uma linha para baixo: o peão branco ficava ao lado do cavalo preto. Em duas linhas
+ninguém reparava; em duas colunas a leitura por tipo é a que o olho tenta fazer, e a
+falta dela salta. A casa vazia foi para o fim, e as posições passaram a ser
+explícitas em vez de aritmética de índice — o pareamento é o que importa, então ele
+tem de se ler no código.
+
+O quadro em volta (`QFrame.StyledPanel`, sem folha de estilo própria) separa "com que
+peça pinto" de "onde pinto", que a versão empilhada resolvia pela distância vertical.
+
+### 50.3 Os quatro comandos numa linha: por que três viram ícone
+
+Três linhas (72 px) viraram uma (26 px). Com os rótulos inteiros a linha **não cabe**:
+`Auto-orientar` + `Rotacionar 90°` + `Espelhar Vertical` + `Limpar Tabuleiro` pedem
+794 px, e a linha tem 422 na largura mínima do painel. Texto curto (`Auto`, `90°`,
+`Espelhar`, `Limpar`) daria 374 px — cabia nos 380 de então por 6 px, o tipo de folga
+que a primeira mudança de tema consome.
+
+Sobrou ícone. **`Auto-orientar` manteve o rótulo**, e a escolha de qual manter não é
+arbitrária: girar e espelhar o usuário confere olhando o tabuleiro, e auto-orientar é
+o único que decide sozinho — ou seja, o único que ninguém adivinha por um desenho.
+
+**Os ícones são desenhados**, e os três caminhos foram pesados pelo modo de falha,
+como a §49.3 manda fazer onde não dá para medir:
+
+| Caminho | Como falha |
+|---|---|
+| `StandardPixmap` do Qt | nenhum significa "espelhar"; o mais próximo de girar é `SP_BrowserReload`, que é *recarregar página* — diz a coisa errada |
+| glifo Unicode (`↻`, `⇅`) | depende de cobertura de fonte **que não dá para medir aqui**: sob a plataforma offscreen o `inFont()` responde `False` até para o `×` que a paleta usa e que aparece na tela. Se faltar na máquina do usuário, o botão fica **em branco** |
+| desenhar | fica feio — e é o único dos três verificável nesta máquina |
+
+E foi verificado, duas vezes, com o desenho renderizado e olhado. As duas correções
+que isso rendeu estão no ícone de espelhar: os triângulos encostavam no eixo e o
+conjunto lia como um losango; depois, o eixo tracejado e o triângulo vazado sumiam
+nos **16 px** em que o botão de fato desenha o ícone. Detalhe que só existe na
+ampliação é detalhe que não existe.
+
+Duas consequências que vieram junto, e nenhuma é opcional:
+
+- **`Limpar Tabuleiro` entrou na lista de destrutivos.** Nas três linhas o peso dele
+  se lia da posição — tinha uma linha para si. Lado a lado com girar e espelhar, ele
+  seria o quarto botão de uma série, que é a leitura que a §41.4 evita. Ganhou o
+  estilo achatado e um vão que o separa dos outros três.
+- **Girar, espelhar e limpar ganharam ação, menu e atalho** (Ctrl+R, Ctrl+M,
+  Ctrl+Shift+L). Existiam **só** como botão — sem `QAction`, sem menu, sem teclado.
+  Perder o rótulo sem isso deixaria o comando alcançável só por quem adivinhasse o
+  desenho, e é a regra que o `test_toolbar` já cobrava da barra desde a §34.
+
+### 50.4 A largura mínima deixou de ser um número escrito à mão
+
+O painel declarava `setMinimumWidth(380)`. Com a paleta ao lado o editor passou a
+pedir 452, e um número fixo teria de ser corrigido junto — o par mantido nos dois
+lados que a §45 documenta como forma de defeito. Pior: num tema com moldura mais
+grossa que a desta máquina o número certo é outro, e ninguém estaria aqui para medir.
+Agora o painel **pergunta ao próprio widget**.
+
+### 50.5 A ação principal que faltava em um estado
+
+Terceira mudança, e a de melhor relação valor/esforço: uma linha.
+
+O `_set_primary_button` já listava `Reconhecer página` e `Detectar no PDF` entre os
+candidatos desde que foi escrito. O que faltava era um estado elegê-los — e havia um
+buraco exatamente onde eles servem:
+
+| Estado | Ação principal, antes |
+|---|---|
+| sem PDF | nenhuma |
+| seleção + posição | `Adicionar substituição` |
+| só seleção | `Reconhecer seleção` |
+| há alterações | nenhuma |
+| **PDF aberto, nada feito** | **nenhuma** |
+
+O último dizia *"Selecione um diagrama na página para começar"* e não destacava nada
+— justamente o momento em que o lote responde melhor que a mão, porque um livro de
+898 páginas não se seleciona a dedo. Agora `Detectar no PDF` lidera ali, e devolve a
+liderança a `Reconhecer seleção` assim que existe seleção. Um de cada vez, que é a
+regra da §20.5.
+
+O rótulo de contexto teve de ser reescrito **curto**: a primeira versão explicava o
+lote por extenso, quebrava em duas linhas e custava 28 px — num painel onde a conta é
+de dezenas. O botão em destaque já diz o que ele faz.
+
+### 50.6 O que isso fez com o critério da §20.5
+
+Medido nas mesmas condições da §41.2 (1500 px de largura, PDF aberto, offscreen):
+
+| | antes | agora |
+|---|---|---|
+| bloco de cima | 538 px | **422 px** |
+| visor da aba `OCR` | 222 px | **338 px** |
+| falta para o passo 5 em 900 px | **191 px** | **79 px** |
+| altura mínima, prévia expandida | 1.100 px | **980 px** |
+| altura mínima, prévia recolhida | 1.050 px | **900 px** |
+
+A última linha é a que muda o veredito: **com a prévia recolhida o fluxo básico passa
+a caber na janela padrão** — estado que já persiste desde a §41.3, então quem o
+escolhe uma vez trabalha assim. Com a prévia expandida ainda faltam 79 px, e para
+esses o caminho medido continua sendo o da análise que abriu este sprint: tirar da
+aba `OCR` o que não é etapa do fluxo (o rótulo de estado do motor, 58 px, e o botão
+`Ajustar seleção`, 20 px, que já está na barra com Ctrl+B).
+
+O critério da §20.5 sai de **não cumprido** para **cumprido com a prévia recolhida**.
+
+> **Fechado no Sprint 9.23 (§51).** Os 79 px que sobravam saíram tirando da aba do
+> fluxo o que não é etapa dele, e o critério passou a valer também com a prévia
+> expandida. A tabela acima vale como registro deste sprint; a atual está em §51.6.
+
+### 50.7 Cobertura de teste
+
+`tests/test_board_editor_panel.py` (21) e uma adição ao `test_side_panel.py`. O que
+eles prendem não é o número — é a estrutura de onde ele sai, porque o número volta a
+subir sozinho se alguém empilhar de novo:
+
+- a paleta **ao lado** por geometria, não por contagem de widgets;
+- brancas e pretas em colunas separadas;
+- os quatro comandos numa faixa horizontal comum;
+- a linha cabendo na largura mínima do painel;
+- todo comando sem rótulo com ícone, dica e atalho;
+- os atalhos novos sem colidir com os antigos, e fazendo o mesmo que os botões;
+- os três ícones com tinta e **diferentes entre si**;
+- `Detectar no PDF` liderando sem seleção, e devolvendo a liderança com ela;
+- o rótulo de contexto em uma linha.
+
+**Cinco mutações conferidas**, e uma delas achou um defeito no próprio teste: voltar
+os comandos para três linhas **passava** pelo teste da linha única. A fixture entrega
+a janela sem `show()`, e sem layout calculado os quatro botões respondem `y=0` e
+compartilham a faixa por acidente. O teste agora força o layout antes de medir — e é
+por isso que a mutação existe.
+
+As outras quatro: paleta empilhada de novo, destaque do lote removido, dois ícones
+com o mesmo desenho, e um ícone sem tinta. Cada uma pega por exatamente um teste,
+salvo as de layout, que caem também no teste de altura do bloco — o que é a
+consequência, não redundância.
+
+**O que continua sem prova:** que os 422 px valem no Windows real. A medição é
+offscreen, a mesma base da §41.2 e portanto comparável com ela, mas lá o botão é mais
+alto e a aritmética muda dos dois lados. O limiar de 980/900 px precisa ser remedido
+no destino antes de a §15.1 ser reescrita.
+
+---
+
+## 51) Sprint 9.23 — repartir o painel: o que não é etapa sai da aba do fluxo (2026-08-10)
+
+O Sprint 9.22 (§50) devolveu 116 px mexendo no que estava **em volta** do tabuleiro.
+Sobravam 79 px para o fluxo caber em 900, e a análise que abriu aquele sprint já
+dizia onde estavam: em coisas que ocupam a aba do fluxo sem serem etapa dele.
+
+Este sprint tira essas coisas de lá. O critério cabe numa frase — **na aba do fluxo
+fica o que é etapa do fluxo** — e é ele que está congelado em teste, não o desenho.
+
+### 51.1 O desequilíbrio, medido
+
+| Aba | Conteúdo pedia | O que carregava |
+|---|---|---|
+| **OCR** | **745 px** | contexto, 5 etapas numeradas, a fila de conferência e um grupo `Avançado` com aparência **e** configuração do motor |
+| FEN | 417 px | FEN, avisos, metadados, e uma segunda lista das substituições |
+| Aparência | **59 px** | um único grupo recolhido |
+
+Uma aba com tudo e duas quase vazias. O visor dava 222 px para os 745.
+
+### 51.2 A fila de conferência tem aba própria
+
+Conferir um lote não é o passo 2 de editar um diagrama: é o que se faz **depois** de
+um lote, sobre dezenas de posições, e com filtro e ações em massa próprios. Estava no
+meio do fluxo como uma seção que aparecia e sumia — e quando aparecia empurrava os
+passos seguintes 324 px para baixo.
+
+Três decisões dela:
+
+- **A aba só existe quando há o que conferir.** Uma aba permanentemente vazia em quem
+  nunca roda um lote é poluição com outro nome. `setTabVisible` a mostra e a esconde.
+- **O fim do lote leva o usuário até ela**, e só aí. A troca de aba acontece na
+  *transição* de vazia para cheia, não a cada refresh: o filtro mora dentro desta aba,
+  e trocar a aba a cada atualização arrancaria o usuário do lugar no meio do trabalho
+  dele.
+- **O `candidates_section` continua sendo um widget dentro da aba**, e não a aba. É o
+  que mantém de pé o contrato da §29: o filtro pode esvaziar a lista sem fazer sumir o
+  controle que desliga o filtro. Quem esconde a seção é o mesmo código de antes; a aba
+  tem a sua própria visibilidade, que é outra coisa.
+
+**O fluxo renumerou de 1–5 para 1–4.** Manter os números antigos deixaria um buraco no
+2, e uma sequência furada não diz quantas etapas faltam — que é para o que o número
+serve. `Conferir` fica fora da numeração de propósito.
+
+### 51.3 A aba `Ajustes`, repartida por assunto e não por dificuldade
+
+O grupo `Avançado` juntava fonte Merida, whiteout, motor de reconhecimento, modelo
+local e endpoint. "Avançado" é uma categoria sobre o *usuário*, não sobre a coisa —
+e por isso cabia tudo. Agora são dois grupos numa aba própria:
+
+| Grupo | O que tem |
+|---|---|
+| **Aparência do diagrama** | padding, borda, link Lichess, coordenadas, estilo em lote, whiteout, fonte Merida |
+| **Reconhecimento** | estado do motor, aplicar sem conferir, detectar por clique, motor, modelo local, endpoint |
+
+Os dois abrem recolhidos, que é o critério da §20.5 — a aba própria **não** substitui o
+recolhimento: abri-la mostraria tudo de uma vez.
+
+Duas saídas desta aba valem por si, e são as que fecham a conta dos 79 px:
+
+- o **rótulo de estado do motor** (58 px) é um parágrafo que não se lê duas vezes;
+- **`Aplicar sem conferir`** (17 px) é preferência, não etapa.
+
+Ambos ficavam **acima** do último passo, e é só o que está acima do último passo que
+decide se o fluxo rola.
+
+### 51.4 A lista única, a metade que faltava da §20.4
+
+A §20.4 pedia "lista única de alterações". Metade tinha sido feita: substituições e
+apagamentos foram unificados entre si na `changes_list`. A outra metade continuava ao
+lado — a `fen_ops_list`, na aba FEN, mostrando **as mesmas operações** com a sua
+própria seleção, o seu botão `Remover posição` e o seu atalho de apagar.
+
+Duas listas com duas seleções custavam mais do que a duplicação: espalhavam desvios
+pelo código. Em três lugares havia a mesma pergunta escrita duas vezes — "qual
+operação está selecionada?" respondida por `_selected_operation_index()` e, se ela
+desse `None`, pela linha corrente da outra lista. Os três desvios saíram junto com a
+lista, e não por limpeza: eles **só existiam** porque havia uma segunda seleção.
+
+No lugar dela, a aba FEN diz de quem são os campos que mostra (`Substituição 001 ·
+pág 4`) e os desabilita quando o selecionado é um apagamento — que não tem FEN.
+Deixá-los mostrando os da substituição anterior seria oferecer a edição de algo que o
+usuário não está vendo.
+
+### 51.5 Dois defeitos que só a tela mostrou
+
+**Barra de rolagem horizontal na aba `Ajustes`.** O rótulo de uma `QCheckBox` **não
+quebra linha**: a largura mínima dela é a frase inteira. `Aplicar automaticamente ao
+reconhecer página/PDF` pedia 600 px num painel de 598. O que sai disso não é um rótulo
+apertado — é uma barra horizontal na aba inteira, que esconde metade dos controles
+atrás de um arrasto. O texto encurtou para `Aplicar sem conferir` e o que se perdeu
+dele foi para a dica, que é onde cabe.
+
+Este defeito **já existia** antes do sprint, na aba `OCR`; mudar de aba só o tornou
+visível. Agora há teste.
+
+**Campo de caminho mais dois botões numa linha.** Mesma causa, no bloco da fonte
+Merida. Campo numa linha e botões na seguinte.
+
+Os dois apareceram renderizando o painel e olhando — a mesma prática que a §50.3 já
+tinha cobrado dos ícones.
+
+### 51.6 O critério da §20.5, fechado
+
+| | §41.2 | Sprint 9.22 | **Sprint 9.23** |
+|---|---|---|---|
+| visor da aba do fluxo | 222 px | 338 px | **352 px** |
+| conteúdo pedido pela aba | 745 px | 749 px | **643 px** |
+| falta para o passo final em 900 px | **191 px** | 79 px | **0 px** |
+| altura mínima, prévia expandida | 1.100 px | 980 px | **880 px** |
+| altura mínima, prévia recolhida | 1.050 px | 900 px | **790 px** |
+
+**O fluxo básico cabe em 1500×900 sem rolar e com a prévia expandida** — sem pedir ao
+usuário que esconda justamente o que o app faz de melhor (§21). É o critério que a
+§41.2 mediu como impossível e que a §15.1 registrava como *decidido não forçar*.
+
+Vale dizer o que **não** foi a solução, porque a §34.3 já tinha pago por isso: não se
+encolheu o tabuleiro, não se recolheu a prévia por padrão, e nenhum controle foi
+removido do app. O que mudou foi onde as coisas moram.
+
+### 51.7 Cobertura de teste
+
+`tests/test_panel_tabs.py` (15), mais a revisão das constantes do `test_side_panel`.
+
+O teste central é o `test_the_flow_tab_holds_only_the_flow`, e o seu par
+`test_the_flow_tab_still_holds_every_step`: juntos escrevem o critério de repartição
+como código. Despoluir não pode virar esvaziar, e a segunda metade é que garante isso.
+
+Os demais: as abas nomeadas e cabendo na barra; os grupos de ajuste recolhidos; a aba
+de conferência escondida até haver fila, aparecendo com o lote, levando o usuário até
+ela **uma vez só**, sumindo quando a fila esvazia, e com a contagem no título; a lista
+única sem a segunda lista, com os campos da aba FEN seguindo a seleção e se
+desabilitando num apagamento; e nenhuma aba exigindo rolagem horizontal.
+
+**Seis mutações conferidas**, e duas foram construídas errado antes de acertar — as
+duas registradas porque a razão é a mesma: em Qt, `addWidget` **reparenta**. Mover um
+widget "de volta" para a aba do fluxo sem tirá-lo do destino é um no-op, porque o
+`addWidget` que vem depois vence. Uma mutação que não muda nada passa por qualquer
+teste, e por um instante isso se lê como cobertura.
+
+As seis, depois de corrigidas: rótulo de estado do motor de volta acima do fluxo (pega
+por 4 testes — o estrutural e os três de altura, que são a consequência); aba de
+conferência sempre visível (3); lote sem levar à aba (1); troca de aba a cada refresh
+(1); campos da aba FEN sem seguir a seleção (1); e o rótulo longo de volta na checkbox
+(1).
+
+**O que continua sem prova:** o mesmo da §50 — os números são offscreen. A base é a da
+§41.2 e portanto comparável com ela, mas no Windows real as métricas de widget mudam,
+e a fonte de lá é mais estreita que a daqui (ou seja, a régua de largura usada aqui é
+mais dura que a realidade, não mais frouxa). Os limiares de 880/790 px precisam ser
+remedidos no destino antes de a §15.1 ser reescrita.
+

@@ -16,11 +16,25 @@ QtCore = pytest.importorskip("PySide6.QtCore")
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
 #: Altura de janela a partir da qual o fluxo básico cabe sem rolar, medida em
-#: 1500 px de largura. Em 900 (a altura padrão) ele **não** cabe: falta 191 px. A
-#: causa é estrutural e está registrada na §41.3 — o painel de cima fica preso no
-#: seu mínimo de 538 px, e encolher o editor de tabuleiro já foi tentado e
-#: revertido na §34.3.
-FLOW_FITS_FROM_HEIGHT = 1100
+#: 1500 px de largura e com a prévia expandida.
+#:
+#: A queda, em dois sprints e por dois caminhos diferentes:
+#:
+#: | | expandida | recolhida |
+#: |---|---|---|
+#: | §41.2, com o topo preso em 538 px | 1.100 | 1.050 |
+#: | 9.22: paleta ao lado + comandos numa linha (§50) | 980 | 900 |
+#: | 9.23: o que não é etapa fora da aba do fluxo (§51) | **880** | **790** |
+#:
+#: Encolher o editor de tabuleiro continua reprovado (§34.3). O que resolveu foi
+#: mexer na divisão do painel — o caminho que a própria §41.2 apontava.
+FLOW_FITS_FROM_HEIGHT = 880
+
+#: Com a prévia recolhida.
+FLOW_FITS_COLLAPSED_FROM_HEIGHT = 790
+
+#: A janela padrão. O critério da §20.5 é sobre ela, e passou a ser cumprido.
+DEFAULT_WINDOW_HEIGHT = 900
 
 
 def _stylesheet_warnings(build) -> list[str]:
@@ -41,11 +55,14 @@ def _stylesheet_warnings(build) -> list[str]:
 
 
 def _advanced_groups(window) -> list[QtWidgets.QGroupBox]:
-    return [
-        group
-        for group in window.findChildren(QtWidgets.QGroupBox)
-        if group.isCheckable() and "vanç" in group.title()
-    ]
+    """Os grupos de configuração, declarados pela janela.
+
+    Era uma busca por "vanç" no título, o que prendia o critério da §20.5 ao texto
+    do rótulo: quando os grupos foram renomeados no Sprint 9.23 o teste passou a
+    achar zero grupos — e teria passado em silêncio se o `assert groups` não
+    estivesse lá. Agora a janela diz quais são.
+    """
+    return list(window.settings_groups)
 
 
 # ---------------------------------------------------------------------------
@@ -189,27 +206,76 @@ def _flow_bottom_and_viewport(window) -> tuple[int, int]:
     return (top + window.btn_add.height(), tab.viewport().height())
 
 
-def test_the_basic_flow_fits_without_scrolling_from_the_measured_height(
-    qapp, tmp_path
-) -> None:
-    """Prende a altura a partir da qual o fluxo cabe.
+def _window_with_pdf(qapp, tmp_path, altura: int, previa: bool):
+    """Janela medível: aberta num PDF, na altura pedida, com a prévia como se quer.
 
-    Não afirma que cabe em 900 — não cabe, e a §41.3 diz por quê. Afirma que não
-    piora: quem acrescentar 200 px de painel acima de `Adicionar substituição`
-    quebra este teste.
+    O PDF importa e não é cerimônia. Sem ele o rótulo de contexto mostra "Abra um
+    PDF para iniciar", que é mais longo, quebra em duas linhas e empurra o fluxo
+    10 px para baixo — mediria uma condição em que o fluxo nem pode ser executado.
+    A §41.2 mediu com o PDF aberto; estes números só são comparáveis com os dela
+    na mesma condição.
     """
+    from conftest import make_pdf
+
     from chess_pdf_editor import app as app_module
 
     settings = QtCore.QSettings(str(tmp_path / "s.ini"), QtCore.QSettings.IniFormat)
     settings.setValue("remote_privacy_ack", True)
     window = app_module.MainWindow(settings=settings)
+    window.resize(1500, altura)
+    window.show()
+    window._open_pdf(str(make_pdf(tmp_path / "book.pdf")), clear_ops=True)
+    window.compare_group.setChecked(previa)
+    qapp.processEvents()
+    return window
+
+
+def test_the_basic_flow_fits_without_scrolling_from_the_measured_height(
+    qapp, tmp_path
+) -> None:
+    """Prende a altura a partir da qual o fluxo cabe.
+
+    Afirma que não piora: quem acrescentar à aba do fluxo 100 px acima de
+    `Adicionar substituição` quebra este teste.
+    """
+    window = _window_with_pdf(qapp, tmp_path, FLOW_FITS_FROM_HEIGHT, previa=True)
     try:
-        window.resize(1500, FLOW_FITS_FROM_HEIGHT)
-        window.show()
-        qapp.processEvents()
         bottom, viewport = _flow_bottom_and_viewport(window)
         assert bottom <= viewport, (
             f"em {FLOW_FITS_FROM_HEIGHT} px o fluxo pede {bottom} px e o visor dá {viewport}"
+        )
+    finally:
+        window.close()
+
+
+def test_the_flow_fits_the_default_window_with_the_preview_open(qapp, tmp_path) -> None:
+    """O critério da §20.5, que a §15.1 dava como *decidido não forçar*.
+
+    Este é o teste que a §41.2 dizia não ser possível cumprir: fluxo básico sem
+    rolagem em 1500×900, com a prévia **expandida** — sem pedir ao usuário que
+    esconda justamente o que o app faz de melhor. Faltavam 191 px; dois sprints
+    depois sobram 22.
+
+    Se ele voltar a falhar, o que quebrou não é layout: é alguém tendo posto na aba
+    do fluxo algo que não é etapa dele.
+    """
+    window = _window_with_pdf(qapp, tmp_path, DEFAULT_WINDOW_HEIGHT, previa=True)
+    try:
+        bottom, viewport = _flow_bottom_and_viewport(window)
+        assert bottom <= viewport, (
+            f"em {DEFAULT_WINDOW_HEIGHT} px o fluxo pede {bottom} px e o visor dá {viewport}"
+        )
+    finally:
+        window.close()
+
+
+def test_the_flow_fits_an_even_shorter_window_with_the_preview_collapsed(qapp, tmp_path) -> None:
+    window = _window_with_pdf(qapp, tmp_path, FLOW_FITS_COLLAPSED_FROM_HEIGHT, previa=False)
+    try:
+        bottom, viewport = _flow_bottom_and_viewport(window)
+        assert bottom <= viewport, (
+            f"em {FLOW_FITS_COLLAPSED_FROM_HEIGHT} px com a prévia recolhida o fluxo "
+            f"pede {bottom} px e o visor dá {viewport}"
         )
     finally:
         window.close()
@@ -266,11 +332,16 @@ def test_the_advanced_group_also_remembers_being_opened(qapp, tmp_path) -> None:
 
 
 def test_the_numbered_flow_keeps_all_its_steps(main_window, tmp_path) -> None:
-    """As etapas de 1 a 5 têm de continuar numeradas depois de o painel atualizar.
+    """As etapas de 1 a 4 têm de continuar numeradas depois de o painel atualizar.
 
-    O passo 5 perdia o número: `Alterações (N)` sobrescrevia `5 · Alterações` no
-    primeiro refresh da lista, que acontece já no arranque. O fluxo ficava 1, 2, 3, 4
-    e um rótulo solto.
+    O último passo perdia o número: `Alterações (N)` sobrescrevia `4 · Alterações`
+    no primeiro refresh da lista, que acontece já no arranque. O fluxo ficava 1, 2,
+    3 e um rótulo solto.
+
+    Eram cinco passos até o Sprint 9.23. A conferência dos candidatos saiu para a
+    sua própria aba (§51.2) e o fluxo renumerou de 1–5 para 1–4 — manter os números
+    antigos deixaria um buraco no 2, e uma sequência furada não diz quantas etapas
+    faltam, que é para o que o número serve.
     """
     from conftest import DIAGRAM_RECT, make_pdf
 
@@ -282,15 +353,16 @@ def test_the_numbered_flow_keeps_all_its_steps(main_window, tmp_path) -> None:
     main_window.board_editor.set_piece_placement("8/8/8/4k3/8/8/4K3/8")
     main_window._add_operation()
 
+    # Só prefixos numéricos: outros rótulos usam o mesmo separador sem serem etapa.
     numbered = {
         text.split(" · ")[0]
         for text in (
             [label.text() for label in main_window.findChildren(QtWidgets.QLabel)]
             + [group.title() for group in main_window.findChildren(QtWidgets.QGroupBox)]
         )
-        if " · " in text
+        if " · " in text and text.split(" · ")[0].isdigit()
     }
 
-    assert {"1", "2", "3", "4", "5"} <= numbered, f"etapas encontradas: {sorted(numbered)}"
+    assert numbered == {"1", "2", "3", "4"}, f"etapas encontradas: {sorted(numbered)}"
     # E a contagem continua visível junto do número.
-    assert main_window.changes_label.text() == "5 · Alterações (1)"
+    assert main_window.changes_label.text() == "4 · Alterações (1)"

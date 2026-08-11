@@ -53,6 +53,7 @@ _JANELA_REQUER = (
     # colaboração
     "_commit_history", "_refresh_page_overlays", "_schedule_preview_refresh",
     "_update_edit_context_state", "_current_whiteout_padding", "_current_fen_defaults",
+    "_sync_candidates_tab",
     "_make_engine", "_confirm_remote_upload", "_engine_mode", "_local_model_path",
     "_ocr_endpoint", "_draft_operation", "_anchor_from_selection", "_set_position_anchor",
 )
@@ -616,14 +617,21 @@ class RecognitionMixin:
         try:
             self.candidates_list.clear()
             total = len(self.candidates)
+            # Sem o "2 ·": a conferencia saiu do fluxo numerado para a sua propria
+            # aba (§51.2), e numerar uma etapa que nao esta na sequencia era
+            # prometer uma ordem que nao existe.
             if self.candidates_only_uncertain.isChecked() and total:
-                self.candidates_label.setText(f"2 · Conferir ({len(visible)} incertos de {total})")
+                self.candidates_label.setText(f"Conferir ({len(visible)} incertos de {total})")
             else:
-                self.candidates_label.setText(f"2 · Conferir ({total})")
+                self.candidates_label.setText(f"Conferir ({total})")
             # Fila vazia e o estado normal: esconder a secao inteira devolve
             # espaco vertical para o que importa. O filtro nao esconde a secao —
             # senao nao haveria como desligar o filtro.
             self.candidates_section.setVisible(bool(self.candidates))
+            # A aba tem a sua propria visibilidade, e e ela que aparece e some
+            # com a fila. A secao acima continua respondendo pelo contrato do
+            # filtro, que e outro.
+            self._sync_candidates_tab()
             self.candidates_threshold_spin.setEnabled(self.candidates_only_uncertain.isChecked())
             for position, idx in enumerate(visible, start=1):
                 item = QtWidgets.QListWidgetItem(
