@@ -406,6 +406,20 @@ def _operation_full_fen(op: OverlayOperation) -> str:
     return f"{op.fen} {side} - - 0 {fullmove}"
 
 
+def wants_lichess_link(op: OverlayOperation, global_default: bool) -> bool:
+    """Este diagrama leva link Lichess?
+
+    Um lugar só decide, e todos os caminhos que desenham diagrama passam por aqui —
+    exportação, prévia e galeria. A regra (`None` segue a global) escrita em três
+    lugares seria o par mantido à mão que a §45 documenta: a prévia divergiria da
+    exportação, e a §21 garante por teste que as duas são iguais byte a byte.
+    """
+    escolha = getattr(op, "include_lichess_link", None)
+    if escolha is None:
+        return bool(global_default)
+    return bool(escolha)
+
+
 def _operation_lichess_url(op: OverlayOperation) -> str:
     full_fen = " ".join(_operation_full_fen(op).split())
     parts = full_fen.split(" ")
@@ -815,7 +829,7 @@ def apply_page_operations(
         if border_width > 0:
             page.draw_rect(rect, color=(0, 0, 0), width=border_width, overlay=True)
 
-        if include_lichess_link:
+        if wants_lichess_link(op, include_lichess_link):
             _insert_lichess_link_below_diagram(page, rect, op)
 
 

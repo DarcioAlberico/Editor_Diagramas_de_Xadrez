@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Optional
 
 from .migrations import (
     CURRENT_SCHEMA_VERSION,
@@ -97,6 +98,18 @@ def _load_study_move_comments(item: dict[str, object]) -> dict[str, dict[str, st
     return comments
 
 
+def _optional_bool(value: object) -> Optional[bool]:
+    """`None` continua `None`; o resto vira bool.
+
+    `bool(None)` seria `False`, e `False` aqui não é "sem opinião" — é "não quero o
+    link **neste** diagrama". Confundir os dois transformaria todo projeto antigo
+    numa recusa explícita, imune à opção global.
+    """
+    if value is None:
+        return None
+    return bool(value)
+
+
 def _load_operation(item: dict[str, object]) -> OverlayOperation:
     default_padding = float(item.get("whiteout_padding_pt", 0.5))
     return OverlayOperation(
@@ -113,6 +126,9 @@ def _load_operation(item: dict[str, object]) -> OverlayOperation:
         whiteout_padding_right_pt=float(item.get("whiteout_padding_right_pt", default_padding)),
         whiteout_padding_bottom_pt=float(item.get("whiteout_padding_bottom_pt", default_padding)),
         border_width_pt=float(item.get("border_width_pt", 0.0)),
+        # Ausente = `None` = segue a global, que é exatamente como o projeto se
+        # comportava antes de o campo existir (§52.1).
+        include_lichess_link=_optional_bool(item.get("include_lichess_link")),
     )
 
 

@@ -23,7 +23,7 @@ Technique*, 898 páginas). O que existe hoje:
 | Apagamentos (erase) | ✅ pronto |
 | **Prévia ao vivo do resultado (WYSIWYG)** | ✅ **novo — ver §21** |
 | **Fila de conferência dos candidatos do OCR** | ✅ **novo — ver §23** |
-| Projeto/checkpoint versionado (`schema_version=8`) | ✅ pronto |
+| Projeto/checkpoint versionado (`schema_version=10`) | ✅ pronto |
 | Modo Estudo (PGN, variantes, comentários por lance) | ✅ pronto (`study`) |
 | Workers em segundo plano (OCR em lote / exportação) | ✅ pronto — ver §25.1 |
 | Undo/redo no modo edição | ✅ pronto — ver §25.2 |
@@ -44,6 +44,8 @@ Technique*, 898 páginas). O que existe hoje:
 | **Script do instalador (Inno Setup)** | ✅ **novo — ver §49**; falta compilar |
 | **Painel: paleta ao lado, comandos numa linha** | ✅ **novo — ver §50** |
 | **Painel repartido em abas; fluxo sem rolagem em 900** | ✅ **novo — ver §51** |
+| **Galeria: rodapé de edição, filtro e aplicação em lote** | ✅ **novo — ver §52** |
+| **Link Lichess por diagrama (e não só global)** | ✅ **novo — ver §52.1** |
 | Instalador assinado / validação em máquina limpa | ❌ pendente — ver §28.4 |
 
 **O desvio da §5/§6 foi fechado.** Até a versão 1.5 o reconhecimento existia só
@@ -568,6 +570,8 @@ Beta (meta):
 22. **Despoluir o painel: paleta ao lado, comandos numa linha** ✅ — ver §50.
 23. **Repartir o painel em abas por assunto** ✅ — ver §51. Com ele o critério de
     rolagem da §20.5 fecha, e a "lista única" da §20.4 fica completa.
+24. **Galeria como lugar de trabalho: rodapé de edição, filtro e aplicação em lote;
+    link Lichess por diagrama** ✅ — ver §52. Schema do projeto salvo vai a 10.
 
 ### 15.1 O que falta (revisado em 2026-08-09)
 
@@ -4160,4 +4164,215 @@ conferência sempre visível (3); lote sem levar à aba (1); troca de aba a cada
 e a fonte de lá é mais estreita que a daqui (ou seja, a régua de largura usada aqui é
 mais dura que a realidade, não mais frouxa). Os limiares de 880/790 px precisam ser
 remedidos no destino antes de a §15.1 ser reescrita.
+
+---
+
+## 52) Sprint 9.24 — a galeria vira lugar de editar, e o link Lichess vira por diagrama (2026-08-10)
+
+A galeria da §31 mostra o livro inteiro, antes e depois, e é o único lugar do app com
+essa visão. Só que ela servia para **achar** um diagrama: ajustar qualquer coisa nele
+exigia fechar a galeria, voltar ao painel e reencontrá-lo lá — percorrendo justamente
+o caminho que a galeria existe para poupar.
+
+Este sprint põe no rodapé dela os campos que valem por diagrama. E, ao fazer isso,
+esbarra numa opção que não podia ser por diagrama porque **não existia** por diagrama.
+
+### 52.1 O link Lichess era global, e isso era uma limitação e não uma escolha
+
+`include_lichess_link` era uma caixa só, para o PDF inteiro. Dois diagramas na mesma
+página não podiam discordar — e discordar é o caso normal: o diagrama de uma posição
+crítica pede link para analisar, o de um mate em dois já resolvido no texto não.
+
+O campo entrou em `OverlayOperation` com **três estados**, e não dois:
+
+| Valor | Significado |
+|---|---|
+| `None` | segue a opção global |
+| `True` | com link, mesmo que a global esteja desligada |
+| `False` | sem link, mesmo que a global esteja ligada |
+
+Dois estados teriam obrigado todo projeto antigo a nascer com um valor **escolhido por
+nós** em cada diagrama, e a global deixaria de surtir efeito em qualquer um deles —
+uma caixa que continua na tela e não faz mais nada.
+
+Por causa disso o rótulo da caixa mudou de `Incluir link Lichess no PDF exportado`
+para `Link Lichess por padrão`. Ela manda só em quem não escolheu, e prometer o resto
+seria promessa que ela não pode cumprir: desmarcá-la não tira o link de um diagrama
+que pediu para tê-lo.
+
+**Uma função decide, e todos os caminhos passam por ela.** `wants_lichess_link(op,
+global)` fica no `pdf_service`, e exportação, prévia e galeria a chamam. A regra
+escrita em três lugares seria o par mantido à mão da §45 — e aqui com um agravante: a
+§21 garante por teste que a prévia é igual ao PDF exportado byte a byte, então as duas
+divergirem quebraria a garantia mais forte que o app tem.
+
+### 52.2 Schema 10, e uma migração que não migra nada
+
+O contrato da §28.1 é claro: formato novo, número novo, função nova em `_MIGRATIONS`.
+A `_v9_to_v10` não converte coisa alguma, e **é esse o ponto** — o campo é opcional e
+ausente significa "segue a global", que é literalmente o comportamento do schema 9. Um
+projeto de 9 reaberto exporta o mesmo PDF de antes.
+
+A função existe mesmo assim porque sem ela o schema 10 seria gravado por este app e
+lido por ele como se fosse 9, e a tabela do cabeçalho das migrações deixaria de
+descrever o formato — que é exatamente o defeito que os schemas 1–7 acumularam e que a
+§28.1 criou a migração para não repetir.
+
+### 52.3 O rodapé
+
+Quatro campos numa linha, para a substituição (ou o candidato) selecionado: **vez de
+jogar**, **lance**, **link Lichess** e **borda**. Padding ficou de fora de propósito:
+são quatro números, e quatro números viram um segundo formulário, não um rodapé.
+
+Três decisões de implementação:
+
+- **O rodapé edita o mesmo objeto que a janela principal guarda.** A galeria recebe as
+  listas por referência, então não há cópia para reconciliar depois — o dado já está
+  certo quando o sinal chega do outro lado.
+- **A seleção segue o item corrente, não o clique.** Assim as setas do teclado também
+  atualizam o rodapé. Navegar a janela principal continua sendo coisa do clique, que é
+  um gesto deliberado.
+- **A legenda marca só quem discorda da global** (`· sem link`, `· com link`). Marcar
+  os dois casos não marcaria nada: o que se procura numa grade de centenas é a exceção.
+
+Do outro lado, `_on_gallery_entry_edited` atualiza o que derivava do dado e não se
+atualiza sozinho: listas, prévia, link, e **o histórico**. Sem o commit, um `Ctrl+Z`
+depois da edição desfaria a *ação anterior* e deixaria esta de pé — o pior desfazer
+possível.
+
+### 52.4 Uma miniatura editada tem de ser refeita, e sem dois workers
+
+Mudar a borda ou o link muda o "depois" do diagrama. Uma grade que continua mostrando
+o resultado antigo é pior que uma grade sem miniatura: ela **afirma** algo que deixou
+de ser verdade.
+
+O refazimento é enfileirado, nunca concorrente. Enquanto o render inicial roda, a
+chave editada só entra em `_dirty_keys`; quem esvazia a fila é o `_on_completed`. A
+justificativa que eu tinha escrito era ordem de entrega — dois workers sobre a mesma
+chave entregam fora de ordem e o mais velho pode vencer. A mutação mostrou que é pior:
+sem a guarda, **o processo morre**.
+
+### 52.6 O lote, e por que ele não é "os campos valem para a seleção"
+
+Um livro tem centenas de diagramas. Decidir link e borda um a um é o mesmo gargalo
+que a §29 resolveu para a conferência, e a resposta aqui é a mesma: agir sobre um
+conjunto. A grade passou a aceitar seleção múltipla (Ctrl, Shift, Ctrl+A).
+
+**O desenho recusado primeiro.** O óbvio seria os campos do rodapé passarem a valer
+para a seleção inteira. Recusado: um lote não pode ser efeito colateral de mexer num
+campo. Quem tivesse o livro todo selecionado e encostasse no spin do lance carimbaria
+"lance 5" em trezentas posições sem ter pedido nada.
+
+O que entrou são **dois gestos explícitos**, que é a disciplina da §23 — ação em massa
+declara o alcance antes de agir:
+
+1. escolher os diagramas (a seleção);
+2. marcar **quais campos** o lote toca (as caixas `Vez`, `Lance`, `Link`, `Borda`).
+
+Nenhuma caixa vem marcada, então o botão nasce desabilitado. E o botão diz o número:
+`Aplicar aos 12`.
+
+`Lance` está entre as caixas por simetria, mas é o que menos faz sentido em lote —
+cada diagrama tem o seu. `Link` e `Borda` são o motivo da linha existir: são as
+escolhas que valem para um capítulo inteiro.
+
+**Um defeito de desenho meu, achado montando o teste do desfazer.** Com vários
+selecionados, mexer no rodapé para preparar os valores **editava de passagem o item
+corrente** — porque o rodapé escreve na hora, que é o certo quando há um só. O usuário
+ficava com dois passos de desfazer para o que fez como um, e o primeiro `Ctrl+Z`
+desfazia o lote deixando um diagrama alterado no meio da seleção.
+
+A correção: com dois ou mais selecionados o rodapé **para de escrever ao vivo** e passa
+a ser um formulário de valores; quem grava é o botão. O título do grupo muda junto
+(`3 diagramas selecionados`), porque a função do rodapé mudou e um rótulo parado
+prometeria o contrário.
+
+**Duas consequências que vieram com a seleção múltipla:**
+
+- **Ctrl e Shift não navegam.** São gestos de seleção. Sem a guarda, montar uma
+  seleção de 20 diagramas levaria a janela principal a 20 páginas pelo caminho — 20
+  renders para chegar onde nem se queria ir.
+- **Um lote é um passo de desfazer.** Sinal próprio (`batch_edited`), um commit só,
+  com a contagem no rótulo. N commits fariam o usuário apertar `Ctrl+Z` trezentas
+  vezes para voltar de uma decisão que ele tomou com um clique — na prática, o mesmo
+  que não poder desfazer.
+
+### 52.7 O filtro, e a regra que ele obriga a cumprir
+
+`Ctrl+A` já pegava tudo; o que faltava era pegar **um pedaço** sem rolar e
+Shift+clicar por 90 páginas. Três recortes, que são os que se pedem na prática:
+
+| Recorte | Para quê |
+|---|---|
+| faixa de páginas | o capítulo |
+| tipo | o que já está aplicado × o que ainda é candidato |
+| escolha de link | achar as exceções — num livro de centenas, agulha em palheiro |
+
+**O filtro é de vista, não de trabalho.** As miniaturas de todos continuam sendo
+renderizadas: o filtro muda a qualquer momento, e um render que só cobrisse o recorte
+atual teria de recomeçar a cada mudança.
+
+**A regra da §23, que aqui é obrigatória e não opcional.** Em Qt, `setHidden` **não**
+deseleciona. Um item filtrado para fora e ainda selecionado entraria no lote sem
+aparecer na tela — o usuário leria "aplicado em 2" e teria mexido em 6, descobrindo o
+contrário só no PDF exportado. São dois mecanismos, de propósito:
+
+1. `_apply_filter` deseleciona o que esconde;
+2. `_selected_keys` ignora o que está escondido.
+
+Qualquer um sozinho bastaria, e é por isso que uma mutação em cada um passa pelo teste
+do outro — cada um tem o seu teste direto. O segundo fica no caminho por onde o lote
+de fato passa, para que um caminho novo que esconda sem deselecionar não vire um lote
+que mexe no invisível.
+
+E a outra metade da regra: o aviso do lote diz quantos ficaram de fora
+(`4 fora do filtro não foram tocados`), como a §23 faz com os candidatos.
+
+**Duas decisões menores, ambas registradas porque a alternativa é defensável:**
+
+- **Faixa invertida é lida como o usuário quis.** Quem digita "40 a 12" quis 12 a 40;
+  recusar transformaria um engano de digitação numa grade vazia.
+- **O filtro não se reaplica depois de uma edição.** Filtrar por "sem link" e então
+  marcar "padrão" faria a seleção inteira sumir no instante do clique. A legenda se
+  atualiza no lugar, o que mostra o que aconteceu sem tirar da tela o que se está
+  olhando. Quem quiser o recorte novo mexe no filtro.
+
+### 52.8 Cobertura de teste
+
+`tests/test_gallery_footer.py` (44). **Quinze mutações**, e quatro acharam buracos
+reais — três no código, uma no próprio teste:
+
+**A mutação que achou o buraco no código.** Trocar `_optional_bool` por um `bool(...)`
+distraído — colapsando `None` em `False` — **passava pela suíte inteira**. A rede da
+§45 confere que um campo *preenchido* sobrevive ao round-trip; ela não olha o campo
+*ausente*. E é aí que estaria o estrago: todo projeto de schema 9 reabriria com cada
+diagrama recusando o link **de propósito** e imune à opção global, sem nada quebrar e
+sem nada avisar, exportando um PDF diferente do que o usuário já tinha conferido. O
+teste que faltava agora existe, e é o mais importante do arquivo.
+
+**A mutação que achou o buraco no teste.** Remover a guarda `_loading_footer` — que
+impede o preenchimento de gravar de volta no objeto que acabou de ser lido — não era
+pega, porque o teste usava uma operação recém-criada: `setCurrentIndex(0)` num combo
+que já está em 0 não emite sinal nenhum. Agora todos os valores do teste diferem do
+padrão do widget, e é isso que o torna um teste.
+
+**Os outros dois buracos de código** apareceram montando os testes, não escrevendo a
+funcionalidade — que é o argumento inteiro a favor de escrevê-los:
+
+- **o rodapé escrevendo ao vivo com vários selecionados** (§52.6), achado pelo teste
+  do desfazer ponta a ponta;
+- **o grupo do rodapé habilitado só pelo item corrente** (§52.6), achado porque
+  `Ctrl+A` não define um item corrente: o botão do lote aparecia e não se deixava
+  clicar, no caminho mais natural de todos.
+
+As outras onze: ignorar a escolha por diagrama (pega por 5), legenda sem consultar a
+operação viva (2), worker concorrente (1, e derruba a suíte), `False` explícito
+confundido com ausência (1), lote ignorando as caixas (1), lote pegando o livro em vez
+da seleção (1), um sinal por item em vez de um do lote (2), Ctrl+clique voltando a
+navegar (1), esconder sem deselecionar (1), `_selected_keys` sem a rede redundante (1),
+e faixa de páginas sem tolerar a ordem invertida (1).
+
+**O que continua sem prova:** nada de novo. Os testes de PDF exportado abrem o arquivo
+e leem os links de verdade, então a cadeia inteira — rodapé → objeto → `wants_lichess_link`
+→ anotação no PDF — está coberta ponta a ponta.
 

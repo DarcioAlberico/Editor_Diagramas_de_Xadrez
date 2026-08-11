@@ -275,7 +275,15 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             "precisar arrastar. Precisa do detector local (OpenCV)."
         )
         self.click_detects_check.toggled.connect(self._on_click_detects_toggled)
-        self.include_lichess_link_check = QtWidgets.QCheckBox("Incluir link Lichess no PDF exportado")
+        # "Por padrão" e não "incluir": desde a §52 cada diagrama pode ter a sua
+        # própria escolha, e esta caixa manda apenas em quem não escolheu. Deixar o
+        # rótulo antigo faria dela uma promessa que ela deixou de poder cumprir —
+        # desmarcá-la não tira o link de um diagrama que pediu para tê-lo.
+        self.include_lichess_link_check = QtWidgets.QCheckBox("Link Lichess por padrão")
+        self.include_lichess_link_check.setToolTip(
+            "Vale para os diagramas sem escolha própria.\n"
+            "Para decidir um a um, use o rodapé da galeria (Ctrl+G)."
+        )
         self.include_lichess_link_check.setChecked(bool(self.settings.value("include_lichess_link", True, bool)))
         self.include_lichess_link_check.toggled.connect(
             lambda checked: self.settings.setValue("include_lichess_link", bool(checked))
@@ -1496,9 +1504,47 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             parent=self,
         )
         dialog.entry_activated.connect(self._focus_gallery_entry)
+        dialog.entry_edited.connect(self._on_gallery_entry_edited)
+        dialog.batch_edited.connect(self._on_gallery_batch_edited)
         dialog.finished.connect(lambda _result: setattr(self, "gallery_dialog", None))
         self.gallery_dialog = dialog
         dialog.show()
+
+    def _on_gallery_entry_edited(self, kind: str, index: int) -> None:
+        """A galeria mexeu num diagrama: o resto da janela tem de saber.
+
+        O rodapé edita o **mesmo objeto** que a janela principal guarda, então o
+        dado já está certo quando este método roda. O que falta é tudo o que
+        derivava dele e não se atualiza sozinho: as listas, a prévia, o link, e o
+        histórico — sem o commit, um `Ctrl+Z` depois da edição desfaria a *ação
+        anterior* e deixaria esta de pé, que é o pior desfazer possível.
+        """
+        if kind == KIND_CANDIDATE:
+            self._refresh_candidates_list()
+        else:
+            self._refresh_operations_list()
+            self._refresh_changes_list()
+            if self._selected_operation_index() == index:
+                self._select_operation_in_fen_tab(index)
+        self._update_lichess_link()
+        self._schedule_preview_refresh()
+        self._commit_history("editar diagrama na galeria")
+
+    def _on_gallery_batch_edited(self, total: int) -> None:
+        """A galeria aplicou os mesmos valores em vários diagramas.
+
+        Um commit só, e com a contagem no rótulo — o desfazer de um lote é o lote
+        inteiro. N commits fariam o usuário apertar Ctrl+Z trezentas vezes para
+        voltar de uma decisão que ele tomou com um clique, o que na prática é o
+        mesmo que não poder desfazer.
+        """
+        self._refresh_operations_list()
+        self._refresh_changes_list()
+        self._refresh_candidates_list()
+        self._update_lichess_link()
+        self._schedule_preview_refresh()
+        self._commit_history(f"editar {total} diagrama(s) na galeria")
+        self.statusBar().showMessage(f"{total} diagrama(s) alterado(s) pela galeria.")
 
     def _focus_gallery_entry(self, kind: str, index: int) -> None:
         """Leva a janela principal até o diagrama escolhido na galeria."""
