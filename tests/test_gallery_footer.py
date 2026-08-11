@@ -380,7 +380,7 @@ def test_a_gallery_edit_can_be_undone(main_window, tmp_path, qapp) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Aplicação em lote (§52.6)
+# Aplicação em lote (§52.5)
 #
 # O que estes testes protegem é sobretudo o que o lote **não** faz. Um livro tem
 # centenas de diagramas, e a diferença entre uma ferramenta útil e um acidente
@@ -605,7 +605,7 @@ def test_a_batch_is_one_undo_step(main_window, tmp_path, qapp) -> None:
 
 
 # ---------------------------------------------------------------------------
-# O filtro (§52.7)
+# O filtro (§52.6)
 #
 # O teste que mais importa aqui não é nenhum dos que conferem o recorte: é o
 # `test_the_batch_cannot_touch_what_the_filter_hid`. Esconder no Qt **não**

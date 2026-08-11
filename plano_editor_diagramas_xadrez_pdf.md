@@ -46,6 +46,7 @@ Technique*, 898 páginas). O que existe hoje:
 | **Painel repartido em abas; fluxo sem rolagem em 900** | ✅ **novo — ver §51** |
 | **Galeria: rodapé de edição, filtro e aplicação em lote** | ✅ **novo — ver §52** |
 | **Link Lichess por diagrama (e não só global)** | ✅ **novo — ver §52.1** |
+| **README em dia com a interface atual** | ✅ **novo — ver §53** |
 | Instalador assinado / validação em máquina limpa | ❌ pendente — ver §28.4 |
 
 **O desvio da §5/§6 foi fechado.** Até a versão 1.5 o reconhecimento existia só
@@ -572,6 +573,8 @@ Beta (meta):
     rolagem da §20.5 fecha, e a "lista única" da §20.4 fica completa.
 24. **Galeria como lugar de trabalho: rodapé de edição, filtro e aplicação em lote;
     link Lichess por diagrama** ✅ — ver §52. Schema do projeto salvo vai a 10.
+25. **README em dia com os três sprints de interface** ✅ — ver §53. Sem código: o
+    README descrevia as abas anteriores e o critério de rolagem já vencido.
 
 ### 15.1 O que falta (revisado em 2026-08-09)
 
@@ -1161,8 +1164,11 @@ Ordenadas por (valor percebido ÷ esforço):
    de graça: o CairoSVG opcional só serve para *rasterizar* o SVG, gerá-lo é
    `python-chess` puro.
 
-7. **Modo "revisar pendências"** — fila só com as posições marcadas como
-   incertas (depende de `confidence` funcionar, §22.4).
+7. ~~**Modo "revisar pendências"**~~ — feito no Sprint 9.1, ver §29. A dependência
+   anotada aqui (`confidence` funcionar, §22.4) era real e foi o que segurou o item:
+   ele só passou a valer a pena com a confiança da **pior casa** do Sprint 7 e com
+   volume de candidatos para filtrar. Virou dois controles na fila de conferência —
+   `Só leituras incertas` e `Mais incertos primeiro` — e não um modo à parte.
 
 8. ~~**Diff de projeto**~~ — feito no Sprint 9.12, ver §40. O casamento teve de ser
    geométrico: por chave exata, todo diagrama reenquadrado sairia como removido +
@@ -4252,7 +4258,7 @@ justificativa que eu tinha escrito era ordem de entrega — dois workers sobre a
 chave entregam fora de ordem e o mais velho pode vencer. A mutação mostrou que é pior:
 sem a guarda, **o processo morre**.
 
-### 52.6 O lote, e por que ele não é "os campos valem para a seleção"
+### 52.5 O lote, e por que ele não é "os campos valem para a seleção"
 
 Um livro tem centenas de diagramas. Decidir link e borda um a um é o mesmo gargalo
 que a §29 resolveu para a conferência, e a resposta aqui é a mesma: agir sobre um
@@ -4297,7 +4303,7 @@ prometeria o contrário.
   vezes para voltar de uma decisão que ele tomou com um clique — na prática, o mesmo
   que não poder desfazer.
 
-### 52.7 O filtro, e a regra que ele obriga a cumprir
+### 52.6 O filtro, e a regra que ele obriga a cumprir
 
 `Ctrl+A` já pegava tudo; o que faltava era pegar **um pedaço** sem rolar e
 Shift+clicar por 90 páginas. Três recortes, que são os que se pedem na prática:
@@ -4337,7 +4343,7 @@ E a outra metade da regra: o aviso do lote diz quantos ficaram de fora
   atualiza no lugar, o que mostra o que aconteceu sem tirar da tela o que se está
   olhando. Quem quiser o recorte novo mexe no filtro.
 
-### 52.8 Cobertura de teste
+### 52.7 Cobertura de teste
 
 `tests/test_gallery_footer.py` (44). **Quinze mutações**, e quatro acharam buracos
 reais — três no código, uma no próprio teste:
@@ -4359,9 +4365,9 @@ padrão do widget, e é isso que o torna um teste.
 **Os outros dois buracos de código** apareceram montando os testes, não escrevendo a
 funcionalidade — que é o argumento inteiro a favor de escrevê-los:
 
-- **o rodapé escrevendo ao vivo com vários selecionados** (§52.6), achado pelo teste
+- **o rodapé escrevendo ao vivo com vários selecionados** (§52.5), achado pelo teste
   do desfazer ponta a ponta;
-- **o grupo do rodapé habilitado só pelo item corrente** (§52.6), achado porque
+- **o grupo do rodapé habilitado só pelo item corrente** (§52.5), achado porque
   `Ctrl+A` não define um item corrente: o botão do lote aparecia e não se deixava
   clicar, no caminho mais natural de todos.
 
@@ -4376,3 +4382,74 @@ e faixa de páginas sem tolerar a ordem invertida (1).
 e leem os links de verdade, então a cadeia inteira — rodapé → objeto → `wants_lichess_link`
 → anotação no PDF — está coberta ponta a ponta.
 
+---
+
+## 53) Sprint 9.25 — o README que descrevia a interface anterior (2026-08-11)
+
+O README manda: *"O plano técnico é atualizado no mesmo commit que a implementação."*
+Ele não diz nada sobre si mesmo, e foi exatamente aí que a conta ficou aberta. Os
+Sprints 9.22, 9.23 e 9.24 mexeram na interface por três commits seguidos; o plano
+acompanhou os três, o README não acompanhou nenhum.
+
+### 53.1 O tipo de erro que isso vira
+
+Documentação atrasada não envelhece igual em todo lugar. Um parágrafo que descreve uma
+funcionalidade **que ainda existe** só fica incompleto. Um que dá um **caminho de menu**
+manda o leitor a um lugar que não existe mais — e quem segue o passo a passo não conclui
+que o texto está velho, conclui que não achou. As quinze referências abaixo eram todas
+desse segundo tipo:
+
+| O README dizia | Onde de fato está | Quantas vezes |
+|---|---|---|
+| aba `OCR` | aba `Diagrama` | 3 |
+| `OCR` > `Avancado` | `Ajustes` > `Reconhecimento` | 5 |
+| aba `Aparência` / `Aparencia` | aba `Ajustes` | 5 |
+| seção `2 · Conferir` | aba `Conferir` | 2 |
+
+Em três das cinco da terceira linha, o grupo dentro da aba também mudou de nome:
+`Ajustes avançados` virou `Aparência do diagrama`.
+
+Mais dois rótulos que mudaram de nome junto com a coisa que nomeiam:
+`Incluir link Lichess no PDF exportado` → `Link Lichess por padrão` (§52.1), e
+`Aplicar automaticamente ao reconhecer página/PDF` → `Aplicar sem conferir`.
+
+### 53.2 A seção que estava pior era a que tinha número
+
+`O painel lateral` afirmava que o fluxo básico não cabe em 900 px, que
+`Adicionar substituição` fica abaixo da dobra, e que o mínimo é 1.100 px de altura.
+Estava certo quando foi escrito e passou a estar errado no Sprint 9.23 — que fechou
+justamente esse critério (§51.6), levando o mínimo a 880 px.
+
+**Um número errado é pior que um número ausente**, porque ele é a parte do texto em que
+o leitor confia sem verificar. Alguém decidindo em que tela usar o app leria 1.100 px e
+concluiria que a máquina dele não serve. A seção foi reescrita com a tabela de abas, a
+paleta ao lado do tabuleiro (§50) e os três números novos.
+
+### 53.3 A galeria: três seções que não existiam
+
+O Sprint 9.24 inteiro estava fora do README — o rodapé de edição, o lote e o filtro. A
+parte que mais precisava de texto é a que não se descobre clicando: o
+`Link Lichess` de **três** estados. `Padrão` não é um "não" com outro nome, e a caixa
+global não vence quem escolheu. Quem supuser dois estados vai desmarcar a caixa global
+esperando tirar o link de todo mundo, e não vai tirar de quem pediu para tê-lo.
+
+### 53.4 Três coisas achadas pelo caminho
+
+- **O mapa de módulos tinha três buracos:** `migrations.py`, `types.py` e
+  `resources.py` nunca entraram na árvore de `Estrutura principal`. O primeiro é o que
+  mais incomoda: outra seção do próprio README manda escrever a migração nele.
+- **A §52 pulava de 52.4 para 52.6.** Não havia §52.5, e duas citações no código
+  (`gallery.py`) e nos testes apontavam para números que a seção não usava. Renumerado
+  para 52.1–52.7, com as quatro citações corrigidas junto — a alternativa seria inventar
+  uma §52.5 para tapar o buraco, o que é escrever texto para servir à numeração.
+- **O item 7 da §22.5 seguia sem tachado.** Foi feito no Sprint 9.1, e a §29 abre
+  dizendo isso com todas as letras. A §15.1 já dava a lista por fechada, então a §22.5
+  contradizia as duas. Agora os oito itens estão tachados.
+
+### 53.5 Sem cobertura de teste, e por quê
+
+Nada aqui é código: 653 testes antes, 653 depois, e o `ruff --select F` limpo. Vale
+dizer o que **não** se ganhou com isso — não existe teste que pegue um caminho de menu
+que deixou de existir no README, e é por isso que estas nove referências sobreviveram a
+três sprints. O que evita a repetição é o mesmo hábito que já protege o plano: o README
+faz parte do commit que muda a interface, não de uma varredura depois.

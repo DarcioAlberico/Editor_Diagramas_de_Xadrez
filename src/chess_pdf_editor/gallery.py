@@ -340,7 +340,7 @@ class GalleryDialog(QtWidgets.QDialog):
         self.list_widget.setGridSize(QtCore.QSize(THUMB_SIZE * 2 + 28, THUMB_SIZE + 52))
         self.list_widget.setWordWrap(True)
         self.list_widget.setSpacing(4)
-        # Seleção múltipla para o lote (§52.6). Ctrl+clique junta, Shift+clique
+        # Seleção múltipla para o lote (§52.5). Ctrl+clique junta, Shift+clique
         # pega o intervalo, Ctrl+A pega tudo.
         self.list_widget.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.list_widget.itemSelectionChanged.connect(self._update_batch_row)
