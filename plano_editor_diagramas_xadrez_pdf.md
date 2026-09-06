@@ -4946,3 +4946,62 @@ depois — ou, pior, em verde constante sobre um número errado.
 Nenhum teste novo: os três de sempre, agora medindo o que dizem medir. Rodam no
 Windows (14 de 14 no arquivo, seis execuções seguidas, processo frio e quente) e
 publicam a medição fora dele. A suíte segue em 705.
+
+---
+
+## 58) Sprint 9.30 — a medição do Linux, que agora chega sozinha (2026-09-06)
+
+A §57.5 trocou o `skipif` decorador por um skip que **mede, publica e só então
+pula**, e prometeu os números do Linux "no próximo verde". Eles chegaram — depois
+de uma correção a mais, porque o workflow rodava `pytest -q` e sem `-rs` o
+relatório diz "36 skipped" e joga a razão fora. Um skip aqui não é ausência de
+resultado; é um resultado com outro nome.
+
+### 58.1 As duas plataformas, medidas do mesmo jeito
+
+| | Windows | Ubuntu (CI) |
+|---|---|---|
+| 892 px, prévia expandida | 344 / 344 — cabe | 350 / 338 — faltam 12 |
+| **900 px** (o critério da §20.5) | 344 / 352 — **8 px de folga** | 350 / 346 — **faltam 4** |
+| 790 px, prévia recolhida | 242 / 242 — cabe | 256 / 236 — faltam 20 |
+
+A diferença entre as plataformas é de **12 px**, não dos ~20 que a §56 supôs:
+
+* 6 px no fluxo — o Ubuntu pede 350 onde o Windows pede 344;
+* 6 px no visor — lá ele dá `altura − 554`, aqui `altura − 548`.
+
+### 58.2 O detalhe que explica o erro da §56
+
+No Linux a leitura **não muda** com o assentamento: 350 antes e 350 depois. Os
+14 px do `_preview_timer` (§57.2) são um efeito do Windows.
+
+É por isso que a comparação antiga saiu torta: ela pôs lado a lado a leitura
+**tardia** do Linux (que lá é a única que existe) e a **precoce** do Windows.
+Duas medições feitas no mesmo instante do código, e ainda assim em momentos
+diferentes da vida da janela — o tipo de armadilha que só aparece quando se mede
+o mesmo número nas duas máquinas.
+
+### 58.3 O que isso muda na §56.5
+
+A §56.5 deixou "achar os 24 px" como a saída boa e em aberto. São **4 px**, e só
+no critério que interessa (1500x900). Isso muda a natureza da dívida: 24 px pedem
+rearranjo de painel; 4 px cabem numa margem, num espaçamento de layout ou no
+`contentsMargins` de uma das linhas da aba do fluxo.
+
+Continua não feito, e de propósito — mexer em 4 px de layout para uma plataforma
+que não é a do produto, no fim de um PR de seis commits, é o tipo de coisa que se
+faz com a cabeça fria e um sprint só para ela. Mas agora está dimensionado, que é
+o que faltava para decidir.
+
+### 58.4 O hábito que este par de sprints deixa
+
+Três correções seguidas no mesmo lugar, e nenhuma delas era sobre layout:
+
+1. medir antes de o layout assentar (§57);
+2. comparar medições tiradas em momentos diferentes (§58.2);
+3. jogar fora a medição no relatório do CI (`-rs`).
+
+As três têm a mesma forma: o número existia, mas ninguém tinha perguntado *quando*
+ele foi tirado. Vale para qualquer teste que produza um número em vez de um
+booleano — e a defesa é barata, que é publicar o número junto com a condição em que
+ele foi medido.

@@ -231,10 +231,18 @@ def _assert_flow_fits(bottom: int, viewport: int, mensagem: str) -> None:
     existe para ela), então é lá que ele é cobrado.
 
     O que **não** se faz é pular calado. A razão do skip leva a medição daquela
-    máquina, então cada rodada de CI publica quanto falta no Linux — que é o dado
-    de que alguém precisa no dia em que for atrás dos 24 px (§56.5). Um skip que
-    só diz "não é Windows" transformaria essa pergunta em trabalho de campo de
-    novo.
+    máquina, e o CI roda com `-rs` para imprimi-la. O que o Ubuntu publica hoje
+    (§58.1):
+
+    | | Windows | Ubuntu (CI) |
+    |---|---|---|
+    | 892 px, prévia expandida | 344 / 344 | 350 / 338 |
+    | 900 px (o critério da §20.5) | 344 / 352 | 350 / 346 |
+    | 790 px, prévia recolhida | 242 / 242 | 256 / 236 |
+
+    Ou seja: falta **4 px** para o Linux cumprir o critério que interessa, e não
+    os 24 que a §56 supunha. Um skip que só dissesse "não é Windows" teria
+    deixado essa conta como trabalho de campo.
     """
     if sys.platform != "win32":
         pytest.skip(f"{mensagem} — critério medido em métricas do Windows (§56)")
