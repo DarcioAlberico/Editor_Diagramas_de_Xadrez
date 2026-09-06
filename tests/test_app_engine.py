@@ -243,6 +243,34 @@ def test_the_batch_worker_gets_the_chosen_engine(
     assert seen.get("mode") == ENGINE_LOCAL
 
 
+def test_a_batch_whose_engine_refuses_to_build_still_finishes(
+    main_window, qapp, tmp_path, monkeypatch, no_modals
+) -> None:
+    """O motor que nao constroi tem de virar erro, e nao um dialogo eterno (§59.17.1).
+
+    `_build_engine` levanta em dois casos reais — motor local escolhido sem torch ou
+    sem o `.pt`, e `warm_up()` num checkpoint corrompido. Enquanto ele ficou fora do
+    `try` do `run()`, a excecao saia da thread sem emitir sinal nenhum: quem fecha o
+    `QProgressDialog` esta ligado a `completed`, entao a janela ficava travada atras de
+    um modal com a barra em zero e um `Cancelar` que nao cancelava nada.
+    """
+    from chess_pdf_editor import workers as workers_module
+
+    _open(main_window, tmp_path, pages=1)
+
+    def _refuse(mode, endpoint=None, model_path=None, **kwargs):
+        raise RuntimeError("motor local indisponivel")
+
+    monkeypatch.setattr(workers_module, "make_engine", _refuse)
+
+    main_window._recognize_full_pdf()
+
+    assert process_until(qapp, lambda: main_window._ocr_worker is None), (
+        "o lote nao terminou: `completed` nunca chegou"
+    )
+    assert main_window._ocr_progress is None, "o dialogo de progresso ficou na tela"
+
+
 # ---------------------------------------------------------------------------
 # Auto-orientar (§6.3)
 # ---------------------------------------------------------------------------

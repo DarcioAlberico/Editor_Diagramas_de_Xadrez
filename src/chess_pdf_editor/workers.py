@@ -116,11 +116,17 @@ class BatchOcrWorker(QtCore.QThread):
         return engine
 
     def run(self) -> None:  # pragma: no cover - exercitado via teste de integracao
-        client = self._build_engine()
         total = max(0, self._end_page - self._start_page)
         canceled = False
         service: Optional[PdfService] = None
         try:
+            # Dentro do `try`, e nao antes dele (§59.17.1). `_build_engine` levanta em
+            # dois casos reais — motor local escolhido sem as dependencias ou sem o
+            # `.pt`, e `warm_up()` num checkpoint corrompido — e ali fora a excecao
+            # saia do `run()` sem emitir sinal nenhum. Quem fecha o `QProgressDialog`
+            # esta ligado a `completed`, entao o preco de uma linha no lugar errado era
+            # um modal eterno sobre a janela.
+            client = self._build_engine()
             service = PdfService(self._pdf_path)
             for page_num in range(self._start_page, self._end_page):
                 if self._cancel_requested:
