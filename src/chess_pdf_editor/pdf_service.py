@@ -200,8 +200,17 @@ class PdfService:
         self._preview_signature: Optional[tuple] = None
 
     def close(self) -> None:
+        """Fecha o documento. Chamar duas vezes é inofensivo (§59.5).
+
+        Não é zelo: fechar de novo é uma condição **normal** num caminho de erro. A
+        janela fecha o serviço ao trocar de livro e o `closeEvent` fecha ao sair, e
+        entre os dois cabe uma abertura que falhou. Sem esta guarda o PyMuPDF levanta
+        `document closed` de dentro do `closeEvent` — ou seja, o aplicativo não sairia
+        nem fechando.
+        """
         self._discard_preview_doc()
-        self.doc.close()
+        if not getattr(self.doc, "is_closed", False):
+            self.doc.close()
 
     @property
     def page_count(self) -> int:

@@ -2044,7 +2044,18 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Abrir PDF", start_dir, "PDF (*.pdf)")
         if not file_path:
             return
-        self._open_pdf(file_path, clear_ops=True)
+        try:
+            self._open_pdf(file_path, clear_ops=True)
+        except Exception as exc:
+            # O livro que estava aberto continua aberto (§59.5): o que falta é dizer
+            # ao usuário por que o que ele pediu não aconteceu, em vez de mandar o
+            # rastro para um console que ele não está olhando.
+            logger.warning("Falha ao abrir o PDF %s", file_path, exc_info=True)
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Não foi possível abrir o PDF",
+                f"{file_path}\n\n{exc}",
+            )
 
     def _remember_last_project_path(self, project_path: str) -> None:
         self.settings.setValue("last_project_path", project_path)
@@ -2099,14 +2110,39 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         return True
 
     def _open_pdf(self, file_path: str, clear_ops: bool) -> None:
+        """Troca o livro aberto. Levanta sem tocar em nada se o arquivo não abrir.
+
+        A ordem é o ponto (§59.5): abrir **antes** de fechar. Na ordem inversa, um
+        arquivo que não é PDF — renomeado, truncado, baixado pela metade — fechava o
+        documento anterior e deixava `self.pdf_service` apontando para ele, fechado. A
+        janela não sabia disso: o caminho antigo continuava em `current_pdf_path`, a
+        página desenhada continuava na tela, e o próprio `closeEvent` passava a
+        estourar. Um clique no arquivo errado deixava o app num estado de que ele não
+        saía nem fechando.
+        """
+        service = PdfService(file_path)
+        if service.page_count <= 0:
+            # `_render_current_page` pediria `doc[0]`. O PyMuPDF se recusa a *gravar*
+            # um PDF assim, mas nada impede outro produtor de fazê-lo.
+            service.close()
+            raise ValueError("PDF sem páginas: não há o que exibir nem editar.")
+
         if self.navigator_dialog is not None:
             # Outro livro, outras páginas: o navegador ficaria renderizando o
             # caminho antigo e editando diagramas que não são mais do projeto.
             self.navigator_dialog.close()
             self.navigator_dialog = None
+        if self.gallery_dialog is not None:
+            # Cada palavra do comentário acima vale para a galeria, e ela ficou de
+            # fora quando foi escrito (§59.6). Ela guarda o caminho do PDF **e** as
+            # referências para as listas (§52.3): depois desta linha as miniaturas
+            # seriam do livro anterior e o rodapé editaria uma lista substituída por
+            # `[]` — sem erro nenhum, que é o pior jeito de uma edição sumir.
+            self.gallery_dialog.close()
+            self.gallery_dialog = None
         if self.pdf_service:
             self.pdf_service.close()
-        self.pdf_service = PdfService(file_path)
+        self.pdf_service = service
         self.current_pdf_path = file_path
         self._remember_last_pdf_path(file_path)
         # Outro livro, outro destino de autosave.
@@ -3962,7 +3998,20 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                 )
             return False
 
-        self._open_pdf(state.source_pdf, clear_ops=False)
+        try:
+            self._open_pdf(state.source_pdf, clear_ops=False)
+        except Exception as exc:
+            # O PDF existe mas não abre (§59.5). Recusar o projeto inteiro é o certo:
+            # sem o livro não há o que editar, e seguir carregaria as operações sobre
+            # o livro **anterior**, que continua aberto.
+            logger.warning("Projeto %s aponta para um PDF que não abre", project_path, exc_info=True)
+            if show_dialogs:
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Erro ao carregar projeto",
+                    f"O PDF do projeto não pôde ser aberto:\n{state.source_pdf}\n\n{exc}",
+                )
+            return False
         self.operations = state.operations
         self.erase_operations = state.erase_operations
         self.study_positions = state.study_positions
