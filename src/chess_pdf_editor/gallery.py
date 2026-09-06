@@ -140,6 +140,8 @@ class GalleryWorker(QtCore.QThread):
         include_lichess_link: bool = True,
         erase_coordinates: bool = False,
         before_operations: Optional[Sequence[OverlayOperation]] = None,
+        zoom: float = THUMB_ZOOM,
+        margin_ratio: float = THUMB_MARGIN_RATIO,
         parent: Optional[QtCore.QObject] = None,
     ) -> None:
         """`before_operations` troca o que é o lado "antes".
@@ -149,6 +151,11 @@ class GalleryWorker(QtCore.QThread):
         substituída com *aquele* conjunto de operações, o que permite comparar
         duas versões do resultado em vez de original contra resultado — é o que o
         estilo em lote precisa (§36).
+
+        `zoom` e `margin_ratio` são o recorte. Os padrões são os da grade, onde a
+        pergunta é "que diagrama é este?"; quem mostra **um** diagrama grande pede
+        mais pixel e mais margem em volta — o rótulo `Lichess` fica abaixo do
+        tabuleiro e some de um recorte apertado (§54).
         """
         super().__init__(parent)
         self._pdf_path = str(pdf_path)
@@ -163,6 +170,8 @@ class GalleryWorker(QtCore.QThread):
         self._whiteout = bool(whiteout)
         self._include_lichess_link = bool(include_lichess_link)
         self._erase_coordinates = bool(erase_coordinates)
+        self._zoom = max(0.1, float(zoom))
+        self._margin_ratio = max(0.0, float(margin_ratio))
         self._cancel_requested = False
 
     def cancel(self) -> None:
@@ -218,13 +227,13 @@ class GalleryWorker(QtCore.QThread):
         erases_by_page: dict[int, list[EraseOperation]],
         before_by_page: Optional[dict[int, list[OverlayOperation]]] = None,
     ) -> tuple[bytes, bytes]:
-        rect = _expanded_rect(item.rect_pdf)
+        rect = _expanded_rect(item.rect_pdf, self._margin_ratio)
         if before_by_page is None:
-            before = service.render_region(item.page_num, THUMB_ZOOM, rect)
+            before = service.render_region(item.page_num, self._zoom, rect)
         else:
             before = service.render_region_with_operations(
                 item.page_num,
-                THUMB_ZOOM,
+                self._zoom,
                 rect,
                 list(before_by_page.get(item.page_num, ())),
                 erase_operations=erases_by_page.get(item.page_num, []),
@@ -241,7 +250,7 @@ class GalleryWorker(QtCore.QThread):
 
         after = service.render_region_with_operations(
             item.page_num,
-            THUMB_ZOOM,
+            self._zoom,
             rect,
             page_ops,
             erase_operations=erases_by_page.get(item.page_num, []),

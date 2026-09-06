@@ -4453,3 +4453,166 @@ dizer o que **não** se ganhou com isso — não existe teste que pegue um camin
 que deixou de existir no README, e é por isso que estas nove referências sobreviveram a
 três sprints. O que evita a repetição é o mesmo hábito que já protege o plano: o README
 faz parte do commit que muda a interface, não de uma varredura depois.
+
+---
+
+## 54) Sprint 9.26 — o navegador: um diagrama por vez, e etiquetas com retorno (2026-09-06)
+
+O pedido foi curto: *"uma janela pra eu navegar pelos diagramas reconhecidos, com
+campos para alterar as tags — principalmente o número do lance e a vez de jogar —
+mostrando o diagrama do PDF e como ele vai ficar"*. Metade disso já existia na
+galeria (§52), e é justamente a metade que não resolve o problema.
+
+### 54.1 O que a galeria não podia fazer
+
+A galeria responde **"onde estão os diagramas deste livro?"**. Ela é uma vista de
+conjunto: 150 px por lado, oito por tela, e um rodapé que edita o selecionado. O
+tamanho é uma escolha, não um limite — ninguém precisa de mais que isso para
+*reconhecer* um diagrama numa grade.
+
+Conferir as **etiquetas** é a pergunta oposta, e 150 px não a respondem:
+
+| O dado | Onde ele está | O que a grade mostra |
+|---|---|---|
+| número do lance | impresso ao lado ou abaixo do tabuleiro, corpo 8 | um borrão |
+| vez de jogar | na legenda ("as brancas jogam") | um borrão |
+
+Preencher esses dois campos exige **ler a página**. Daí a janela nova: um diagrama
+por vez, no maior tamanho que a janela der, os campos logo abaixo, e `Alt+Esquerda`
+/ `Alt+Direita` para andar na fila. O campo de posição pula direto para o n-ésimo —
+num livro de 300, voltar ao 147 depois de chegar ao 260 não pode ser 113 cliques.
+
+Ela **abre no diagrama que já estava selecionado** na janela principal. Reabrir
+sempre no primeiro seria pedir para reencontrar à mão, no navegador, o que a janela
+principal já tinha na mão.
+
+### 54.2 As etiquetas não mudam um pixel — e por isso a janela mostra a FEN
+
+Isto é o achado do sprint, e mudou o desenho da janela. `side_to_move` e
+`fullmove_number` **não entram no desenho do tabuleiro**: o render usa só o
+`piece_placement`. O que sai delas no PDF é
+
+* a FEN do link Lichess (`operation_full_fen` → `operation_lichess_url`),
+* a coluna do relatório (§26),
+* o `indice.csv` da exportação de diagramas isolados (§39).
+
+Ou seja: uma janela que mostrasse **só** o par de imagens — que é o que o pedido
+descreve — deixaria o campo mais importante sem retorno nenhum. O usuário trocaria
+`Vez de jogar` e veria exatamente a mesma figura dos dois lados, sem nada que
+confirmasse que a troca pegou. As duas imagens continuam ali, porque é por elas que
+se decide se a *substituição* está certa; mas sozinhas elas não servem à pergunta
+que a janela existe para responder.
+
+Por isso o painel de baixo tem três linhas além dos campos:
+
+| Linha | O que ela prova |
+|---|---|
+| `FEN final` | a string exata que vai para o link, o relatório e a exportação |
+| Link | se o PDF vai levar link, e para onde |
+| Legalidade | a auditoria da §37, feita com o lado a jogar escolhido |
+
+A terceira é a que faz diferença de verdade. A auditoria testa **os dois lados** e
+sabe distinguir "a posição é impossível" de "a posição só é ilegal com este lado" —
+e o segundo caso vira a frase `o lado a jogar provavelmente está trocado`. Como o
+app preenche `brancas` por padrão em todo diagrama reconhecido, esse é o erro mais
+comum que existe neste campo, e agora ele é apontado no lugar onde se corrige.
+
+**Uma cópia a menos.** `_operation_full_fen` e `_operation_lichess_url` eram
+privadas em `pdf_service`. Escrever a regra de novo no navegador seria a terceira
+cópia (a segunda está em `app.py`, com a sua própria codificação de URL) e o par
+mantido à mão que a §45 documenta: no dia em que o campo `halfmove` deixasse de ser
+fixo, a janela passaria a exibir uma FEN que o PDF não usa. As duas viraram
+públicas, e o navegador chama as mesmas funções da exportação. A cópia de `app.py`
+continua lá — é dívida antiga, e trocá-la não é assunto deste sprint.
+
+### 54.3 A rajada do spinbox tinha de virar um passo só
+
+O rodapé da galeria emite um sinal por mexida, e cada sinal vira um `commit` no
+histórico. Arrastar o spin do lance de 1 até 40 empilha 39 passos de desfazer — num
+histórico que guarda 60. Duas mexidas assim e o resto da sessão saiu da pilha.
+
+No navegador o sinal é **atrasado** em 300 ms (o mesmo padrão do
+`_style_history_timer` da janela principal): uma mexida vira um passo, que é como o
+usuário a fez. O que **não** é atrasado é o texto — FEN, link e legalidade se
+atualizam a cada mexida. Fazê-los esperar pelo render seria esconder a única
+resposta imediata que estes campos têm.
+
+A edição pendente é entregue em três momentos, e nunca perdida: ao navegar para
+outro diagrama, ao fechar a janela, e no disparo do timer. Sem o primeiro, o sinal
+sairia com a chave certa mas o render que vem junto seria do diagrama errado; sem o
+segundo, fechar a janela no meio de um ajuste deixaria a alteração aplicada no
+objeto e **fora** do histórico — e o `Ctrl+Z` seguinte desfaria a ação anterior,
+deixando esta de pé.
+
+### 54.4 As listas trocam por baixo, e a galeria não se defende disso
+
+Desfazer não muta as listas: `_apply_history_snapshot` as **substitui** por cópias
+restauradas (`self.operations = snapshot.restore_operations()`). Quem guardou a
+referência antiga — a galeria guarda, e o navegador também — passa a editar uma
+lista órfã: a alteração é gravada num objeto que ninguém mais lê, sem erro nenhum,
+que é o pior jeito de sumir.
+
+O navegador tem `rebind()` para isso, e a janela principal o chama no fim de todo
+`_apply_history_snapshot`. Dois detalhes que não são óbvios:
+
+* a posição é preservada **pela chave**, não pelo número. Um desfazer que remove o
+  diagrama 4 faz o 7 virar o 6; ficar no "sétimo" seria ficar noutro diagrama.
+* a edição pendente é **descartada** em vez de entregue. O objeto que ela tocou
+  acabou de sair do projeto; anunciá-la mandaria a janela principal comitar um
+  índice que agora aponta para outro lugar.
+
+Abrir outro PDF fecha o navegador, pelo mesmo motivo: ele ficaria renderizando o
+caminho antigo e editando diagramas que não são mais do projeto.
+
+**A galeria continua sem essas duas defesas.** É defeito anterior a este sprint, e
+consertá-lo mexe num código com testes próprios — fica anotado aqui em vez de
+entrar de carona.
+
+### 54.5 O que foi reusado, e os dois parâmetros que faltavam
+
+Nada de render novo. O `GalleryWorker` ganhou `zoom` e `margin_ratio` (com os
+padrões da grade, então galeria e estilo em lote não mudam de comportamento), e o
+navegador o usa com 3.0 e 0.20 — mais pixel porque a imagem é grande, e mais margem
+porque aqui é preciso ler o que o livro escreveu **em volta** do tabuleiro, além do
+rótulo `Lichess` que a exportação põe logo abaixo. O contrato do Sprint 5.1 é o
+mesmo: o worker abre o seu próprio documento a partir do caminho, e o que cruza a
+fronteira são `bytes`.
+
+Um item por render, e nunca dois workers ao mesmo tempo — `refresh_now` cancela e
+espera o anterior, como o estilo em lote (§36). Um resultado que chega depois de a
+fila ter andado é descartado pela chave: sair correndo pela fila não pode pintar o
+diagrama anterior por cima do atual.
+
+O `BeforeAfterWidget` ganhou títulos configuráveis (`No PDF (como está)` / `Como vai
+ficar`) e um modo expansivo. No painel lateral a altura é fixa de propósito — o
+widget divide espaço com o editor de tabuleiro e a lista, e crescer empurraria os
+dois para fora da tela. Numa janela cujo assunto *é* o diagrama, a conta se inverte.
+Os rótulos usam `QSizePolicy.Ignored` nas duas direções, e não `Expanding`: com
+`Expanding` o `sizeHint` passaria a ser o tamanho do pixmap, o layout cresceria, e a
+imagem cresceria atrás — um laço.
+
+### 54.6 Duas coisas que só a tela mostrou
+
+* **`Close` em inglês.** O texto padrão do `QDialogButtonBox` sai no idioma do
+  sistema; numa máquina em inglês a janela inteira em português terminava num
+  `Close`. Trocado por `Fechar` (a galeria tem o mesmo problema, e continua com ele
+  pelo mesmo motivo da §54.4).
+* **Enter acionava um botão.** Num `QDialog` todo `QPushButton` nasce `autoDefault`,
+  e o campo com foco ao abrir é o da posição. Enter depois de digitar `147`
+  acionaria o primeiro botão da janela — `Anterior` no melhor caso, `Fechar` no
+  pior. Agora nenhum botão responde ao Enter; o spin já aplica o valor enquanto se
+  digita.
+
+### 54.7 Cobertura de teste
+
+`tests/test_navigator.py`, 34 testes; a suite vai de 653 para 687, e o
+`ruff --select F` continua limpo.
+
+| Grupo | O que fica provado |
+|---|---|
+| Navegação | abre no primeiro da ordem de leitura; `Anterior`/`Próximo` andam e desabilitam nas pontas; o spin pula; abre na chave pedida; candidato se anuncia como não aplicado, com a confiança; janela vazia se explica; Enter não aciona botão |
+| Etiquetas | os campos editam o objeto vivo; navegar preenche sem gravar de volta; a rajada vira um sinal só; sair do diagrama e fechar a janela entregam a edição pendente |
+| Retorno | a FEN exibida é a `operation_full_fen` da exportação; a linha do link distingue "o PDF vai levar" de "sem link no PDF"; `Padrão` segue a global; a auditoria acusa o lado trocado e cala quando ele é corrigido |
+| Render | o par chega e os dois lados diferem; um item por vez; resultado de outro diagrama é ignorado; fechar não deixa `QThread` viva; parar duas vezes é inócuo |
+| Listas trocadas | `rebind` reaponta a edição para a lista nova; preserva o diagrama e não o número; descarta a edição pendente; lista vazia se explica |
+| Integração | recusa sem PDF e sem diagramas; abre no que está selecionado; a edição vira um passo de histórico com rótulo próprio; desfazer reaponta a janela aberta; `Ir para este diagrama` leva a janela principal à página; abrir outro PDF e fechar o app fecham o navegador |

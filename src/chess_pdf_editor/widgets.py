@@ -786,9 +786,24 @@ class SelectablePageWidget(QtWidgets.QLabel):
 class BeforeAfterWidget(QtWidgets.QWidget):
     """Miniaturas lado a lado do diagrama: como esta hoje x como vai ficar."""
 
-    def __init__(self, thumb_height: int = 150) -> None:
+    def __init__(
+        self,
+        thumb_height: int = 150,
+        before_title: str = "Antes",
+        after_title: str = "Depois",
+        expanding: bool = False,
+    ) -> None:
+        """`expanding` troca a altura fixa por "o que a janela der".
+
+        No painel lateral a altura é fixa de propósito: o widget divide espaço
+        vertical com o editor de tabuleiro e a lista, e um par de miniaturas que
+        cresce empurraria os dois para fora da tela. Numa janela cujo assunto *é*
+        o diagrama (§54) a conta se inverte — ali a imagem deve tomar tudo o que
+        sobrar, e `thumb_height` vira só o mínimo.
+        """
         super().__init__()
         self._thumb_height = max(80, int(thumb_height))
+        self._expanding = bool(expanding)
         self._before_png: Optional[bytes] = None
         self._after_png: Optional[bytes] = None
 
@@ -803,13 +818,15 @@ class BeforeAfterWidget(QtWidgets.QWidget):
         thumbs_layout = QtWidgets.QHBoxLayout(self.thumbs)
         thumbs_layout.setContentsMargins(0, 0, 0, 0)
         thumbs_layout.setSpacing(10)
-        thumbs_layout.addLayout(self._make_column("Antes", self.before_label), 1)
-        thumbs_layout.addLayout(self._make_column("Depois", self.after_label), 1)
+        thumbs_layout.addLayout(self._make_column(before_title, self.before_label), 1)
+        thumbs_layout.addLayout(self._make_column(after_title, self.after_label), 1)
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(self.message_label)
-        root.addWidget(self.thumbs)
+        # Só o modo expansivo dá esticão às miniaturas; sem ele o layout é o de
+        # antes, com as duas coladas no topo e a altura mandando no tamanho.
+        root.addWidget(self.thumbs, 1 if self._expanding else 0)
         self.thumbs.setVisible(False)
 
     @staticmethod
@@ -831,7 +848,14 @@ class BeforeAfterWidget(QtWidgets.QWidget):
             "QLabel { background-color: palette(base); border: 1px solid palette(mid); "
             "border-radius: 4px; }"
         )
-        label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+        # `Ignored` nas duas direções, e não `Expanding`: o rótulo recebe um
+        # pixmap grande e o `sizeHint` passaria a ser o tamanho da imagem, que
+        # faria o layout crescer, que faria a imagem crescer. `Ignored` corta esse
+        # laço — a imagem é escalada para o rótulo, nunca o contrário.
+        label.setSizePolicy(
+            QtWidgets.QSizePolicy.Ignored,
+            QtWidgets.QSizePolicy.Ignored if self._expanding else QtWidgets.QSizePolicy.Fixed,
+        )
         return label
 
     def set_message(self, message: str) -> None:
@@ -860,10 +884,13 @@ class BeforeAfterWidget(QtWidgets.QWidget):
             label.clear()
             return
         available_width = max(48, label.width() - 6)
+        available_height = (
+            max(48, label.height() - 6) if self._expanding else self._thumb_height - 6
+        )
         label.setPixmap(
             pixmap.scaled(
                 available_width,
-                self._thumb_height - 6,
+                available_height,
                 QtCore.Qt.KeepAspectRatio,
                 QtCore.Qt.SmoothTransformation,
             )

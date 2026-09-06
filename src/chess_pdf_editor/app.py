@@ -23,10 +23,11 @@ from .diagram_export import (
     normalize_format as normalize_diagram_format,
 )
 from .feedback import export_training_samples
-from .gallery import KIND_CANDIDATE, GalleryDialog
+from .gallery import KIND_CANDIDATE, KIND_OPERATION, GalleryDialog
 from .fen import extract_piece_placement, normalize_piece_placement, validate_piece_placement
 from .history import ChangeHistory
 from .logging_config import get_logger, log_file_path, setup_logging
+from .navigator import DiagramNavigatorDialog
 from .ocr_api import default_endpoint
 from .ocr_workflow import RecognitionMixin
 from .orientation import auto_orient
@@ -129,6 +130,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self._auto_orient_undo: Optional[tuple[str, str]] = None
         self.study_dialog: Optional[StudyDialog] = None
         self.gallery_dialog: Optional[GalleryDialog] = None
+        self.navigator_dialog: Optional[DiagramNavigatorDialog] = None
         self.project_diff_dialog: Optional[QtWidgets.QDialog] = None
 
         # Undo/redo do modo edicao (Sprint 5.2). O modo Estudo tem o seu proprio,
@@ -1275,6 +1277,14 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         )
         self.act_gallery.triggered.connect(self._open_gallery)
 
+        self.act_navigator = QtGui.QAction("Navegador de diagramas", self)
+        self.act_navigator.setShortcut(QtGui.QKeySequence("Ctrl+Shift+G"))
+        self.act_navigator.setToolTip(
+            "Um diagrama por vez, grande, com o número do lance e a vez de jogar "
+            "ao lado (Ctrl+Shift+G)"
+        )
+        self.act_navigator.triggered.connect(self._open_navigator)
+
         self.act_compare_projects = QtGui.QAction("Comparar projetos...", self)
         self.act_compare_projects.setToolTip(
             "Lista o que mudou entre dois projetos salvos — útil ao reprocessar um livro"
@@ -1355,6 +1365,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
 
         diagrams_menu = self.menuBar().addMenu("Diagramas")
         diagrams_menu.addAction(self.act_gallery)
+        diagrams_menu.addAction(self.act_navigator)
         diagrams_menu.addAction(self.act_style_batch)
         diagrams_menu.addSeparator()
         diagrams_menu.addAction(self.act_snap_selection)
@@ -1464,6 +1475,12 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             # cancela e espera, pelo mesmo motivo do worker de OCR acima.
             self.gallery_dialog.close()
             self.gallery_dialog = None
+        if self.navigator_dialog:
+            # Mesma história, e mais uma: o `close()` do navegador entrega a
+            # edição pendente antes de sair (§54), então fechar o app no meio de
+            # um ajuste não custa o ajuste.
+            self.navigator_dialog.close()
+            self.navigator_dialog = None
         if self.pdf_service:
             self.pdf_service.close()
             self.pdf_service = None
@@ -1511,9 +1528,22 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         dialog.show()
 
     def _on_gallery_entry_edited(self, kind: str, index: int) -> None:
-        """A galeria mexeu num diagrama: o resto da janela tem de saber.
+        """A galeria mexeu num diagrama: o resto da janela tem de saber."""
+        self._apply_entry_edit(kind, index, "editar diagrama na galeria")
 
-        O rodapé edita o **mesmo objeto** que a janela principal guarda, então o
+    def _on_navigator_entry_edited(self, kind: str, index: int) -> None:
+        """O navegador mexeu nas etiquetas de um diagrama.
+
+        Mesmo caminho da galeria, outro rótulo: o texto do `Desfazer` diz de onde
+        a alteração veio, e "editar diagrama na galeria" numa alteração feita no
+        navegador mandaria o usuário procurar no lugar errado.
+        """
+        self._apply_entry_edit(kind, index, "editar etiquetas no navegador")
+
+    def _apply_entry_edit(self, kind: str, index: int, label: str) -> None:
+        """Reconcilia a janela com um diagrama editado por outra janela.
+
+        As duas editam o **mesmo objeto** que a janela principal guarda, então o
         dado já está certo quando este método roda. O que falta é tudo o que
         derivava dele e não se atualiza sozinho: as listas, a prévia, o link, e o
         histórico — sem o commit, um `Ctrl+Z` depois da edição desfaria a *ação
@@ -1528,7 +1558,65 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                 self._select_operation_in_fen_tab(index)
         self._update_lichess_link()
         self._schedule_preview_refresh()
-        self._commit_history("editar diagrama na galeria")
+        self._commit_history(label)
+
+    def _open_navigator(self) -> None:
+        """Um diagrama por vez, grande, com as etiquetas ao lado (§54).
+
+        Não-modal como a galeria, e pelo mesmo motivo: `Ir para este diagrama`
+        leva a janela principal até ele sem fechar o navegador, que é o que
+        permite conferir a página de verdade e voltar a andar na fila.
+
+        Abre no diagrama que já está selecionado aqui. Reabrir sempre no primeiro
+        seria pedir para reencontrar à mão, no navegador, o que a janela
+        principal já tinha na mão.
+        """
+        if not self.pdf_service or not self.current_pdf_path:
+            QtWidgets.QMessageBox.warning(self, "Sem PDF", "Abra um PDF primeiro.")
+            return
+        if not self.operations and not self.candidates:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Navegador de diagramas",
+                "Nenhum diagrama ainda. Adicione substituições ou reconheça o PDF.",
+            )
+            return
+
+        if self.navigator_dialog is not None:
+            # Reabrir com o estado atual é mais previsível que atualizar a janela
+            # existente enquanto ela ainda renderiza o estado antigo — a mesma
+            # decisão da galeria.
+            self.navigator_dialog.close()
+            self.navigator_dialog = None
+
+        dialog = DiagramNavigatorDialog(
+            self.current_pdf_path,
+            self.operations,
+            candidates=self.candidates,
+            erase_operations=self.erase_operations,
+            whiteout=self.whiteout_check.isChecked(),
+            include_lichess_link=self.include_lichess_link_check.isChecked(),
+            erase_coordinates=self.erase_coordinates_check.isChecked(),
+            start_key=self._current_diagram_key(),
+            parent=self,
+        )
+        dialog.entry_activated.connect(self._focus_gallery_entry)
+        dialog.entry_edited.connect(self._on_navigator_entry_edited)
+        dialog.finished.connect(lambda _result: setattr(self, "navigator_dialog", None))
+        self.navigator_dialog = dialog
+        dialog.show()
+
+    def _current_diagram_key(self) -> Optional[tuple[str, int]]:
+        """O diagrama em foco na janela principal, como chave da galeria."""
+        index = self._selected_operation_index()
+        if index is not None and 0 <= index < len(self.operations):
+            return (KIND_OPERATION, index)
+        item = self.candidates_list.currentItem()
+        if item is not None:
+            raw = item.data(QtCore.Qt.UserRole)
+            if raw is not None and 0 <= int(raw) < len(self.candidates):
+                return (KIND_CANDIDATE, int(raw))
+        return None
 
     def _on_gallery_batch_edited(self, total: int) -> None:
         """A galeria aplicou os mesmos valores em vários diagramas.
@@ -1627,6 +1715,15 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             self._refresh_page_overlays()
             self._update_edit_context_state()
             self._schedule_preview_refresh(immediate=True)
+            if self.navigator_dialog is not None:
+                # As três listas acima foram **substituídas**, não mutadas: as
+                # referências que o navegador guarda apontam agora para listas
+                # órfãs, e editar por elas gravaria num objeto que ninguém lê
+                # (§54). Reapontar é mais barato que fechar a janela na cara de
+                # quem só apertou Ctrl+Z.
+                self.navigator_dialog.rebind(
+                    self.operations, self.candidates, self.erase_operations
+                )
         finally:
             self._restoring_history = False
         self._mark_project_dirty()
@@ -1982,6 +2079,11 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         return True
 
     def _open_pdf(self, file_path: str, clear_ops: bool) -> None:
+        if self.navigator_dialog is not None:
+            # Outro livro, outras páginas: o navegador ficaria renderizando o
+            # caminho antigo e editando diagramas que não são mais do projeto.
+            self.navigator_dialog.close()
+            self.navigator_dialog = None
         if self.pdf_service:
             self.pdf_service.close()
         self.pdf_service = PdfService(file_path)

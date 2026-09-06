@@ -395,7 +395,15 @@ def _erase_rects(page: fitz.Page, rects: Sequence[fitz.Rect]) -> None:
             page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), overlay=True)
 
 
-def _operation_full_fen(op: OverlayOperation) -> str:
+def operation_full_fen(op: OverlayOperation) -> str:
+    """FEN completa da operação: peças mais as etiquetas (lado a jogar, lance).
+
+    Pública porque quem edita as etiquetas precisa **ver** o que elas produzem —
+    é a única saída delas no PDF, já que nenhuma muda um pixel do tabuleiro
+    desenhado. O navegador (§54) mostra esta string; uma segunda cópia da regra
+    lá dentro seria o par mantido à mão da §45, e ele divergiria no dia em que o
+    campo `halfmove` deixasse de ser fixo.
+    """
     side = str(getattr(op, "side_to_move", "w"))
     if side not in {"w", "b"}:
         side = "w"
@@ -420,8 +428,9 @@ def wants_lichess_link(op: OverlayOperation, global_default: bool) -> bool:
     return bool(escolha)
 
 
-def _operation_lichess_url(op: OverlayOperation) -> str:
-    full_fen = " ".join(_operation_full_fen(op).split())
+def operation_lichess_url(op: OverlayOperation) -> str:
+    """URL de análise que o link do PDF aponta. Pública pelo mesmo motivo acima."""
+    full_fen = " ".join(operation_full_fen(op).split())
     parts = full_fen.split(" ")
     if not parts:
         return "https://lichess.org/analysis"
@@ -504,7 +513,7 @@ def _insert_lichess_link_below_diagram(page: fitz.Page, rect: fitz.Rect, op: Ove
     x0 = max(visible.x0 + 1.0, center_x - (text_width / 2.0) - 2.0)
     x1 = min(visible.x1 - 1.0, center_x + (text_width / 2.0) + 2.0)
 
-    uri = _operation_lichess_url(op)
+    uri = operation_lichess_url(op)
 
     if x1 > x0:
         for baseline_y in _link_label_slots(page, rect, font_size):

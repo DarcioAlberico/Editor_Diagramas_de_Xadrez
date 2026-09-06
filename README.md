@@ -339,6 +339,9 @@ As miniaturas sao renderizadas fora da thread da interface e vao aparecendo na
 grade; fechar a janela no meio cancela o trabalho. Medido num livro real: ~128 ms
 por diagrama (44 diagramas em 5,6 s).
 
+Para conferir **um** diagrama de perto — lendo o numero do lance na pagina, com os
+campos ao lado — veja [Navegador de diagramas](#navegador-de-diagramas).
+
 ### Ajustar um diagrama sem sair da galeria
 
 O rodape edita o diagrama selecionado, e o que voce mexe ali vale **so para ele**:
@@ -391,6 +394,44 @@ Tres recortes na barra de cima, para pegar **um pedaco** sem rolar e Shift+clica
 - O filtro nao se reaplica sozinho depois de uma edicao — filtrar por "sem link" e
   entao marcar "padrao" faria a selecao sumir no instante do clique. A legenda se
   atualiza no lugar.
+
+## Navegador de diagramas
+
+`Diagramas` > `Navegador de diagramas` (Ctrl+Shift+G) mostra **um** diagrama por
+vez, no maior tamanho que a janela der: a esquerda como ele esta no PDF, a direita
+como vai ficar. E a janela para conferir as **etiquetas** — o numero do lance e a
+vez de jogar, que o livro imprime em corpo pequeno em volta do tabuleiro e que a
+miniatura da galeria nao tem tamanho para mostrar.
+
+- `Anterior` / `Proximo` (Alt+← e Alt+→) andam na fila, na ordem de leitura do
+  livro. O campo do meio pula direto para o n-esimo diagrama.
+- Ele **abre no diagrama que ja estava selecionado** na janela principal.
+- Candidatos entram na mesma fila, marcados como `ainda nao aplicado` e com a
+  confianca.
+- `Ir para este diagrama` leva a janela principal ate ele (pagina, selecao e
+  posicao carregadas) sem fechar o navegador — e la que se corrige a posicao,
+  aplica um candidato ou remove.
+
+Os campos sao os mesmos da galeria (`Vez de jogar`, `Numero do lance`,
+`Link Lichess`, `Borda`) e valem so para o diagrama a vista. Uma mexida vira **um**
+passo de `Ctrl+Z`, mesmo arrastando o spinbox por dez valores.
+
+### Por que ele mostra a FEN, o link e a legalidade
+
+`Vez de jogar` e `Numero do lance` **nao mudam um pixel** do tabuleiro desenhado:
+o que sai deles no PDF e a FEN do link Lichess, mais o relatorio e a exportacao de
+diagramas isolados. Uma janela que mostrasse so as duas imagens deixaria o campo
+mais importante sem retorno nenhum. Por isso, abaixo dos campos:
+
+| Linha | O que diz |
+|---|---|
+| `FEN final` | a string exata que vai para o link, o relatorio e a exportacao |
+| Link | se o PDF vai levar o link (e o endereco, para conferir a posicao) |
+| Legalidade | a auditoria da §37, com o lado a jogar que voce escolheu |
+
+A linha da legalidade e o unico juiz automatico do campo `Vez de jogar`: quando a
+posicao so fica ilegal com o lado indicado, ela diz `o lado a jogar provavelmente
+esta trocado` — que e o erro mais comum, ja que o app preenche `brancas` por padrao.
 
 ## Experimentar um estilo no livro inteiro
 
@@ -694,6 +735,7 @@ src/chess_pdf_editor/
   study_workflow.py   # mixin: posicoes de estudo do PDF e comentarios por lance
   study_panel.py      # painel de estudo (nao conhece a janela)
   gallery.py          # galeria antes/depois do livro, com worker proprio
+  navigator.py        # um diagrama por vez, grande, com as etiquetas ao lado
   theme.py            # cores semanticas e QSS reutilizado
   widgets.py          # viewer selecionavel (alcas/teclado), editor, antes/depois
   pdf_service.py      # render, previa e overlay no PDF
