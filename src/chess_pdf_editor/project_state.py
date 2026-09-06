@@ -25,6 +25,7 @@ __all__ = [
     "MigrationReport",
     "ProjectSchemaError",
     "ProjectState",
+    "clear_fingerprint_cache",
     "fingerprint_file",
     "load_project_state",
     "load_project_state_with_report",
@@ -43,14 +44,43 @@ def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+#: Digest já calculado, por `(caminho resolvido, tamanho, mtime_ns)`.
+_FINGERPRINT_CACHE: dict[tuple[str, int, int], str] = {}
+
+
+def clear_fingerprint_cache() -> None:
+    """Esvazia o cache de digests. Existe para os testes não herdarem um do outro."""
+    _FINGERPRINT_CACHE.clear()
+
+
 def fingerprint_file(path: str) -> dict[str, object]:
+    """Identidade do PDF de origem, com o SHA-256 calculado no máximo uma vez (§59.13).
+
+    Sem cache isto relê o livro **inteiro** a cada chamada, na thread da UI: o
+    autosave chama a cada 2 minutos, o `Salvar projeto` a cada clique e o instantâneo
+    de reconhecimento (§55) a cada lote. Num livro de 898 páginas são dezenas de MB
+    rehasheados para produzir, quase sempre, o mesmo digest — o PDF de origem é
+    aberto somente para leitura e não muda durante a sessão.
+
+    A chave é a mesma tripla que qualquer ferramenta de build usa para decidir se
+    precisa reler, e qualquer alteração no arquivo muda pelo menos uma das três.
+    Note o que ela **não** é: uma garantia criptográfica de que o arquivo é o mesmo.
+    Não precisa ser — o digest alimenta um aviso de integridade ("o PDF difere do
+    que estava aqui quando o projeto foi salvo"), não um controle de segurança.
+    """
     p = Path(path)
     stat = p.stat()
+    resolved = str(p.resolve())
+    key = (resolved, stat.st_size, stat.st_mtime_ns)
+    digest = _FINGERPRINT_CACHE.get(key)
+    if digest is None:
+        digest = _sha256_file(p)
+        _FINGERPRINT_CACHE[key] = digest
     return {
-        "path": str(p.resolve()),
+        "path": resolved,
         "size": stat.st_size,
         "mtime": stat.st_mtime,
-        "sha256": _sha256_file(p),
+        "sha256": digest,
     }
 
 

@@ -856,3 +856,98 @@ def test_a_hidden_item_stays_out_of_the_batch_even_if_still_selected(qapp, tmp_p
         assert [op.include_lichess_link for op in ops] == [False] * 4 + [None, None]
     finally:
         dialog.close()
+
+
+# ---------------------------------------------------------------------------
+# rebind: a galeria depois de um Ctrl+Z (§59.7)
+# ---------------------------------------------------------------------------
+
+
+def test_rebind_points_the_footer_at_the_current_lists(qapp, tmp_path) -> None:
+    """Desfazer **substitui** as listas; sem religar, o rodapé edita uma órfã.
+
+    O sintoma não é um erro: é a edição sumir. O usuário escolhe "sem link" no
+    rodapé, vê a legenda da célula mudar, e o PDF exportado sai com o link — porque
+    o objeto que ele editou não pertence mais ao projeto.
+    """
+    ops, pdf = _seis(tmp_path)
+    dialog = _dialog(ops, pdf=pdf)
+    try:
+        # O que `_apply_history_snapshot` faz: listas novas, não as mesmas mutadas.
+        restauradas = [_op(p) for p in range(6)]
+        dialog.rebind(restauradas)
+
+        assert dialog._entry_at(("operation", 0)) is restauradas[0]
+        dialog.list_widget.setCurrentRow(0)
+        dialog.lichess_combo.setCurrentIndex(2)  # sem link
+
+        assert restauradas[0].include_lichess_link is False
+        assert ops[0].include_lichess_link is None, "editou a lista antiga"
+    finally:
+        dialog.close()
+
+
+def test_rebind_rebuilds_the_grid_when_a_diagram_disappears(qapp, tmp_path) -> None:
+    """As chaves são posições: reapontar sem reconstruir editaria o vizinho."""
+    ops, pdf = _seis(tmp_path)
+    dialog = _dialog(ops, pdf=pdf)
+    try:
+        menores = [_op(p) for p in (0, 1, 2)]
+        dialog.rebind(menores)
+
+        assert dialog.list_widget.count() == 3, "a grade ficou com células de itens que sumiram"
+        assert _visiveis(dialog) == [1, 2, 3]
+        assert dialog.filter_page_to.maximum() == 3, "o filtro ainda aceita uma página que não existe"
+    finally:
+        dialog.close()
+
+
+def test_rebind_keeps_a_chapter_filter_the_user_chose(qapp, tmp_path) -> None:
+    """Quem recortou um capítulo e apertou Ctrl+Z não pediu o livro inteiro de volta."""
+    ops, pdf = _seis(tmp_path)
+    dialog = _dialog(ops, pdf=pdf)
+    try:
+        dialog.filter_page_from.setValue(3)
+        dialog.filter_page_to.setValue(5)
+        assert _visiveis(dialog) == [3, 4, 5]
+
+        dialog.rebind([_op(p) for p in range(6)])
+
+        assert _visiveis(dialog) == [3, 4, 5], "o recorte do usuário foi jogado fora"
+    finally:
+        dialog.close()
+
+
+def test_rebind_leaves_no_worker_running(qapp, tmp_path) -> None:
+    """A lição do Sprint 5.1 vale para o worker que o próprio rebind substitui."""
+    ops, pdf = _seis(tmp_path)
+    dialog = _dialog(ops, pdf=pdf)
+    try:
+        antigo = dialog._worker
+        assert antigo is not None
+        dialog.rebind([_op(p) for p in range(3)])
+        assert antigo.isFinished(), "o worker anterior continuou vivo"
+    finally:
+        dialog.close()
+
+
+def test_undo_rebinds_the_open_gallery(main_window, tmp_path, no_modals) -> None:
+    """A ponta a ponta: Ctrl+Z na janela principal com a galeria aberta ao lado."""
+    main_window._open_pdf(str(make_pdf(tmp_path / "livro.pdf", pages=3)), clear_ops=True)
+    main_window.operations.append(_op(0))
+    main_window._refresh_operations_list()
+    main_window._commit_history("primeira")
+    main_window.operations.append(_op(1))
+    main_window._refresh_operations_list()
+    main_window._commit_history("segunda")
+
+    main_window._open_gallery()
+    dialog = main_window.gallery_dialog
+    assert dialog is not None
+    try:
+        main_window._undo_change()
+
+        assert dialog._operations is main_window.operations, "a galeria ficou com a lista órfã"
+        assert dialog.list_widget.count() == len(main_window.operations)
+    finally:
+        dialog.close()

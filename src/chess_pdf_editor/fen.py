@@ -55,9 +55,24 @@ def normalize_piece_placement(piece_placement: str) -> str:
     return matrix_to_piece_placement(board_to_matrix(piece_placement))
 
 
-def to_full_fen(piece_placement: str, side_to_move: str = "w") -> str:
+def to_full_fen(piece_placement: str, side_to_move: str = "w", fullmove_number: int = 1) -> str:
+    """FEN completa a partir das peças mais as etiquetas.
+
+    Ponto único desta string (§59.11). Ela era montada à mão em quatro lugares —
+    aqui, em `pdf_service.operation_full_fen` e duas vezes em `app.py` —, e as quatro
+    cópias só concordavam por terem sido escritas parecidas. É a forma de defeito que
+    a §45 documenta: o dia em que o campo `halfmove` deixar de ser fixo, as que
+    ficarem para trás não dão erro nenhum, só passam a mentir.
+
+    Os campos de roque e *en passant* saem como `-` de propósito: um diagrama de
+    livro não os informa, e inventá-los seria afirmar algo que ninguém leu.
+    """
     side = "w" if side_to_move not in ("w", "b") else side_to_move
-    return f"{piece_placement} {side} - - 0 1"
+    try:
+        fullmove = max(1, int(fullmove_number))
+    except (TypeError, ValueError):
+        fullmove = 1
+    return f"{piece_placement} {side} - - 0 {fullmove}"
 
 
 def board_to_matrix(piece_placement: str) -> list[list[str]]:

@@ -208,3 +208,49 @@ def test_disabling_the_link_writes_nothing(tmp_path: Path) -> None:
         assert _label_count(doc[0]) == 0
     finally:
         doc.close()
+
+
+# ---------------------------------------------------------------------------
+# Uma URL so, e um limiar so (§59.11)
+# ---------------------------------------------------------------------------
+
+
+def test_the_link_in_the_panel_is_the_link_in_the_pdf(main_window, tmp_path, no_modals) -> None:
+    """Havia duas implementacoes da URL, com codificadores diferentes.
+
+    Elas concordavam — conferido — e concordar nao era o ponto: o link que a
+    interface mostra tem de ser, caractere a caractere, o que vai para dentro do PDF
+    exportado. Duas funcoes escritas parecidas nao garantem isso.
+    """
+    from chess_pdf_editor.pdf_service import operation_lichess_url
+
+    main_window._open_pdf(str(_make_pdf(tmp_path / "livro.pdf")), clear_ops=True)
+    op = OverlayOperation(
+        page_num=0,
+        rect_pdf=DIAGRAM,
+        fen=FEN,
+        side_to_move="b",
+        fullmove_number=37,
+    )
+    main_window.operations.append(op)
+    main_window._refresh_operations_list()
+    main_window._set_current_operation(0)
+
+    esperado = operation_lichess_url(op)
+    assert esperado in main_window.lichess_link_label.text()
+    assert main_window.lichess_link_label.toolTip() == f"{FEN} b - - 0 37"
+
+
+def test_the_status_label_follows_the_threshold_constant(main_window, monkeypatch) -> None:
+    """A frase promete um numero ao usuario; escrito a mao, ele mente em silencio."""
+    from chess_pdf_editor import app as app_module
+    from chess_pdf_editor.recognition import ENGINE_HYBRID
+
+    monkeypatch.setattr(app_module, "REINFORCE_BELOW_CONFIDENCE", 0.65)
+    main_window.engine_combo.setCurrentIndex(main_window.engine_combo.findData(ENGINE_HYBRID))
+    main_window._update_engine_status_label()
+
+    texto = main_window.engine_status_label.text()
+    if "indisponível" in texto:
+        pytest.skip("sem motor local: o rotulo mostra a indisponibilidade, nao o limiar")
+    assert "0,65" in texto, f"o limiar nao veio da constante: {texto!r}"

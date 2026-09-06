@@ -32,6 +32,22 @@ logger = get_logger("app")
 class StudyWorkflowMixin:
     """Posições de estudo associadas ao PDF aberto."""
 
+    def _touch_study_positions(self) -> None:
+        """Há trabalho de estudo novo que ainda não foi para o disco (§59.4).
+
+        O autosave só grava quando `_autosave_dirty` é verdadeiro, e quem levantava
+        essa bandeira eram só o histórico de desfazer e o fim do lote de OCR — nenhum
+        deles passa por aqui. O resultado era a promessa do Sprint 5.3 valendo para
+        metade do produto: uma sessão inteira de estudo (que é a atividade mais
+        demorada que o app tem, porque envolve ler a página e digitar) fechava sem
+        gravar nada, porque o `closeEvent` também só salva se a bandeira estiver de pé.
+
+        Um método só, e não `_mark_project_dirty()` espalhado por seis lugares: aqui é
+        onde entra a entrada de histórico do modo Estudo no dia em que ela existir, e
+        um chamador só é mais barato de mudar que seis.
+        """
+        self._mark_project_dirty()
+
     def _selected_study_position_index(self) -> Optional[int]:
         item = self.study_positions_list.currentItem()
         if not item:
@@ -194,6 +210,45 @@ class StudyWorkflowMixin:
         )
         self._update_study_position_pgn(pos)
         self._refresh_study_move_comment_markers(pos)
+        self._touch_study_positions()
+
+    def _sync_study_position_start(self, pos: StudyPosition) -> None:
+        """Traz a posição inicial do tabuleiro de volta para a entrada da lista.
+
+        O `Vez de jogar:` do painel passou a mudar a FEN inicial (§59.9), e sem isto a
+        troca não sobreviveria a sair da posição e voltar: `_load_study_position`
+        recarrega de `pos`, que continuaria com o lado antigo. Um controle que
+        funciona e depois se desfaz sozinho é pior que um inerte.
+
+        É a mesma escrita que `_on_study_pgn_imported` já fazia para o caminho do PGN
+        importado — agora num lugar só, por onde os dois passam.
+        """
+        parts = self.study_panel.study_board.start_fen().split()
+        if len(parts) < 6:
+            return
+        pos.fen = parts[0]
+        pos.side_to_move = "b" if parts[1] == "b" else "w"
+        try:
+            pos.fullmove_number = max(1, int(parts[5]))
+        except ValueError:
+            pos.fullmove_number = 1
+
+    def _on_study_start_position_changed(self) -> None:
+        """O painel trocou a posição **inicial** da linha por ação do usuário (§59.9).
+
+        Ligado a um sinal do painel, e não pendurado no `line_changed` que já existe:
+        aquele dispara a cada navegação de lance, e escrever a posição do tabuleiro de
+        volta na entrada selecionada a cada passo faria qualquer carga avulsa —
+        `Carregar FEN do editor`, por exemplo — gravar por cima de uma posição salva
+        que o usuário não estava editando. Aqui só chega o gesto que de fato mudou a
+        posição inicial.
+        """
+        idx = self._selected_study_position_index()
+        if idx is None:
+            return
+        self._sync_study_position_start(self.study_positions[idx])
+        self._refresh_study_positions_list()
+        self._touch_study_positions()
 
     def _sync_study_position_line(self, pos: StudyPosition) -> None:
         max_ply = len(self.study_panel.study_board.san_line())
@@ -209,6 +264,7 @@ class StudyWorkflowMixin:
         self._set_study_comment_summary(pos)
         self._update_study_position_pgn(pos)
         self._refresh_study_move_comment_markers(pos)
+        self._touch_study_positions()
 
     @staticmethod
     def _set_study_comment_summary(pos: StudyPosition) -> None:
@@ -290,6 +346,7 @@ class StudyWorkflowMixin:
         self._refresh_study_move_comment_markers(pos)
         self._refresh_study_comment_fields_for_current_ply()
         self._refresh_study_positions_list()
+        self._touch_study_positions()
 
     def _on_study_ply_changed(self) -> None:
         if self._syncing_study_positions:
@@ -389,6 +446,12 @@ class StudyWorkflowMixin:
             return
         del self.study_positions[idx]
         self._refresh_study_positions_list()
+        # A moldura verde da posição removida ficava na página até a próxima troca de
+        # página (§59.8) — o que é pior que não sumir, porque ensina o usuário a não
+        # confiar no que está vendo. Adicionar já redesenhava; só a remoção estava de
+        # fora.
+        self._refresh_page_overlays()
+        self._touch_study_positions()
         self.statusBar().showMessage(f"Posição de estudo removida. Total: {len(self.study_positions)}")
 
     def _load_editor_position_into_study(self) -> None:
@@ -425,6 +488,7 @@ class StudyWorkflowMixin:
         self.study_positions.append(pos)
         self._refresh_study_positions_list()
         self._focus_study_position(len(self.study_positions) - 1)
+        self._touch_study_positions()
         self.statusBar().showMessage("Partida inicial enviada para estudo.")
 
     def _text_from_current_selection(self) -> str:
@@ -502,4 +566,5 @@ class StudyWorkflowMixin:
         self.study_positions.append(pos)
         self._refresh_study_positions_list()
         self._focus_study_position(len(self.study_positions) - 1)
+        self._touch_study_positions()
         self.statusBar().showMessage(f"Posição enviada para estudo. Total: {len(self.study_positions)}")

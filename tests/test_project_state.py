@@ -372,3 +372,50 @@ def test_every_scalar_of_the_project_survives_the_roundtrip(tmp_path) -> None:
         if getattr(reloaded, name) != value
     ]
     assert not lost, "o projeto perdeu escalares:\n  " + "\n  ".join(lost)
+
+
+# ---------------------------------------------------------------------------
+# Cache do digest (§59.13)
+# ---------------------------------------------------------------------------
+
+
+def test_the_digest_is_computed_once_per_unchanged_file(tmp_path, monkeypatch) -> None:
+    """Sem cache, o autosave rele o livro inteiro a cada 2 minutos na thread da UI."""
+    from chess_pdf_editor import project_state as module
+
+    livro = tmp_path / "livro.pdf"
+    livro.write_bytes(b"conteudo do livro" * 1000)
+    module.clear_fingerprint_cache()
+
+    leituras = []
+    original = module._sha256_file
+    monkeypatch.setattr(
+        module, "_sha256_file", lambda path, **kw: (leituras.append(path), original(path, **kw))[1]
+    )
+
+    primeiro = module.fingerprint_file(str(livro))
+    segundo = module.fingerprint_file(str(livro))
+
+    assert primeiro == segundo
+    assert len(leituras) == 1, f"releu o arquivo {len(leituras)} vezes"
+
+
+def test_a_changed_file_gets_a_fresh_digest(tmp_path) -> None:
+    """O cache nao pode esconder a mudanca que o aviso de integridade existe para pegar."""
+    import os
+
+    from chess_pdf_editor import project_state as module
+
+    livro = tmp_path / "livro.pdf"
+    livro.write_bytes(b"primeira versao")
+    module.clear_fingerprint_cache()
+    antes = module.fingerprint_file(str(livro))
+
+    livro.write_bytes(b"segunda versao, outro tamanho")
+    # `mtime` tem granularidade grossa em alguns sistemas de arquivos; o tamanho
+    # mudou, e isso ja basta para a chave. Mexer no mtime torna o teste honesto nos
+    # dois eixos.
+    os.utime(livro, (0, 0))
+
+    depois = module.fingerprint_file(str(livro))
+    assert depois["sha256"] != antes["sha256"]

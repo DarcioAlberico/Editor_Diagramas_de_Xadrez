@@ -24,7 +24,12 @@ from .diagram_export import (
 )
 from .feedback import export_training_samples
 from .gallery import KIND_CANDIDATE, KIND_OPERATION, GalleryDialog
-from .fen import extract_piece_placement, normalize_piece_placement, validate_piece_placement
+from .fen import (
+    extract_piece_placement,
+    normalize_piece_placement,
+    to_full_fen,
+    validate_piece_placement,
+)
 from .history import ChangeHistory
 from .logging_config import get_logger, log_file_path, setup_logging
 from .navigator import DiagramNavigatorDialog
@@ -35,6 +40,8 @@ from .pdf_service import (
     PdfService,
     RenderedPage,
     clear_board_render_cache,
+    lichess_analysis_url,
+    operation_full_fen,
 )
 from .project_diff import diff_files, format_diff
 from .project_state import (
@@ -818,6 +825,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.study_panel.set_pgn_provider(self._study_export_pgn)
         self.study_panel.study_board.line_changed.connect(lambda san_line, cursor: self._on_study_ply_changed())
         self.study_panel.about_to_change_line.connect(self._flush_current_study_comment)
+        self.study_panel.start_position_changed.connect(self._on_study_start_position_changed)
         self.study_panel.pgn_imported.connect(self._on_study_pgn_imported)
         study_positions_panel = QtWidgets.QWidget()
         study_positions_layout = QtWidgets.QVBoxLayout(study_positions_panel)
@@ -1120,7 +1128,13 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             self._icon(QtWidgets.QStyle.SP_DialogSaveButton), "Exportar PDF", self
         )
         self.act_save_pdf.setShortcut(QtGui.QKeySequence("Ctrl+E"))
-        self.act_save_pdf.triggered.connect(self._save_output_pdf)
+        # `lambda`, e não o método direto: `triggered` carrega um `bool`, e o PySide o
+        # entrega posicionalmente — ou seja, toda exportação pela barra chamava
+        # `_save_output_pdf(False)`, caindo no ramo do diálogo por `False` ser falsy
+        # (§59.10). Funcionava por acaso, e deixaria de funcionar no dia em que a ação
+        # virasse checável: ali `out_path` seria `True` e o `QFileDialog` receberia um
+        # booleano como caminho.
+        self.act_save_pdf.triggered.connect(lambda: self._save_output_pdf())
         toolbar.addAction(self.act_save_pdf)
 
         self.act_save_project = QtGui.QAction(
@@ -1744,6 +1758,12 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                 self.navigator_dialog.rebind(
                     self.operations, self.candidates, self.erase_operations
                 )
+            if self.gallery_dialog is not None:
+                # Pelo mesmo motivo, e a galeria tinha ficado de fora (§59.7): ela
+                # guarda as mesmas referências, e o rodapé dela edita por elas.
+                self.gallery_dialog.rebind(
+                    self.operations, self.candidates, self.erase_operations
+                )
         finally:
             self._restoring_history = False
         self._mark_project_dirty()
@@ -1913,9 +1933,14 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         elif mode == ENGINE_REMOTE:
             text = f"Todas as páginas são enviadas para {self._ocr_endpoint() or default_endpoint()}."
         else:
+            # O limiar sai da constante, e não escrito à mão (§59.11): a frase promete
+            # um número ao usuário, e um `0,80` digitado aqui deixaria a interface
+            # mentindo no dia em que `REINFORCE_BELOW_CONFIDENCE` mudasse — sem que
+            # teste nenhum reclamasse.
+            limiar = f"{REINFORCE_BELOW_CONFIDENCE:.2f}".replace(".", ",")
             text = (
                 "Reconhece localmente; envia ao serviço externo só as páginas em que a "
-                "confiança ficar abaixo de 0,80."
+                f"confiança ficar abaixo de {limiar}."
             )
         self.engine_status_label.setText(text)
         self.engine_status_label.setStyleSheet(self._CONTEXT_STYLE)
@@ -2044,7 +2069,18 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Abrir PDF", start_dir, "PDF (*.pdf)")
         if not file_path:
             return
-        self._open_pdf(file_path, clear_ops=True)
+        try:
+            self._open_pdf(file_path, clear_ops=True)
+        except Exception as exc:
+            # O livro que estava aberto continua aberto (§59.5): o que falta é dizer
+            # ao usuário por que o que ele pediu não aconteceu, em vez de mandar o
+            # rastro para um console que ele não está olhando.
+            logger.warning("Falha ao abrir o PDF %s", file_path, exc_info=True)
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Não foi possível abrir o PDF",
+                f"{file_path}\n\n{exc}",
+            )
 
     def _remember_last_project_path(self, project_path: str) -> None:
         self.settings.setValue("last_project_path", project_path)
@@ -2077,7 +2113,11 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         if not Path(last_project).exists():
             self.settings.remove("last_project_path")
             return False
-        self.project_path = last_project
+        # Sem pré-atribuir `project_path`: quem o define é o carregamento, e só quando
+        # ele dá certo. A linha que estava aqui era redundante no caminho feliz e
+        # nociva no outro — uma restauração que falha (agora também porque o PDF não
+        # abre, §59.5) deixava a janela apontando para um projeto que não carregou, e
+        # o autosave seguinte gravaria o estado de **outro** livro por cima dele.
         loaded = self._load_project_from_path(last_project, show_dialogs=False)
         if loaded:
             self.statusBar().showMessage(f"Projeto restaurado: {last_project}")
@@ -2099,14 +2139,39 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         return True
 
     def _open_pdf(self, file_path: str, clear_ops: bool) -> None:
+        """Troca o livro aberto. Levanta sem tocar em nada se o arquivo não abrir.
+
+        A ordem é o ponto (§59.5): abrir **antes** de fechar. Na ordem inversa, um
+        arquivo que não é PDF — renomeado, truncado, baixado pela metade — fechava o
+        documento anterior e deixava `self.pdf_service` apontando para ele, fechado. A
+        janela não sabia disso: o caminho antigo continuava em `current_pdf_path`, a
+        página desenhada continuava na tela, e o próprio `closeEvent` passava a
+        estourar. Um clique no arquivo errado deixava o app num estado de que ele não
+        saía nem fechando.
+        """
+        service = PdfService(file_path)
+        if service.page_count <= 0:
+            # `_render_current_page` pediria `doc[0]`. O PyMuPDF se recusa a *gravar*
+            # um PDF assim, mas nada impede outro produtor de fazê-lo.
+            service.close()
+            raise ValueError("PDF sem páginas: não há o que exibir nem editar.")
+
         if self.navigator_dialog is not None:
             # Outro livro, outras páginas: o navegador ficaria renderizando o
             # caminho antigo e editando diagramas que não são mais do projeto.
             self.navigator_dialog.close()
             self.navigator_dialog = None
+        if self.gallery_dialog is not None:
+            # Cada palavra do comentário acima vale para a galeria, e ela ficou de
+            # fora quando foi escrito (§59.6). Ela guarda o caminho do PDF **e** as
+            # referências para as listas (§52.3): depois desta linha as miniaturas
+            # seriam do livro anterior e o rodapé editaria uma lista substituída por
+            # `[]` — sem erro nenhum, que é o pior jeito de uma edição sumir.
+            self.gallery_dialog.close()
+            self.gallery_dialog = None
         if self.pdf_service:
             self.pdf_service.close()
-        self.pdf_service = PdfService(file_path)
+        self.pdf_service = service
         self.current_pdf_path = file_path
         self._remember_last_pdf_path(file_path)
         # Outro livro, outro destino de autosave.
@@ -2532,24 +2597,10 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         fullmove_number = max(1, int(self.fen_move_spin.value()))
         return (side_to_move, fullmove_number)
 
-    @staticmethod
-    def _operation_full_fen(op: OverlayOperation) -> str:
-        side = op.side_to_move if op.side_to_move in {"w", "b"} else "w"
-        fullmove = max(1, int(op.fullmove_number))
-        return f"{op.fen} {side} - - 0 {fullmove}"
-
-    @staticmethod
-    def _build_lichess_analysis_url(full_fen: str) -> str:
-        normalized = " ".join(full_fen.split())
-        parts = normalized.split(" ")
-        if not parts:
-            return "https://lichess.org/analysis"
-        piece_placement = parts[0]
-        if len(parts) == 1:
-            return f"https://lichess.org/analysis/{piece_placement}"
-        fen_tail = " ".join(parts[1:])
-        encoded_tail = bytes(QtCore.QUrl.toPercentEncoding(" " + fen_tail)).decode("ascii")
-        return f"https://lichess.org/analysis/{piece_placement}{encoded_tail}"
+    # `_operation_full_fen` e `_build_lichess_analysis_url` saíram daqui (§59.11).
+    # Eram cópias do que `pdf_service` já fazia — a segunda com outro codificador de
+    # URL — e o link que esta janela mostra tem de ser, byte a byte, o que vai para
+    # dentro do PDF exportado. Duas funções escritas parecidas não garantem isso.
 
     def _current_full_fen_for_lichess(self) -> Optional[str]:
         # O desvio que existia aqui — "se nada está selecionado, olhe a seleção da
@@ -2557,7 +2608,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         # lista só, `_selected_operation_index` é a resposta inteira (§51.4).
         idx = self._selected_operation_index()
         if idx is not None and 0 <= idx < len(self.operations):
-            return self._operation_full_fen(self.operations[idx])
+            return operation_full_fen(self.operations[idx])
 
         text = self.fen_edit.text().strip()
         if not text:
@@ -2567,7 +2618,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         except Exception:
             return None
         side_to_move, fullmove_number = self._current_fen_defaults()
-        return f"{piece_placement} {side_to_move} - - 0 {fullmove_number}"
+        return to_full_fen(piece_placement, side_to_move, fullmove_number)
 
     def _update_lichess_link(self) -> None:
         full_fen = self._current_full_fen_for_lichess()
@@ -2575,7 +2626,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             self.lichess_link_label.setText("Lichess (FEN inválida)")
             self.lichess_link_label.setToolTip("Informe uma FEN válida para abrir no Lichess.")
             return
-        url = self._build_lichess_analysis_url(full_fen)
+        url = lichess_analysis_url(full_fen)
         self.lichess_link_label.setText(f'<a href="{url}">Lichess</a>')
         self.lichess_link_label.setToolTip(full_fen)
 
@@ -3505,6 +3556,11 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
     def _on_board_changed(self, piece_placement: str) -> None:
         if self._loading_ui:
             return
+        # Daqui para baixo é edição **da pessoa**: o reconhecimento preenche o
+        # tabuleiro sob `_loading_ui`, que é a guarda que já distinguia os dois. Uma
+        # posição mexida à mão deixa de ser a leitura do motor, e continuar carregando
+        # a procedência dele mentiria no relatório e na fila de revisão (§59.17.2).
+        self._last_ocr_result = None
         # Edicao manual: a posicao passa a pertencer a selecao ativa.
         self._anchor_from_selection()
         self._loading_ui = True
@@ -3518,6 +3574,8 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
     def _on_fen_edited(self) -> None:
         if self._loading_ui:
             return
+        # Mesma razão do `_on_board_changed`: FEN digitada é posição de humano.
+        self._last_ocr_result = None
         text = self.fen_edit.text().strip()
         try:
             piece_placement = normalize_piece_placement(extract_piece_placement(text))
@@ -3579,8 +3637,22 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             self.current_render.matrix,
         )
 
-        source = "ocr" if self._last_ocr_result is not None else "manual"
-        confidence = self._last_ocr_result.confidence if self._last_ocr_result else None
+        # A procedência do OCR só vale enquanto a posição ainda pertence à **área** de
+        # onde ela foi lida (§59.17.2). `_last_ocr_result` nunca era zerado, então
+        # depois do primeiro reconhecimento da sessão toda substituição montada à mão
+        # nascia com `source="ocr"` e a confiança de outro diagrama — corrompendo as
+        # duas coisas que dependem disso: a coluna `origem` do relatório (§26), que
+        # existe para dizer se um humano olhou aquilo, e a fila de revisão (§29), que
+        # ordena por confiança e acabava julgando um diagrama pelo número de outro.
+        #
+        # É o mesmo teste que `_draft_operation` já faz para a prévia; a outra metade
+        # da rede está em `_on_board_changed`/`_on_fen_edited`, que zeram o resultado
+        # quando a pessoa mexe no tabuleiro. Uma só das duas deixaria buraco: esta não
+        # pega quem corrige a posição sem sair da área, e aquela não pega quem muda de
+        # página sem tocar no tabuleiro.
+        from_ocr = self._last_ocr_result is not None and self._position_matches_selection(rect_pdf)
+        source = "ocr" if from_ocr else "manual"
+        confidence = self._last_ocr_result.confidence if from_ocr else None
         pad_left, pad_top, pad_right, pad_bottom = self._current_whiteout_padding()
         side_to_move, fullmove_number = self._current_fen_defaults()
         op = OverlayOperation(
@@ -3765,21 +3837,6 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             self._commit_history("remover apagamento")
             self.statusBar().showMessage(f"Apagamento removido. Total: {len(self.erase_operations)}")
 
-    def _clear_operations(self) -> None:
-        if not self.operations:
-            return
-        answer = QtWidgets.QMessageBox.question(
-            self,
-            "Limpar substituições",
-            "Remover todas as substituições pendentes?",
-        )
-        if answer == QtWidgets.QMessageBox.Yes:
-            self.operations.clear()
-            self._refresh_operations_list()
-            self._refresh_page_overlays()
-            self._update_edit_context_state()
-            self._commit_history("limpar substituições")
-
     def _clear_changes(self) -> None:
         if not self.operations and not self.erase_operations:
             return
@@ -3962,7 +4019,20 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                 )
             return False
 
-        self._open_pdf(state.source_pdf, clear_ops=False)
+        try:
+            self._open_pdf(state.source_pdf, clear_ops=False)
+        except Exception as exc:
+            # O PDF existe mas não abre (§59.5). Recusar o projeto inteiro é o certo:
+            # sem o livro não há o que editar, e seguir carregaria as operações sobre
+            # o livro **anterior**, que continua aberto.
+            logger.warning("Projeto %s aponta para um PDF que não abre", project_path, exc_info=True)
+            if show_dialogs:
+                QtWidgets.QMessageBox.critical(
+                    self,
+                    "Erro ao carregar projeto",
+                    f"O PDF do projeto não pôde ser aberto:\n{state.source_pdf}\n\n{exc}",
+                )
+            return False
         self.operations = state.operations
         self.erase_operations = state.erase_operations
         self.study_positions = state.study_positions

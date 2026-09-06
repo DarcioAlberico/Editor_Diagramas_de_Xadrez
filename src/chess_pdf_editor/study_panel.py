@@ -23,12 +23,18 @@ from .widgets import StudyBoardWidget
 class StudyPanel(QtWidgets.QWidget):
     about_to_change_line = QtCore.Signal()
     pgn_imported = QtCore.Signal(object)
+    #: A posição **inicial** da linha mudou por ação do usuário (§59.9). Separado do
+    #: `line_changed` do tabuleiro, que dispara a cada navegação de lance.
+    start_position_changed = QtCore.Signal()
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Tabuleiro de Estudo")
         self.resize(980, 760)
         self._syncing_move_list = False
+        #: Guarda do combo de lado a jogar: preencher o painel não pode disparar a
+        #: troca que só o usuário deve fazer.
+        self._syncing_side = False
         self._pgn_provider: Optional[Callable[[], str]] = None
         self._commented_plies: set[int] = set()
         self._commented_paths: set[str] = set()
@@ -40,6 +46,11 @@ class StudyPanel(QtWidgets.QWidget):
         self.side_combo = QtWidgets.QComboBox()
         self.side_combo.addItem("Brancas", "w")
         self.side_combo.addItem("Pretas", "b")
+        self.side_combo.setToolTip(
+            "De quem é a vez na posição inicial da linha.\n"
+            "Com lances já jogados, reinicie a linha antes de trocar."
+        )
+        self.side_combo.currentIndexChanged.connect(self._on_side_to_move_changed)
         self.arrow_check = QtWidgets.QCheckBox("Seta do último lance")
         self.arrow_check.setChecked(True)
         self.arrow_check.toggled.connect(self.study_board.set_show_last_move_arrow)
@@ -147,7 +158,7 @@ class StudyPanel(QtWidgets.QWidget):
         if side not in {"w", "b"}:
             side = "w"
         fullmove = max(1, int(fullmove_number))
-        self.side_combo.setCurrentIndex(1 if side == "b" else 0)
+        self._set_side_combo(side)
         try:
             normalized = normalize_piece_placement(extract_piece_placement(piece_placement))
             self.study_board.set_start_fen(f"{normalized} {side} - - 0 {fullmove}")
@@ -155,6 +166,52 @@ class StudyPanel(QtWidgets.QWidget):
             self.status_label.setText("Posição carregada do editor.")
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "FEN inválida", str(exc))
+
+    def _set_side_combo(self, side: str) -> None:
+        """Põe o combo no lado informado sem disparar a troca (§59.9)."""
+        self._syncing_side = True
+        try:
+            self.side_combo.setCurrentIndex(1 if side == "b" else 0)
+        finally:
+            self._syncing_side = False
+
+    def _on_side_to_move_changed(self) -> None:
+        """Aplica o lado a jogar à posição **inicial** da linha (§59.9).
+
+        O combo era lido por `load_piece_placement` e escrito a cada carga, mas não
+        tinha `connect` nenhum: mexer nele não mudava nada. Um controle rotulado
+        `Vez de jogar:` que não muda a vez de jogar.
+
+        Com lances na linha, trocar o lado da posição inicial invalidaria a linha
+        inteira. Descartá-la em silêncio seria trocar um controle inerte por um
+        **destrutivo**, que é pior — então aqui o combo volta ao valor anterior e a
+        barra de estado diz o que fazer. A única coisa que esta correção não pode
+        fazer é apagar trabalho de alguém.
+        """
+        if self._syncing_side:
+            return
+        parts = self.study_board.start_fen().split()
+        if len(parts) < 6:
+            return
+        side = "b" if str(self.side_combo.currentData()) == "b" else "w"
+        if parts[1] == side:
+            return
+
+        if self.study_board.san_line():
+            self._set_side_combo(parts[1])
+            self.status_label.setText(
+                "Para trocar a vez de jogar, reinicie a linha primeiro: os lances já "
+                "jogados pertencem ao lado atual."
+            )
+            return
+
+        parts[1] = side
+        self.about_to_change_line.emit()
+        self.study_board.set_start_fen(" ".join(parts))
+        self.start_position_changed.emit()
+        self.status_label.setText(
+            f"Vez de jogar: {'pretas' if side == 'b' else 'brancas'}."
+        )
 
     def _undo(self) -> None:
         self.about_to_change_line.emit()

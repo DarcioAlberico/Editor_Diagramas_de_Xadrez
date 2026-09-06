@@ -79,6 +79,10 @@ class GalleryItem:
         return (self.kind, self.index)
 
 
+def spin_clamp(value: int, menor: int, maior: int) -> int:
+    return min(max(int(value), int(menor)), int(maior))
+
+
 def _expanded_rect(rect_pdf: Rect, ratio: float = THUMB_MARGIN_RATIO) -> Rect:
     x0, y0, x1, y1 = rect_pdf
     margin = max(6.0, max(x1 - x0, y1 - y0) * ratio)
@@ -460,6 +464,30 @@ class GalleryDialog(QtWidgets.QDialog):
         self.filter_page_to.setValue(self.filter_page_to.maximum())
         self._apply_filter()
 
+    def _sync_filter_range(self) -> None:
+        """Reajusta a faixa de páginas depois que a lista de itens mudou (§59.7).
+
+        Os limites nascem dos itens, então um `rebind` que removeu o último diagrama
+        do livro deixaria o `QSpinBox` aceitando uma página que não existe mais. E o
+        valor **escolhido** tem de sobreviver: quem recortou um capítulo e apertou
+        `Ctrl+Z` não pediu para voltar a ver o livro inteiro.
+
+        A exceção é o filtro que ninguém tocou — aquele em que o valor é o próprio
+        limite. Ali seguir o limite novo é o que mantém a promessa de "mostrar tudo".
+        """
+        paginas = [item.page_num + 1 for item in self._items] or [1]
+        menor, maior = min(paginas), max(paginas)
+        segue_menor = self.filter_page_from.value() == self.filter_page_from.minimum()
+        segue_maior = self.filter_page_to.value() == self.filter_page_to.maximum()
+        for spin, novo_valor in (
+            (self.filter_page_from, menor if segue_menor else spin_clamp(self.filter_page_from.value(), menor, maior)),
+            (self.filter_page_to, maior if segue_maior else spin_clamp(self.filter_page_to.value(), menor, maior)),
+        ):
+            spin.blockSignals(True)
+            spin.setRange(menor, maior)
+            spin.setValue(novo_valor)
+            spin.blockSignals(False)
+
     def _passes_filter(self, item: GalleryItem) -> bool:
         kind = self.filter_kind.currentData()
         if kind is not None and item.kind != kind:
@@ -829,7 +857,13 @@ class GalleryDialog(QtWidgets.QDialog):
         A grade aparece cheia na hora e as imagens vão chegando. O contrário —
         esperar tudo para mostrar algo — deixaria a janela vazia por segundos num
         livro grande.
+
+        Limpa antes de montar: desde o `rebind` (§59.7) este método é chamado mais de
+        uma vez, e as chaves do `_rows` são **posições dentro das listas** — reusá-las
+        depois de um desfazer apontaria cada célula para o diagrama do vizinho.
         """
+        self.list_widget.clear()
+        self._rows.clear()
         if not self._items:
             self.status_label.setText(
                 "Nenhum diagrama para mostrar. Adicione substituições ou reconheça o PDF."
@@ -896,6 +930,64 @@ class GalleryDialog(QtWidgets.QDialog):
             erase_coordinates,
             items=pendentes,
         )
+
+    def rebind(
+        self,
+        operations: Sequence[OverlayOperation],
+        candidates: Sequence[OverlayOperation] = (),
+        erase_operations: Optional[Sequence[EraseOperation]] = None,
+    ) -> None:
+        """Reaponta a grade para as listas atuais da janela principal (§59.7).
+
+        Desfazer não muta as listas: ele as **substitui** por cópias restauradas do
+        histórico. As referências guardadas aqui (§52.3) viram órfãs, e o rodapé
+        continuaria escrevendo num objeto que ninguém mais lê — a edição sumiria sem
+        erro nenhum, que é o pior jeito de sumir. O navegador já resolvia isso pelo
+        mesmo caminho (§54); a galeria tinha ficado de fora.
+
+        A grade exige mais que o navegador, e por isso aqui não basta reapontar: as
+        chaves são **posições dentro das listas**, então um desfazer que removeu o
+        diagrama 4 muda o significado de todas as chaves acima dele. Reapontar sem
+        reconstruir trocaria um defeito silencioso por outro — o rodapé passaria a
+        editar o vizinho do que está na tela.
+        """
+        self.stop_worker()
+        # As chaves pendentes são do conjunto antigo: refazer miniatura por elas
+        # pintaria a célula errada.
+        self._dirty_keys.clear()
+
+        self._operations = operations
+        self._candidates = candidates
+        pdf_path, erases, whiteout, include_lichess_link, erase_coordinates = self._render_args
+        if erase_operations is not None:
+            erases = erase_operations
+            self._render_args = (
+                pdf_path,
+                erases,
+                whiteout,
+                include_lichess_link,
+                erase_coordinates,
+            )
+
+        self._items = build_items(operations, candidates)
+        self._populate_placeholders()
+        self._sync_filter_range()
+        self._apply_filter()
+        self._show_entry_in_footer(self._selected_key())
+
+        self.progress_bar.setRange(0, max(1, len(self._items)))
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(bool(self._items))
+        if self._items:
+            self._start_worker(
+                pdf_path,
+                operations,
+                candidates,
+                erases,
+                whiteout,
+                include_lichess_link,
+                erase_coordinates,
+            )
 
     def _start_worker(
         self,

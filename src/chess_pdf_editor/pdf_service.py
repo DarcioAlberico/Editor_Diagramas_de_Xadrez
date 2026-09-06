@@ -12,6 +12,7 @@ from urllib.parse import quote
 import fitz  # type: ignore
 from PIL import Image
 
+from .fen import to_full_fen
 from .logging_config import get_logger
 from .renderer import render_board_pdf, render_board_png
 from .types import EraseOperation, OverlayOperation, Rect
@@ -162,7 +163,19 @@ def _render_page_region(page: fitz.Page, zoom: float, rect_pdf: Rect) -> bytes:
 
 
 def operation_signature(op: OverlayOperation) -> tuple:
-    """Identidade visual de uma substituicao (usada para cache de previa)."""
+    """Identidade visual de uma substituicao (usada para cache de previa).
+
+    **Todo campo que muda um pixel da página tem de estar aqui.** Um que falte não
+    produz erro: produz uma prévia que não se atualiza, o que é pior — a §21 promete
+    que o que está na tela é o que o PDF vai conter, e um cache incompleto quebra a
+    promessa sem quebrar o teste que a cobre.
+
+    Foi o que aconteceu com `include_lichess_link` por diagrama (§52): ele entrou no
+    modelo e não entrou aqui, e trocar a escolha na galeria deixava a prévia da
+    janela principal mostrando o resultado anterior — ao lado da miniatura da
+    galeria, que mostra o certo porque o worker dela abre o seu próprio documento.
+    Duas respostas para a mesma pergunta, na mesma tela (§59.3).
+    """
     x0, y0, x1, y1 = op.rect_pdf
     return (
         int(op.page_num),
@@ -178,6 +191,7 @@ def operation_signature(op: OverlayOperation) -> tuple:
         round(float(getattr(op, "border_width_pt", 0.0)), 3),
         str(getattr(op, "side_to_move", "w")),
         int(getattr(op, "fullmove_number", 1)),
+        getattr(op, "include_lichess_link", None),
     )
 
 
@@ -200,8 +214,17 @@ class PdfService:
         self._preview_signature: Optional[tuple] = None
 
     def close(self) -> None:
+        """Fecha o documento. Chamar duas vezes é inofensivo (§59.5).
+
+        Não é zelo: fechar de novo é uma condição **normal** num caminho de erro. A
+        janela fecha o serviço ao trocar de livro e o `closeEvent` fecha ao sair, e
+        entre os dois cabe uma abertura que falhou. Sem esta guarda o PyMuPDF levanta
+        `document closed` de dentro do `closeEvent` — ou seja, o aplicativo não sairia
+        nem fechando.
+        """
         self._discard_preview_doc()
-        self.doc.close()
+        if not getattr(self.doc, "is_closed", False):
+            self.doc.close()
 
     @property
     def page_count(self) -> int:
@@ -404,14 +427,11 @@ def operation_full_fen(op: OverlayOperation) -> str:
     lá dentro seria o par mantido à mão da §45, e ele divergiria no dia em que o
     campo `halfmove` deixasse de ser fixo.
     """
-    side = str(getattr(op, "side_to_move", "w"))
-    if side not in {"w", "b"}:
-        side = "w"
-    try:
-        fullmove = max(1, int(getattr(op, "fullmove_number", 1)))
-    except Exception:
-        fullmove = 1
-    return f"{op.fen} {side} - - 0 {fullmove}"
+    return to_full_fen(
+        op.fen,
+        str(getattr(op, "side_to_move", "w")),
+        getattr(op, "fullmove_number", 1),
+    )
 
 
 def wants_lichess_link(op: OverlayOperation, global_default: bool) -> bool:
@@ -428,17 +448,28 @@ def wants_lichess_link(op: OverlayOperation, global_default: bool) -> bool:
     return bool(escolha)
 
 
-def operation_lichess_url(op: OverlayOperation) -> str:
-    """URL de análise que o link do PDF aponta. Pública pelo mesmo motivo acima."""
-    full_fen = " ".join(operation_full_fen(op).split())
-    parts = full_fen.split(" ")
-    if not parts:
+def lichess_analysis_url(full_fen: str) -> str:
+    """URL de análise do Lichess para uma FEN completa.
+
+    Ponto único (§59.11). Havia uma segunda implementação em `app.py`, com outro
+    codificador (`QUrl.toPercentEncoding` contra este `quote`). As duas concordavam —
+    conferido —, e concordar não era o ponto: o link que a interface mostra e o link
+    que vai **para dentro do PDF** têm de ser o mesmo, e nada garantia isso além de
+    terem sido escritas parecidas.
+    """
+    parts = " ".join(str(full_fen).split()).split(" ")
+    if not parts or not parts[0]:
         return "https://lichess.org/analysis"
     piece_placement = parts[0]
     if len(parts) == 1:
         return f"https://lichess.org/analysis/{piece_placement}"
     fen_tail = " ".join(parts[1:])
     return f"https://lichess.org/analysis/{piece_placement}{quote(' ' + fen_tail, safe='')}"
+
+
+def operation_lichess_url(op: OverlayOperation) -> str:
+    """URL de análise que o link do PDF aponta. Pública pelo mesmo motivo acima."""
+    return lichess_analysis_url(operation_full_fen(op))
 
 
 LINK_TEXT = "Lichess"
