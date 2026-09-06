@@ -5368,3 +5368,139 @@ entrar num `OverlayOperation`:
 
 Nenhum dos três é óbvio a partir do lugar onde o campo é declarado, e é por isso
 que eles estão escritos aqui.
+
+### 59.16 A terceira passagem, e por que ela valeu mais que as duas primeiras
+
+A varredura foi feita três vezes, de propósito e com métodos diferentes:
+
+| Passagem | Método | Achados |
+|---|---|---|
+| 1ª | ler os ~15.000 linhas de `src/` procurando padrão | 12 |
+| 2ª | **rodar** cada suspeita e exigir uma saída de terminal | 12 confirmados, 1 descartado |
+| 3ª | reler o que a 1ª tinha passado rápido: `_vendor/`, ciclo de vida das `QThread`, estado que sobrevive entre ações | **+3** |
+
+A terceira passagem produziu os dois defeitos mais graves da lista inteira. Não
+por sorte: a primeira passagem lê procurando *o que está escrito errado*, e estes
+três são **o que não está escrito** — um `try` que começa uma linha tarde demais,
+um atributo que ninguém zera, um aviso que foi desligado.
+
+### 59.17 Os três da terceira passagem
+
+#### 59.17.1 O lote trava para sempre quando o motor não constrói
+
+`BatchOcrWorker.run` monta o motor **fora** do `try`:
+
+```python
+def run(self) -> None:
+    client = self._build_engine()      # <- fora
+    ...
+    try:
+        service = PdfService(self._pdf_path)
+        ...
+    except Exception as exc:
+        self.page_failed.emit(...)
+    finally:
+        ...
+        self.completed.emit(...)
+```
+
+`_build_engine` levanta em dois casos reais: motor `Somente local (offline)`
+escolhido sem as dependências ou sem o `.pt`, e `warm_up()` num checkpoint
+corrompido. Nos dois, a exceção sai do `run()` e **nenhum sinal é emitido**.
+Medido:
+
+```
+thread terminou?       True
+emitiu completed?      False (esperado True)
+emitiu page_failed?    []
+```
+
+O processo sobrevive — o PySide só imprime o rastro. O que não sobrevive é a
+sessão: quem fecha o `QProgressDialog` é `_on_batch_ocr_completed`, ligado
+exclusivamente a `completed`. Sem o sinal, o diálogo **modal de janela** fica na
+tela para sempre, com a barra parada em zero e um `Cancelar` que chama
+`cancel()` numa thread que já morreu. O usuário tem de matar o aplicativo.
+
+E o caminho é trivial de alcançar: escolher o motor local em `Ajustes` numa
+instalação sem `torch` — a etiqueta de estado avisa, mas nada impede o clique — e
+apertar `Detectar no PDF`.
+
+**Mudança.** A construção do motor entra no `try`. O `except` que já existe
+transforma a falha em `page_failed`, e o `finally` que já existe emite
+`completed` — ou seja, o conserto é mover uma linha para dentro de um tratamento
+que estava pronto e não a alcançava.
+
+**A pergunta que isto deixa**: os outros três workers (`ExportWorker`,
+`DiagramExportWorker`, `GalleryWorker`) têm o corpo inteiro dentro do `try`.
+Conferido, um a um. Era só este.
+
+#### 59.17.2 A origem `ocr` que gruda no diagrama seguinte
+
+`_add_operation` decide a procedência assim:
+
+```python
+source = "ocr" if self._last_ocr_result is not None else "manual"
+confidence = self._last_ocr_result.confidence if self._last_ocr_result else None
+```
+
+`_last_ocr_result` é escrito por `Reconhecer seleção` e `Reconhecer página`, e
+**nunca é zerado**. Depois do primeiro reconhecimento da sessão, toda substituição
+montada à mão nasce com `source="ocr"` e com a confiança de outro diagrama.
+Medido — reconhecer na página 1, ir para a página 3, desenhar outra área, digitar
+outra FEN e adicionar:
+
+```
+origem gravada: 'ocr'   (esperado 'manual')
+confianca:      0.42    (esperado None)
+pagina:         3
+```
+
+Isso corrompe as duas coisas que dependem da procedência:
+
+* o **relatório** (§26), cuja coluna `origem` existe literalmente para dizer "se um
+  humano olhou aquilo";
+* a **fila de revisão** (§29), que usa `confidence` para ordenar e filtrar — e
+  acaba julgando um diagrama pelo número de outro.
+
+**Mudança, em duas metades que se cobrem.**
+
+1. A procedência do OCR só vale enquanto a posição ainda pertence à área de onde
+   ela foi lida. `_add_operation` já calcula o `rect_pdf`; passa a exigir
+   `_position_matches_selection(rect_pdf)`, que é exatamente o teste que
+   `_draft_operation` já faz para a prévia.
+2. Uma edição **manual** do tabuleiro ou da FEN zera `_last_ocr_result`. As duas
+   entradas (`_on_board_changed`, `_on_fen_edited`) já saem cedo sob `_loading_ui`,
+   que é justamente a guarda que o próprio reconhecimento usa ao preencher os
+   campos — então isto distingue "o OCR escreveu" de "a pessoa escreveu" sem
+   nenhuma bandeira nova.
+
+Uma só das duas deixaria buraco: a primeira não pega quem corrige a posição sem
+sair da área; a segunda não pega quem muda de página sem tocar no tabuleiro.
+
+#### 59.17.3 O aviso de "cortei diagramas" está desligado justamente onde importa
+
+`board_detection.detect_boards` corta em `max_boards` e avisa no log quando o
+corte descarta candidato que passou no filtro de qualidade. O comentário do
+próprio detector explica por que o aviso existe:
+
+> O corte é por score, e o score não ordena diagrama por posição: numa grade 3x3 o
+> nono pode ser o do canto superior direito. Cortar em silêncio fez exatamente isso
+> no "A Matter of Endgame Technique", e nada na tela dizia que faltava um.
+
+`LocalRecognizer.predict` — o caminho de `Reconhecer página` e `Detectar no PDF`,
+que é onde o corte pode acontecer — chama com `warn_on_cap=False`. O teto é
+`DEFAULT_MAX_BOARDS = 12` e o app não expõe controle nenhum para mudá-lo.
+
+Os outros dois chamadores desligam o aviso **com razão**: `refine_rect` e
+`board_rect_at` pedem um tabuleiro de propósito, e ali o teto é o pedido.
+
+**Mudança.** O aviso não é reaproveitado: o texto dele manda "aumente 'Max
+diagramas'", e essa opção não existe aqui. Em vez disso, `LocalRecognizer.predict`
+registra a sua própria linha quando o teto realmente prende — com o número de
+tabuleiros e o teto, que é o que permite reconhecer o caso num log de suporte.
+
+### 59.18 O placar final
+
+Quinze achados, quinze provas. Doze consertados neste sprint, um dimensionado e
+recusado com motivo (§59.14), e dois que a terceira passagem trouxe para o topo da
+fila porque travam ou corrompem, e não só incomodam.
