@@ -601,6 +601,11 @@ a mesma aba pede 643 px e recebe 352:
 o resultado, sem encolher o tabuleiro e sem remover controle nenhum. O que mudou foi
 onde as coisas moram.
 
+Os numeros acima sao **do Windows**, que e a plataforma prioritaria do produto. Os
+mesmos widgets no Ubuntu do CI pedem ~20 px a mais, e ali o fluxo ainda nao cabe em
+900 px por 4 px; os tres testes que cobram o criterio rodam so no Windows, com a
+medicao dos dois lados registrada em `tests/test_side_panel.py`.
+
 Na hierarquia dos botoes: a **acao principal do momento** aparece preenchida de azul
 (um botao por vez), as acoes secundarias ficam com o botao normal, e os comandos
 **destrutivos** (`Remover`, `Limpar`, `Descartar`) sao achatados — sem preenchimento,

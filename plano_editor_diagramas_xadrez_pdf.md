@@ -4732,3 +4732,91 @@ Três dublês de `tests/test_autosave.py` precisaram do parâmetro novo
 (`save_project_state(path, state, extra=None)`). Trocar a assinatura e deixar o
 dublê para trás é o que faz um teste passar a exercitar uma função que não existe
 mais — foram corrigidos no mesmo commit.
+
+---
+
+## 56) Sprint 9.28 — o critério da §20.5 é do Windows, e o teste passa a dizer isso (2026-09-06)
+
+O PR que levou os Sprints 9.22 a 9.27 para o CI foi o primeiro a rodar aquele
+código fora desta máquina, e os três testes de altura do painel falharam nos dois
+jobs de Ubuntu — nas duas rodadas, com números idênticos.
+
+### 56.1 A primeira pergunta é se foi o commit da vez
+
+Não era, e isso foi **medido** antes de qualquer conserto. O script rodou a
+`MainWindow` e leu a mesma quantidade que o teste lê
+(`btn_add.mapTo(...)` mais `tab.viewport().height()`) em `982ddd4` e em `e0cc33d`:
+
+```
+ANTES:   pede=330 visor=332 | pede=330 visor=352 | pede=242 visor=242
+DEPOIS:  pede=330 visor=332 | pede=330 visor=352 | pede=242 visor=242
+```
+
+Número idêntico. O navegador (§54) não acrescenta um pixel à aba do fluxo — ele é
+uma janela separada e uma ação de menu.
+
+Vale registrar o hábito, porque ele se paga: diante de um CI vermelho, a
+tentação é consertar o sintoma no código que se acabou de escrever. Comparar a
+medição com o pai do commit custa dois minutos e responde a pergunta certa —
+*isto já estava assim?* — antes de mexer em qualquer coisa.
+
+### 56.2 O que a medição dos dois lados mostrou
+
+| | pede | visor | folga |
+|---|---|---|---|
+| Windows, 880 px | 330 | 332 | 2 px |
+| Windows, 790 px recolhida | 242 | 242 | **0 px** |
+| Ubuntu (CI), 880 px | 350 | 326 | −24 px |
+| Ubuntu (CI), 900 px | 350 | 346 | −4 px |
+
+Os mesmos widgets, o mesmo código: no Ubuntu do CI eles saem ~20 px mais altos, e
+o visor ainda dá 6 px a menos. Os limites da §50/§51 foram calibrados aqui, no
+Windows, e nunca tinham rodado no CI — a branch só foi empurrada no Sprint 9.26.
+
+A folga de 0 px na linha de baixo diz o resto: o critério não estava com margem
+sobrando em lugar nenhum. Ele foi espremido até o último pixel disponível, o que é
+o certo para um critério de aceite e péssimo para um número que se pretende
+universal.
+
+### 56.3 As três saídas, e por que esta
+
+| Saída | Por que não / por que sim |
+|---|---|
+| afrouxar o limite até a métrica do Ubuntu | o número deixaria de significar "cabe na tela do usuário" e passaria a significar "cabe na pior métrica que conheço" — um critério sobre nada |
+| achar os 24 px no layout do Linux | cumpre o critério de verdade, mas é trabalho de layout com orçamento incerto, para uma plataforma que não é a do produto |
+| **cobrar o critério só no Windows** | é o que o critério sempre foi; o que faltava era o teste dizer isso |
+
+A escolha foi do dono do projeto. Vale notar que ela não é uma concessão: o README
+abre dizendo que Windows é a plataforma prioritária, o instalador do §49 existe só
+para ela, e a §20.5 fala de "1500x900" como quem fala de uma tela concreta. Um
+teste que afirmasse o mesmo no Ubuntu estaria afirmando algo falso.
+
+### 56.4 O que entrou
+
+Um marcador só, `somente_windows`, nos três testes — e o comentário dele carrega a
+tabela da §56.2 inteira. É a diferença entre um `skipif` que parece preguiça e um
+que registra uma medição: quem chegar depois não precisa refazer a conta para
+saber de quanto é o buraco (24 px) nem se ele é conhecido.
+
+A razão do skip aparece no relatório do pytest, então o Ubuntu não fica em
+silêncio — ele diz, em cada rodada, que aqueles três não foram cobrados e por quê.
+
+O README ganhou o mesmo aviso ao lado da tabela de medições: os números são do
+Windows, no Ubuntu faltam 4 px em 900, e é lá que o critério é cobrado.
+
+### 56.5 O que continua em aberto
+
+Achar os 24 px continua sendo a saída boa, e não foi feita. Fica escrito aqui para
+não virar dívida esquecida: enquanto ela não vier, `Adicionar substituição` fica
+abaixo da dobra numa janela de 900 px no Linux, e o usuário de lá rola o painel —
+que é exatamente o incômodo que a §20.5 existe para eliminar.
+
+### 56.6 Cobertura de teste
+
+Nada de código novo, então nada de teste novo: 705 no Windows, 702 no Linux com os
+três pulados. O que **foi** verificado, e não por inspeção do código:
+
+* no Windows os três continuam rodando e passando (não viraram skip por engano);
+* fora do Windows os três pulam com a razão impressa — provado rodando o pytest
+  com `sys.platform` trocado por um plugin de uma linha, em vez de esperar o CI
+  dizer.
