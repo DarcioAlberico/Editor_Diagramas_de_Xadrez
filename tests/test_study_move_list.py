@@ -162,3 +162,58 @@ def test_study_position_click_loads_board_and_preserves_previous_comment():
     finally:
         window.study_panel.deleteLater()
         app.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# `Vez de jogar` do painel de estudo (§59.9)
+# ---------------------------------------------------------------------------
+
+
+def _panel():
+    QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    panel = StudyPanel()
+    panel.load_piece_placement("8/8/8/4k3/8/8/4K3/8", side_to_move="w")
+    return panel
+
+
+def test_the_side_combo_changes_the_starting_position():
+    """O combo era lido e escrito, mas nao tinha `connect`: mexer nele nao fazia nada."""
+    panel = _panel()
+    antes = panel.study_board.start_fen()
+
+    panel.side_combo.setCurrentIndex(1)  # pretas
+
+    depois = panel.study_board.start_fen()
+    assert depois != antes, "trocar a vez de jogar nao mudou a posicao inicial"
+    assert depois.split()[1] == "b"
+    assert panel.study_board.start_turn() == "b"
+
+
+def test_loading_a_position_does_not_fire_the_side_change():
+    """Preencher o painel nao pode disparar a troca que so o usuario deve fazer."""
+    panel = _panel()
+    panel.load_piece_placement("8/8/8/4k3/8/8/4K3/8", side_to_move="b")
+    assert panel.study_board.start_fen().split()[1] == "b"
+
+    panel.load_piece_placement("8/8/8/4k3/8/8/4K3/8", side_to_move="w")
+    assert panel.study_board.start_fen().split()[1] == "w"
+
+
+def test_the_side_combo_refuses_to_throw_away_a_line():
+    """Trocar o lado da posicao inicial invalidaria os lances ja jogados.
+
+    Descarta-los em silencio seria trocar um controle inerte por um destrutivo, que e
+    pior: o combo volta ao valor anterior e a barra de estado diz o que fazer.
+    """
+    panel = _panel()
+    panel.study_board._on_square_clicked(*panel.study_board._square_to_display(chess.E2))
+    panel.study_board._on_square_clicked(*panel.study_board._square_to_display(chess.E3))
+    assert panel.study_board.san_line(), "o lance nao entrou; o teste nao exercita nada"
+    antes = panel.study_board.start_fen()
+
+    panel.side_combo.setCurrentIndex(1)  # pretas
+
+    assert panel.study_board.start_fen() == antes, "a linha foi jogada fora"
+    assert panel.study_board.san_line(), "os lances sumiram"
+    assert panel.side_combo.currentData() == "w", "o combo ficou mentindo sobre o estado"
+    assert "reinicie a linha" in panel.status_label.text()

@@ -1120,7 +1120,13 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             self._icon(QtWidgets.QStyle.SP_DialogSaveButton), "Exportar PDF", self
         )
         self.act_save_pdf.setShortcut(QtGui.QKeySequence("Ctrl+E"))
-        self.act_save_pdf.triggered.connect(self._save_output_pdf)
+        # `lambda`, e não o método direto: `triggered` carrega um `bool`, e o PySide o
+        # entrega posicionalmente — ou seja, toda exportação pela barra chamava
+        # `_save_output_pdf(False)`, caindo no ramo do diálogo por `False` ser falsy
+        # (§59.10). Funcionava por acaso, e deixaria de funcionar no dia em que a ação
+        # virasse checável: ali `out_path` seria `True` e o `QFileDialog` receberia um
+        # booleano como caminho.
+        self.act_save_pdf.triggered.connect(lambda: self._save_output_pdf())
         toolbar.addAction(self.act_save_pdf)
 
         self.act_save_project = QtGui.QAction(

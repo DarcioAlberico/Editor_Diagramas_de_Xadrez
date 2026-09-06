@@ -446,6 +446,62 @@ def test_closing_the_window_saves_study_work_too(main_window, tmp_path, no_modal
     assert "brancas jogam" in salvo.study_positions[0].comment_before
 
 
+def test_removing_a_study_position_clears_its_frame(main_window, tmp_path, no_modals) -> None:
+    """A moldura verde ficava na pagina ate a proxima troca de pagina (§59.8).
+
+    Sumir sozinha depois e pior que nao sumir: ensina o usuario a nao confiar no que
+    esta vendo.
+    """
+    _open(main_window, tmp_path)
+    _select_diagram(main_window)
+    main_window._study_selection()
+    assert len(main_window.page_widget._study_rects) == 1
+
+    main_window.study_positions_list.setCurrentRow(0)
+    main_window._remove_selected_study_position()
+
+    assert main_window.page_widget._study_rects == [], "a moldura da posicao removida ficou"
+
+
+def test_the_side_to_move_chosen_in_the_study_panel_sticks(main_window, tmp_path, no_modals) -> None:
+    """Um controle que funciona e depois se desfaz sozinho e pior que um inerte.
+
+    O painel muda a FEN inicial (§59.9); sem levar isso de volta para a entrada da
+    lista, sair da posicao e voltar recarregaria o lado antigo.
+    """
+    _open(main_window, tmp_path)
+    _select_diagram(main_window)
+    main_window._study_selection()
+
+    main_window.study_panel.side_combo.setCurrentIndex(1)  # pretas
+    assert main_window.study_positions[0].side_to_move == "b"
+
+    # Sair e voltar: e aqui que a troca se desfazia.
+    main_window._focus_study_position(0)
+    assert main_window.study_panel.study_board.start_turn() == "b"
+
+
+def test_the_export_action_does_not_pass_its_checked_flag_as_a_path(
+    main_window, tmp_path, no_modals
+) -> None:
+    """`triggered` carrega um bool, e o PySide o entrega posicionalmente (§59.10).
+
+    Funcionava por acaso — `False` e falsy e caia no ramo do dialogo. Deixaria de
+    funcionar no dia em que a acao virasse checavel.
+    """
+    _open(main_window, tmp_path)
+    _select_diagram(main_window)
+    main_window._add_operation()  # sem alteracoes a acao nasce desabilitada
+    assert main_window.act_save_pdf.isEnabled()
+
+    recebido: list = []
+    main_window._save_output_pdf = lambda auto_save_path=None: recebido.append(auto_save_path)
+
+    main_window.act_save_pdf.trigger()
+
+    assert recebido == [None], f"a acao passou {recebido!r} como caminho de saida"
+
+
 def test_restored_autosave_reopens_the_work(main_window, qapp, tmp_path, no_modals) -> None:
     """O ponto do autosave: a próxima sessão continua de onde parou."""
     _open(main_window, tmp_path)

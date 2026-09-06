@@ -212,7 +212,29 @@ class StudyWorkflowMixin:
         self._refresh_study_move_comment_markers(pos)
         self._touch_study_positions()
 
+    def _sync_study_position_start(self, pos: StudyPosition) -> None:
+        """Traz a posição inicial do tabuleiro de volta para a entrada da lista.
+
+        O `Vez de jogar:` do painel passou a mudar a FEN inicial (§59.9), e sem isto a
+        troca não sobreviveria a sair da posição e voltar: `_load_study_position`
+        recarrega de `pos`, que continuaria com o lado antigo. Um controle que
+        funciona e depois se desfaz sozinho é pior que um inerte.
+
+        É a mesma escrita que `_on_study_pgn_imported` já fazia para o caminho do PGN
+        importado — agora num lugar só, por onde os dois passam.
+        """
+        parts = self.study_panel.study_board.start_fen().split()
+        if len(parts) < 6:
+            return
+        pos.fen = parts[0]
+        pos.side_to_move = "b" if parts[1] == "b" else "w"
+        try:
+            pos.fullmove_number = max(1, int(parts[5]))
+        except ValueError:
+            pos.fullmove_number = 1
+
     def _sync_study_position_line(self, pos: StudyPosition) -> None:
+        self._sync_study_position_start(pos)
         max_ply = len(self.study_panel.study_board.san_line())
         kept_comments: dict[str, dict[str, str]] = {}
         for key, values in pos.move_comments.items():
@@ -408,6 +430,11 @@ class StudyWorkflowMixin:
             return
         del self.study_positions[idx]
         self._refresh_study_positions_list()
+        # A moldura verde da posição removida ficava na página até a próxima troca de
+        # página (§59.8) — o que é pior que não sumir, porque ensina o usuário a não
+        # confiar no que está vendo. Adicionar já redesenhava; só a remoção estava de
+        # fora.
+        self._refresh_page_overlays()
         self._touch_study_positions()
         self.statusBar().showMessage(f"Posição de estudo removida. Total: {len(self.study_positions)}")
 
