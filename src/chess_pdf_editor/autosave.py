@@ -98,18 +98,24 @@ def _flush_to_disk(path: Path) -> None:
             os.close(directory_fd)
 
 
-def write_project_atomically(path: str, state: ProjectState) -> None:
+def write_project_atomically(
+    path: str, state: ProjectState, extra: Optional[dict[str, object]] = None
+) -> None:
     """Grava o projeto sem risco de deixar um arquivo pela metade.
 
     Falhar no meio não pode deixar lixo: o temporário é removido no caminho de erro.
     Antes, uma gravação interrompida (disco cheio, por exemplo) deixava um
     `projeto.json.tmp` truncado ao lado do projeto, um por falha.
+
+    `extra` é repassado a `save_project_state` — o instantâneo de reconhecimento
+    (§55) usa a mesma gravação atômica daqui, e por bons motivos: ele é gravado
+    logo depois de um lote de minutos.
     """
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target.with_name(target.name + ".tmp")
     try:
-        save_project_state(str(tmp_path), state)
+        save_project_state(str(tmp_path), state, extra=extra)
         _flush_to_disk(tmp_path)
         os.replace(tmp_path, target)
     except BaseException:

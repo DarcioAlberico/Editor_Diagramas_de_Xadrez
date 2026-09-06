@@ -73,13 +73,15 @@ python -m chess_pdf_editor
 4. Desenhe a selecao do diagrama no preview.
 5. Clique em `Reconhecer seleção` (usa endpoint configurado).
 6. Opcional: clique em `Reconhecer página` ou `Detectar no PDF` para varrer automaticamente.
+   Cada reconhecimento com resultado grava um JSON na pasta do PDF, para nada se perder
+   (veja [Copia em JSON de cada reconhecimento](#copia-em-json-de-cada-reconhecimento)).
    Por padrao as deteccoes entram na fila `Candidatos` para voce conferir antes de aplicar
    (veja `Conferir antes de aplicar` abaixo).
    O modo em lote descarta deteccoes que ocupam mais de 50% da pagina (heuristica anti-falso-positivo).
    Se cancelar no meio, o proximo clique retoma da pagina pendente.
 7. Corrija a posicao no `Editor de Tabuleiro` se necessario: selecione uma peça na paleta e clique na casa; clique direito limpa a casa.
    O painel `Prévia (antes / depois)` mostra o resultado em tempo real enquanto voce corrige.
-8. Se necessário, abra `Aparência` > `Ajustes avançados` para ajustar `Padding whiteout` por lado e `Borda`.
+8. Se necessário, abra a aba `Ajustes` > `Aparência do diagrama` para ajustar `Padding whiteout` por lado e `Borda`.
    A opcao `Aplicar em todas as substituicoes` (ligada por padrao) replica a configuracao para toda a lista.
 9. Clique em `Adicionar substituição`.
 10. Para as coordenadas do diagrama original, prefira a opcao automatica (veja
@@ -88,18 +90,21 @@ python -m chess_pdf_editor
     Substituições e apagamentos aparecem juntos na lista `Alterações`.
 11. Repita para outros diagramas.
 12. Clique em `Exportar PDF`.
-   Opcional: na aba `Aparência`, abra `Ajustes avançados` e marque/desmarque `Incluir link Lichess no PDF exportado`.
+   Opcional: na aba `Ajustes`, abra `Aparência do diagrama` e marque/desmarque `Link Lichess por padrão`.
    Quando habilitado, o PDF exportado inclui um link `Lichess` em azul abaixo de cada diagrama substituido.
+   Essa caixa manda so em quem nao escolheu: cada diagrama pode pedir ou recusar o link
+   por conta propria, pela galeria (veja [Galeria de diagramas](#galeria-de-diagramas)).
 
 Ao iniciar, o app tenta restaurar o ultimo projeto salvo. Se nao houver projeto valido, ele reabre o ultimo PDF usado e usa essa pasta como ponto inicial ao abrir outro PDF.
 
 ## Conferir antes de aplicar
 
-Na aba `OCR`, a opcao **`Aplicar automaticamente ao reconhecer página/PDF`** decide o que
+Na aba `Ajustes` > `Reconhecimento`, a opcao **`Aplicar sem conferir`** decide o que
 `Reconhecer página` e `Detectar no PDF` fazem com o que encontrarem:
 
-- **Desligada (padrao):** as deteccoes entram na secao **`2 · Conferir`** (que so aparece
-  quando ha algo na fila), marcadas na pagina com retangulo roxo pontilhado.
+- **Desligada (padrao):** as deteccoes entram na aba **`Conferir`** (que so aparece
+  quando ha algo na fila, e traz a contagem no titulo: `Conferir (12)`),
+  marcadas na pagina com retangulo roxo pontilhado.
   Nada e aplicado ao PDF ainda. Clique em cada candidato
   para carrega-lo no editor — a pagina pula para a pagina certa, a area fica selecionada e
   a posicao vai para o tabuleiro. Com a prévia ligada voce ve exatamente como ficaria.
@@ -116,8 +121,8 @@ Os candidatos pendentes sao salvos no projeto, entao a fila sobrevive a fechar e
 ### Revisar so o que esta incerto
 
 Um livro de 898 paginas produz centenas de candidatos em ~8 minutos. Conferir todos
-um a um e o que demora — e a maioria esta certa. Dois controles na secao
-`2 · Conferir` atacam isso:
+um a um e o que demora — e a maioria esta certa. Dois controles na aba
+`Conferir` atacam isso:
 
 - **`So leituras incertas`** esconde os candidatos com confianca acima do limiar
   (padrao `< 0,80`, o mesmo ponto em que o motor hibrido pede segunda opiniao).
@@ -177,9 +182,68 @@ O estilo (`Padding`, `Borda`) usado pelo lote e o que estava configurado quando
 voce clicou: mudar no meio da execucao nao faz metade dos diagramas sair
 diferente da outra metade.
 
+## Copia em JSON de cada reconhecimento
+
+Todo `Reconhecer página` e todo `Detectar no PDF` que **encontra alguma coisa**
+grava, na mesma pasta do PDF, um arquivo assim:
+
+```text
+Taticas Basicas-reconhecimento-pagina-20260906-053622.json
+Taticas Basicas-reconhecimento-livro-20260906-061140.json
+```
+
+Nada e sobrescrito: o nome leva data e hora, e dois reconhecimentos no mesmo
+segundo ganham um sufixo (`-2`, `-3`). Reconhecer de novo, descartar a fila de
+candidatos por engano ou fechar o app sem salvar **nao apaga** o que ja foi
+gravado.
+
+O arquivo e um **projeto**, no mesmo formato de `Salvar projeto`. Para recuperar:
+`Arquivo` > `Carregar projeto` e aponte para ele. Nao ha importador novo nem
+formato novo para aprender.
+
+Alem do projeto, ele carrega um bloco `reconhecimento` dizendo de onde aquilo
+veio — o que o formato de projeto sozinho nao guarda:
+
+```json
+"reconhecimento": {
+  "quando": "2026-09-06T06:11:40",
+  "origem": "livro",
+  "destino": "candidatos",
+  "paginas": "1-898",
+  "encontrados": 312,
+  "ignorados": 7,
+  "grandes_descartadas": 3,
+  "falhas": 1,
+  "cancelado": false,
+  "motor": "hybrid"
+}
+```
+
+`origem` diz qual botao gerou o arquivo (`pagina` ou `livro`) e `destino` diz se
+as deteccoes foram aplicadas direto (`substituicoes`) ou para a fila
+(`candidatos`). Um lote **cancelado no meio grava igual** — e o caso que mais
+importa, porque quem para na pagina 400 tem 400 paginas de trabalho para nao
+perder.
+
+Para desligar: aba `Ajustes` > `Reconhecimento` > `Salvar JSON de cada
+reconhecimento`. Se a gravacao falhar (pasta so de leitura, disco cheio), o
+reconhecimento **nao e perdido**: a barra de status avisa que o JSON nao foi
+gravado e as deteccoes continuam na tela.
+
+### Por que isso nao e o autosave
+
+O autosave existe e continua valendo, mas nao cobre este medo:
+
+| | Autosave | JSON do reconhecimento |
+|---|---|---|
+| Quantos arquivos | um por livro, sobrescrito | um por reconhecimento |
+| Onde | pasta do app, nome com hash | pasta do PDF, nome do livro |
+| Quando | a cada 2 min e ao fechar | logo apos cada reconhecimento |
+| Descartar a fila por engano | o proximo autosave apaga do disco | o arquivo continua la |
+
 ## Motor de reconhecimento
 
-Em `OCR` > `Avancado` > `Motor de reconhecimento` voce escolhe entre tres modos, e
+Em `Ajustes` > `Reconhecimento` > `Motor de reconhecimento` voce escolhe entre tres modos, e
 a escolha e lembrada entre sessoes:
 
 | Modo | O que faz | O que sai da maquina |
@@ -202,7 +266,7 @@ o livro inteiro sem tocar a rede.
 ### Modelo local
 
 O classificador vem em `models/piece_classifier.pt`. Para apontar outro, use
-`OCR` > `Avancado` > `Modelo local (.pt)` ou a variavel `CHESS_LOCAL_MODEL`.
+`Ajustes` > `Reconhecimento` > `Modelo local (.pt)` ou a variavel `CHESS_LOCAL_MODEL`.
 
 O modelo e o detector vem do projeto **ChessVisionOFF_Puro** (3.290 diagramas
 reais rotulados). O codigo esta em `src/chess_pdf_editor/local_ocr/_vendor/` como
@@ -211,7 +275,7 @@ recopia.
 
 ### Endpoint do OCR
 
-O padrao aparece em `OCR` > `Avancado` > `Endpoint OCR` e a sua escolha e
+O padrao aparece em `Ajustes` > `Reconhecimento` > `Endpoint OCR` e a sua escolha e
 lembrada entre sessoes. Deixe o campo vazio para voltar ao padrao.
 
 Para scripts e ambientes automatizados, sem tocar na interface:
@@ -235,7 +299,7 @@ sem arrastar nada. Se houver dois diagramas na pagina, clique no outro para troc
 - A deteccao roda no proprio clique: ~40 ms para a pagina inteira em zoom 2,0.
 - Precisa das dependencias do motor local (so o **detector** — nao carrega o
   classificador). Sem elas, o clique volta a fazer o que fazia.
-- Para desligar: `OCR` > `Avancado` > `Clique unico detecta o diagrama`.
+- Para desligar: `Ajustes` > `Reconhecimento` > `Clique unico detecta o diagrama`.
 
 Detectar a area **nao** carrega posicao nenhuma: a selecao aparece e o editor
 continua como estava, ate voce usar `Reconhecer selecao` ou montar a posicao. E de
@@ -327,6 +391,7 @@ paginas de um livro nao tem diagrama nenhum; a galeria mostra so o que interessa
 
 - Clique numa miniatura e a janela principal vai ate aquele diagrama — pagina,
   selecao e posicao carregadas. A galeria continua aberta ao lado.
+  (Ctrl+clique e Shift+clique **nao** navegam: sao gestos de selecao.)
 - Candidatos aparecem junto das substituicoes, marcados como tal, com a confianca.
 - O "depois" mostra a **pagina inteira aplicada**, apagamentos inclusive: e o que o
   PDF exportado vai conter.
@@ -335,14 +400,108 @@ As miniaturas sao renderizadas fora da thread da interface e vao aparecendo na
 grade; fechar a janela no meio cancela o trabalho. Medido num livro real: ~128 ms
 por diagrama (44 diagramas em 5,6 s).
 
+Para conferir **um** diagrama de perto — lendo o numero do lance na pagina, com os
+campos ao lado — veja [Navegador de diagramas](#navegador-de-diagramas).
+
+### Ajustar um diagrama sem sair da galeria
+
+O rodape edita o diagrama selecionado, e o que voce mexe ali vale **so para ele**:
+
+| Campo | O que faz |
+|---|---|
+| `Vez de jogar` | brancas ou pretas |
+| `Lance` | o numero do lance |
+| `Link Lichess` | `Padrão`, `Com link` ou `Sem link` |
+| `Borda` | a espessura da borda, em pt |
+
+A edicao entra na hora e **refaz a miniatura**, entao o "depois" nunca fica
+afirmando um resultado que deixou de valer. Cada edicao e um passo de `Ctrl+Z`.
+
+`Link Lichess` tem tres estados de proposito. `Padrão` deixa a caixa
+`Link Lichess por padrão` (aba `Ajustes`) valer; os outros dois **vencem** a caixa
+global, nos dois sentidos. Por isso a caixa global manda so em quem nao escolheu:
+desmarca-la nao tira o link de um diagrama que pediu para te-lo. A legenda da celula
+marca so quem discorda da global (`· com link`, `· sem link`) — numa grade de
+centenas, o que se procura e a excecao.
+
+### Aplicar a varios de uma vez
+
+A grade aceita selecao multipla (Ctrl, Shift, Ctrl+A). Com dois ou mais
+selecionados o rodape **para de gravar ao vivo** e vira um formulario: o titulo passa
+a `N diagramas selecionados` e aparece a linha do lote.
+
+Sao dois gestos explicitos, e nessa ordem:
+
+1. escolher os diagramas;
+2. marcar **quais campos** o lote toca (`Vez`, `Lance`, `Link`, `Borda`).
+
+Nenhuma caixa vem marcada, entao o botao nasce desabilitado — e diz o numero:
+`Aplicar aos 12`. Um lote inteiro e **um** passo de `Ctrl+Z`, nao doze.
+
+`Link` e `Borda` sao o motivo da linha existir: sao as escolhas que valem para um
+capitulo inteiro. `Lance` esta ali por simetria, mas cada diagrama tem o seu.
+
+### Filtrar a grade
+
+Tres recortes na barra de cima, para pegar **um pedaco** sem rolar e Shift+clicar por
+90 paginas: **faixa de paginas** (o capitulo), **tipo** (substituicoes x candidatos) e
+**escolha de link** (para achar as excecoes). `Mostrar tudo` limpa os tres.
+
+- Uma faixa invertida e lida como voce quis: "40 a 12" e 12 a 40.
+- O filtro e de **vista**, nao de trabalho: as miniaturas de todos continuam sendo
+  renderizadas.
+- Filtrar **deseleciona** o que esconde, e um lote nunca toca no que esta escondido.
+  Quando sobra algo de fora, o aviso diz quantos: `4 fora do filtro não foram tocados`.
+- O filtro nao se reaplica sozinho depois de uma edicao — filtrar por "sem link" e
+  entao marcar "padrao" faria a selecao sumir no instante do clique. A legenda se
+  atualiza no lugar.
+
+## Navegador de diagramas
+
+`Diagramas` > `Navegador de diagramas` (Ctrl+Shift+G) mostra **um** diagrama por
+vez, no maior tamanho que a janela der: a esquerda como ele esta no PDF, a direita
+como vai ficar. E a janela para conferir as **etiquetas** — o numero do lance e a
+vez de jogar, que o livro imprime em corpo pequeno em volta do tabuleiro e que a
+miniatura da galeria nao tem tamanho para mostrar.
+
+- `Anterior` / `Proximo` (Alt+← e Alt+→) andam na fila, na ordem de leitura do
+  livro. O campo do meio pula direto para o n-esimo diagrama.
+- Ele **abre no diagrama que ja estava selecionado** na janela principal.
+- Candidatos entram na mesma fila, marcados como `ainda nao aplicado` e com a
+  confianca.
+- `Ir para este diagrama` leva a janela principal ate ele (pagina, selecao e
+  posicao carregadas) sem fechar o navegador — e la que se corrige a posicao,
+  aplica um candidato ou remove.
+
+Os campos sao os mesmos da galeria (`Vez de jogar`, `Numero do lance`,
+`Link Lichess`, `Borda`) e valem so para o diagrama a vista. Uma mexida vira **um**
+passo de `Ctrl+Z`, mesmo arrastando o spinbox por dez valores.
+
+### Por que ele mostra a FEN, o link e a legalidade
+
+`Vez de jogar` e `Numero do lance` **nao mudam um pixel** do tabuleiro desenhado:
+o que sai deles no PDF e a FEN do link Lichess, mais o relatorio e a exportacao de
+diagramas isolados. Uma janela que mostrasse so as duas imagens deixaria o campo
+mais importante sem retorno nenhum. Por isso, abaixo dos campos:
+
+| Linha | O que diz |
+|---|---|
+| `FEN final` | a string exata que vai para o link, o relatorio e a exportacao |
+| Link | se o PDF vai levar o link (e o endereco, para conferir a posicao) |
+| Legalidade | a auditoria da §37, com o lado a jogar que voce escolheu |
+
+A linha da legalidade e o unico juiz automatico do campo `Vez de jogar`: quando a
+posicao so fica ilegal com o lado indicado, ela diz `o lado a jogar provavelmente
+esta trocado` — que e o erro mais comum, ja que o app preenche `brancas` por padrao.
+
 ## Experimentar um estilo no livro inteiro
 
-`Aplicar em todas as substituicoes` (aba `Aparencia`) esta ligado por padrao: mexer
+`Aplicar em todas as substituicoes` (aba `Ajustes`) esta ligado por padrao: mexer
 no padding ou na borda reescreve o estilo de **todas** as substituicoes na hora.
 Voce ve o efeito na pagina aberta; nas outras, nao.
 
 `Diagramas` > `Experimentar estilo em todas...` — ou o botao `Experimentar em
-todas...` na aba `Aparencia` — abre uma grade onde cada celula tem o **estilo atual
+todas...` na aba `Ajustes` — abre uma grade onde cada celula tem o **estilo atual
 a esquerda e o proposto a direita**, em diagramas de todo o livro:
 
 - os spinboxes da janela ajustam a proposta, e a grade se atualiza sozinha;
@@ -382,7 +541,7 @@ tabuleiro (`a`-`h` embaixo, `1`-`8` na lateral). O whiteout cobre o tabuleiro e 
 padding pequeno; as coordenadas ficam **fora** dele e sobrevivem a substituicao,
 emoldurando o diagrama novo com as letrinhas do antigo.
 
-Em `Aparencia` > `Ajustes avancados`, **`Apagar coordenadas do diagrama original`**
+Em `Ajustes` > `Aparência do diagrama`, **`Apagar coordenadas do diagrama original`**
 resolve isso automaticamente, junto do whiteout — e aparece na previa ao vivo,
 entao voce ve o efeito antes de exportar.
 
@@ -411,14 +570,43 @@ PDF que voce ja conferiu nao pode mudar sozinho.
 
 ## O painel lateral
 
-Os grupos recolhíveis (`3 · Conferir a prévia`, `Avançado`, `Ajustes avançados`)
-**lembram** se voce os deixou abertos ou fechados — nos dois sentidos, e entre sessoes.
+O painel tem quatro abas, repartidas **por assunto**, e o criterio de qual coisa vai
+para onde cabe numa frase: na aba do fluxo fica o que e etapa do fluxo.
 
-Isso importa por uma medicao: numa janela de 1500x900, a aba `OCR` pede 745 px e recebe
-222, entao `Adicionar substituicao` (passo 5 do fluxo) fica abaixo da dobra e exige
-rolar. O fluxo inteiro cabe sem rolagem **a partir de 1100 px de altura** de janela
-(1050 com a previa recolhida). Recolher a previa nao resolve em 900 px, mas ajuda — e
-agora a escolha nao se perde ao fechar o app.
+| Aba | O que tem |
+|---|---|
+| `Diagrama` | as quatro etapas numeradas: `1 · Reconhecer`, `2 · Conferir a prévia`, `3 · Aplicar`, `4 · Alterações` |
+| `Conferir` | a fila de candidatos de um lote — **so aparece quando ha fila**, com a contagem no titulo |
+| `FEN` | a FEN, os avisos de legalidade e os metadados da posicao |
+| `Ajustes` | `Aparência do diagrama` e `Reconhecimento`, os dois recolhidos por padrao |
+
+Os grupos recolhíveis (`2 · Conferir a prévia`, `Aparência do diagrama`,
+`Reconhecimento`) **lembram** se voce os deixou abertos ou fechados — nos dois
+sentidos, e entre sessoes.
+
+O editor de tabuleiro fica acima das abas, com a paleta de peças **ao lado** do
+tabuleiro (nao acima) e os quatro comandos numa linha so.
+
+Isso tudo importa por uma medicao. Numa janela de 1500x900 a aba do fluxo pedia 745 px
+e recebia 222, entao `Adicionar substituicao` ficava abaixo da dobra e exigia rolar. Hoje
+a mesma aba pede 643 px e recebe 352:
+
+| | antes | hoje |
+|---|---|---|
+| falta para o passo final em 900 px | 191 px | **0 px** |
+| altura minima, previa expandida | 1.100 px | **892 px** |
+| altura minima, previa recolhida | 1.050 px | **790 px** |
+
+**O fluxo basico cabe em 1500x900 sem rolar e com a previa expandida** — sem esconder
+o resultado, sem encolher o tabuleiro e sem remover controle nenhum. O que mudou foi
+onde as coisas moram.
+
+Os numeros acima sao **do Windows**, que e a plataforma prioritaria do produto, e sao
+medidos **depois** de a previa ao vivo entrar — ela chega num timer de 140 ms e
+empurra o painel em 14 px, entao medir antes disso descreve uma janela que voce
+nunca ve. Em outras plataformas os mesmos widgets medem diferente; os tres testes
+que cobram o criterio rodam so no Windows e, fora dele, **publicam a medicao local**
+na razao do skip, em vez de calar (veja `tests/test_side_panel.py`).
 
 Na hierarquia dos botoes: a **acao principal do momento** aparece preenchida de azul
 (um botao por vez), as acoes secundarias ficam com o botao normal, e os comandos
@@ -431,7 +619,7 @@ Voce nao precisa exportar o PDF para saber como o diagrama vai ficar.
 
 - **`Prévia do resultado` (Ctrl+D)**, na toolbar ou no menu `PDF`: a pagina passa a
   mostrar o resultado das alteracoes em vez do PDF original. Pressione de novo para voltar.
-- **`Prévia (antes / depois)`**, na aba `OCR`: miniaturas lado a lado do diagrama que
+- **`Prévia (antes / depois)`**, na aba `Diagrama`: miniaturas lado a lado do diagrama que
   voce esta editando.
 
 A prévia inclui a substituicao **antes de voce clicar em `Adicionar substituição`**:
@@ -440,7 +628,8 @@ basta selecionar a area e montar a posicao. Ela acompanha ao vivo:
 - pecas movidas no editor de tabuleiro;
 - edicao direta do campo FEN;
 - `Padding whiteout` por lado e `Borda`;
-- `Aplicar whiteout antes do overlay` e `Incluir link Lichess`;
+- `Aplicar whiteout antes do overlay`, `Link Lichess por padrão` e a escolha de link
+  do proprio diagrama;
 - troca da fonte Merida;
 - apagamentos adicionados ou removidos.
 
@@ -464,7 +653,7 @@ pagina normalmente.
 A prévia cheia troca a pagina inteira de uma vez, e por isso ela responde "como vai
 ficar" mas nao "o que mudou": os dois bitmaps nunca estao na tela juntos.
 
-- **`Comparar com cortina` (Ctrl+Shift+D)**, na toolbar, no menu `PDF` ou na aba `OCR`:
+- **`Comparar com cortina` (Ctrl+Shift+D)**, na toolbar, no menu `PDF` ou na aba `Diagrama`:
   uma linha vertical divide a pagina. A **esquerda** fica o PDF original, a **direita** o
   resultado.
 - **Arraste a linha** para varrer a pagina. Ela pode ser agarrada em qualquer altura, e a
@@ -614,6 +803,7 @@ src/chess_pdf_editor/
   study_workflow.py   # mixin: posicoes de estudo do PDF e comentarios por lance
   study_panel.py      # painel de estudo (nao conhece a janela)
   gallery.py          # galeria antes/depois do livro, com worker proprio
+  navigator.py        # um diagrama por vez, grande, com as etiquetas ao lado
   theme.py            # cores semanticas e QSS reutilizado
   widgets.py          # viewer selecionavel (alcas/teclado), editor, antes/depois
   pdf_service.py      # render, previa e overlay no PDF
@@ -628,6 +818,7 @@ src/chess_pdf_editor/
   feedback.py         # correcoes exportadas para o dataset de treino
   history.py          # pilha de desfazer/refazer do modo Edicao
   autosave.py         # caminho e gravacao atomica do autosave
+  recognition_snapshot.py # um JSON por reconhecimento, ao lado do PDF
   logging_config.py   # log em arquivo com rotacao
   fen.py              # utilitarios e validacoes FEN
   legality.py         # auditoria de legalidade da posicao (impossivel/suspeita)
@@ -636,7 +827,10 @@ src/chess_pdf_editor/
   style_batch.py      # experimentar estilo no livro antes de aplicar
   study.py            # arvore de lances/variantes do modo Estudo
   project_state.py    # persistencia de checkpoint
+  migrations.py       # migracoes explicitas do `schema_version` do projeto
   project_diff.py     # o que mudou entre dois projetos salvos
+  types.py            # dataclasses do contrato: operacao, apagamento, leitura do OCR
+  resources.py        # onde achar `models/` e `assets/`, do repo ou do executavel
 models/
   piece_classifier.pt # classificador das 64 casas usado pelo motor local
 ```

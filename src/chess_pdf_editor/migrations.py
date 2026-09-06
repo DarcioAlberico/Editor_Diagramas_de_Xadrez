@@ -26,6 +26,7 @@ aqui; todo o resto é registrar o que já acontecia.
 | 7 | estado do primeiro commit do repositório | `28a21e5` |
 | 8 | `candidates` (fila de conferência, §23) | `a82bb98` |
 | 9 | `erase_coordinates` (apagar as coordenadas do diagrama original) | — |
+| 10 | `include_lichess_link` por substituição (§52) | — |
 
 O schema **7 foi mutado no lugar duas vezes** sem trocar de número: `9d1d832`
 acrescentou lado a jogar às posições de estudo e `9b51845` os comentários por
@@ -46,7 +47,7 @@ from .logging_config import get_logger
 logger = get_logger("migrations")
 
 #: Versão que este app grava.
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 #: Abaixo disto o número da versão não identifica o formato (ver o cabeçalho); a
 #: leitura cai na tolerância por campo de `project_state.py`.
@@ -99,11 +100,28 @@ def _v8_to_v9(payload: dict) -> str:
     return "apagamento de coordenadas já presente"
 
 
+def _v9_to_v10(payload: dict) -> str:
+    """Schema 10 guarda o link Lichess **por diagrama**, e não só globalmente.
+
+    Não há nada a converter, e isso é o ponto: o campo novo é opcional e ausente
+    significa "segue a global", que é literalmente o comportamento do schema 9. Um
+    projeto de 9 reaberto exporta o mesmo PDF de antes.
+
+    A função existe mesmo assim porque o contrato do cabeçalho é esse — formato novo,
+    número novo, entrada aqui. Sem ela o schema 10 seria escrito por este app e lido
+    por ele como se fosse 9, e a tabela do cabeçalho deixaria de descrever o formato,
+    que é o defeito que a migração toda existe para não repetir.
+    """
+    del payload
+    return "link Lichess por diagrama disponível (ausente = segue a opção global)"
+
+
 #: Chave = versão de origem; valor = função que a leva para a versão seguinte.
 #: Cada função muta `payload` no lugar e devolve uma frase para o log/UI.
 _MIGRATIONS: dict[int, Callable[[dict], str]] = {
     7: _v7_to_v8,
     8: _v8_to_v9,
+    9: _v9_to_v10,
 }
 
 

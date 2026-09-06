@@ -39,6 +39,11 @@ class OverlayOperation:
     whiteout_padding_right_pt: float = 0.5
     whiteout_padding_bottom_pt: float = 0.5
     border_width_pt: float = 0.0
+    #: Link Lichess **deste** diagrama. `None` segue a opção global; `True`/`False`
+    #: mandam nela. Três estados e não dois: com dois, todo projeto antigo teria de
+    #: nascer com um valor escolhido por nós em cada diagrama, e mudar a global
+    #: depois deixaria de surtir efeito em qualquer um deles.
+    include_lichess_link: Optional[bool] = None
 
 
 @dataclass

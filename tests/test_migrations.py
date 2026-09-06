@@ -112,7 +112,7 @@ def test_the_full_chain_runs_from_7_to_the_current() -> None:
 
     assert migrated["candidates"] == []
     assert migrated["erase_coordinates"] is False
-    assert [step.split(":")[0] for step in report.steps] == ["7→8", "8→9"]
+    assert [step.split(":")[0] for step in report.steps] == ["7→8", "8→9", "9→10"]
 
 
 def test_an_explicit_coordinate_choice_is_preserved() -> None:

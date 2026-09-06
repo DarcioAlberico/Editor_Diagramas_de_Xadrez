@@ -236,6 +236,12 @@ def _nudged(value: object, field_name: str) -> object:
         return "b" if value != "b" else "w"
     if field_name == "move_comments":
         return {"5": {"before": "antes do lance", "after": "depois do lance"}}
+    # `include_lichess_link` nasce `None` e é tri-estado: sem este caso ele cairia
+    # na regra do `confidence` abaixo e gravaria 0.5, que volta como `True` e faz
+    # a rede acusar uma perda que não houve. O valor que interessa provar é o
+    # `False`, porque é o único que `bool(None)` imitaria.
+    if field_name == "include_lichess_link":
+        return False
     if isinstance(value, bool):
         return not value
     if isinstance(value, tuple):

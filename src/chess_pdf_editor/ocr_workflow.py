@@ -21,6 +21,7 @@ contrato executável — é o que um leitor precisa saber antes de mexer aqui.
 * `Reconhecer seleção` / `Reconhecer página` — síncronos, na thread da UI
 * `Detectar no PDF` — via `BatchOcrWorker`, com progresso e cancelamento
 * a fila de candidatos (§23) e a fila de revisão por confiança (§29)
+* o instantâneo em JSON que cada reconhecimento deixa ao lado do PDF (§55)
 """
 from __future__ import annotations
 
@@ -34,6 +35,14 @@ from .fen import extract_piece_placement, normalize_piece_placement, validate_pi
 from .logging_config import get_logger
 from .pdf_service import crop_from_rendered_page
 from .recognition import RecognitionError
+from .recognition_snapshot import (
+    KIND_BOOK,
+    KIND_PAGE,
+    TARGET_CANDIDATES,
+    TARGET_OPERATIONS,
+    RunInfo,
+    write_snapshot,
+)
 from .types import OverlayOperation
 from .workers import BatchOcrWorker
 
@@ -48,13 +57,16 @@ _JANELA_REQUER = (
     "page_widget", "board_editor", "fen_edit", "candidates_list", "candidates_label",
     "candidates_section", "auto_apply_check", "op_border_spin",
     "candidates_only_uncertain", "candidates_threshold_spin", "candidates_worst_first",
+    "save_recognition_json_check",
     "btn_apply_candidate", "btn_discard_candidate",
     "btn_apply_all_candidates", "btn_discard_all_candidates",
     # colaboração
     "_commit_history", "_refresh_page_overlays", "_schedule_preview_refresh",
     "_update_edit_context_state", "_current_whiteout_padding", "_current_fen_defaults",
+    "_sync_candidates_tab",
     "_make_engine", "_confirm_remote_upload", "_engine_mode", "_local_model_path",
     "_ocr_endpoint", "_draft_operation", "_anchor_from_selection", "_set_position_anchor",
+    "_current_project_state",
 )
 
 
@@ -234,19 +246,71 @@ class RecognitionMixin:
                 self.candidates_list.setCurrentRow(len(self.candidates) - added_count)
         self._update_edit_context_state()
         self._schedule_preview_refresh(immediate=True)
+        gravado = ""
         if added_count:
             self._commit_history(
                 f"reconhecer página ({added_count} {'substituições' if auto_apply else 'candidatos'})"
             )
+            # Só quando houve detecção: um clique que não achou nada não tem o que
+            # perder, e gravar assim mesmo encheria a pasta do livro de arquivos
+            # que só dizem "nada aqui".
+            gravado = self._save_recognition_snapshot(
+                RunInfo(
+                    origem=KIND_PAGE,
+                    destino=self._snapshot_target(auto_apply),
+                    encontrados=added_count,
+                    paginas=str(self.current_page + 1),
+                    ignorados=skipped_count,
+                    motor=str(self._engine_mode()),
+                )
+            )
         if auto_apply:
             self.statusBar().showMessage(
-                f"Página reconhecida. aplicadas={added_count}, ignoradas={skipped_count}"
+                f"Página reconhecida. aplicadas={added_count}, ignoradas={skipped_count}{gravado}"
             )
         else:
             self.statusBar().showMessage(
                 f"Página reconhecida. candidatos={added_count}, ignorados={skipped_count}. "
-                "Confira cada um e clique em Aplicar."
+                f"Confira cada um e clique em Aplicar.{gravado}"
             )
+
+    # ------------------------------------------------------------------
+    # Instantaneo do reconhecimento (§55)
+    # ------------------------------------------------------------------
+
+    def _save_recognition_snapshot(self, run: RunInfo) -> str:
+        """Grava o JSON do reconhecimento e devolve o que dizer na barra de status.
+
+        Devolve **texto**, e não o caminho, porque quem chama já monta uma frase de
+        status e um modal: uma segunda mensagem escrita daqui apagaria a primeira,
+        e a ordem em que as duas saem dependeria da ordem das chamadas.
+
+        Falhar aqui não pode derrubar o reconhecimento. A pasta do livro pode ser
+        só de leitura, de rede, ou estar cheia — e nenhuma dessas é razão para
+        perder as detecções que já estão na tela. O erro vira uma frase e uma
+        linha de log, com o caminho que se tentou.
+        """
+        if not self.save_recognition_json_check.isChecked():
+            return ""
+        if not self.current_pdf_path:
+            return ""
+        state = self._current_project_state()
+        if state is None:  # pragma: no cover - `current_pdf_path` já garante
+            return ""
+        try:
+            destino = write_snapshot(self.current_pdf_path, state, run)
+        except Exception as exc:
+            logger.warning(
+                "Não foi possível gravar o JSON do reconhecimento ao lado de %s",
+                self.current_pdf_path,
+                exc_info=True,
+            )
+            return f" | JSON do reconhecimento NÃO gravado: {exc}"
+        return f" | JSON salvo: {destino.name}"
+
+    @staticmethod
+    def _snapshot_target(auto_apply: bool) -> str:
+        return TARGET_OPERATIONS if auto_apply else TARGET_CANDIDATES
 
     @staticmethod
     def _rect_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
@@ -485,6 +549,25 @@ class RecognitionMixin:
             )
         self._mark_project_dirty()
 
+        gravado = ""
+        if added_count:
+            # Cancelado grava igual, e é o caso que mais importa: quem para o lote
+            # na página 400 tem 400 páginas de trabalho para não perder.
+            ultima = self.ocr_full_next_page if canceled else total_pages
+            gravado = self._save_recognition_snapshot(
+                RunInfo(
+                    origem=KIND_BOOK,
+                    destino=self._snapshot_target(auto_apply),
+                    encontrados=added_count,
+                    paginas=f"{batch['start_page'] + 1}-{max(batch['start_page'] + 1, ultima)}",
+                    ignorados=batch["skipped"],
+                    grandes_descartadas=batch["skipped_too_large"],
+                    falhas=batch["errors"],
+                    cancelado=bool(canceled),
+                    motor=str(self._engine_mode()),
+                )
+            )
+
         label = "aplicadas" if auto_apply else "candidatos"
         status = (
             f"OCR em lote concluído. {label}={added_count}, ignoradas={batch['skipped']}, "
@@ -493,6 +576,7 @@ class RecognitionMixin:
         )
         if canceled:
             status += f" (cancelado pelo usuário; retomada na página {self.ocr_full_next_page + 1})"
+        status += gravado
         if not auto_apply and added_count:
             status += ". Confira os candidatos antes de aplicar."
         self.statusBar().showMessage(status)
@@ -616,14 +700,21 @@ class RecognitionMixin:
         try:
             self.candidates_list.clear()
             total = len(self.candidates)
+            # Sem o "2 ·": a conferencia saiu do fluxo numerado para a sua propria
+            # aba (§51.2), e numerar uma etapa que nao esta na sequencia era
+            # prometer uma ordem que nao existe.
             if self.candidates_only_uncertain.isChecked() and total:
-                self.candidates_label.setText(f"2 · Conferir ({len(visible)} incertos de {total})")
+                self.candidates_label.setText(f"Conferir ({len(visible)} incertos de {total})")
             else:
-                self.candidates_label.setText(f"2 · Conferir ({total})")
+                self.candidates_label.setText(f"Conferir ({total})")
             # Fila vazia e o estado normal: esconder a secao inteira devolve
             # espaco vertical para o que importa. O filtro nao esconde a secao —
             # senao nao haveria como desligar o filtro.
             self.candidates_section.setVisible(bool(self.candidates))
+            # A aba tem a sua propria visibilidade, e e ela que aparece e some
+            # com a fila. A secao acima continua respondendo pelo contrato do
+            # filtro, que e outro.
+            self._sync_candidates_tab()
             self.candidates_threshold_spin.setEnabled(self.candidates_only_uncertain.isChecked())
             for position, idx in enumerate(visible, start=1):
                 item = QtWidgets.QListWidgetItem(

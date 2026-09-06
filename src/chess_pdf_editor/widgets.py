@@ -92,6 +92,125 @@ def _get_piece_pixmaps() -> dict[str, QtGui.QPixmap]:
     return _PIECE_PIXMAPS
 
 
+#: Ícones dos comandos de transformação do tabuleiro, desenhados aqui em vez de
+#: escolhidos do tema ou escritos como glifo Unicode. Os três caminhos foram
+#: pesados pelo modo de falha, como a §49.3 manda fazer onde não dá para medir:
+#:
+#: - ícone padrão do Qt: nenhum dos `StandardPixmap` significa "espelhar", e o
+#:   mais próximo de "rotacionar" é o `SP_BrowserReload` (recarregar página);
+#: - glifo Unicode (`↻`, `⇅`): depende de cobertura de fonte que **não dá para
+#:   medir aqui** — sob a plataforma offscreen o `QFontMetrics.inFont()` responde
+#:   `False` até para o `×` que a paleta usa hoje e que aparece na tela. Se o
+#:   glifo faltar na máquina do usuário, o botão fica em branco;
+#: - desenhar: falha ficando feio, o que é mais barato que ficar em branco ou
+#:   dizer a coisa errada. E é o único dos três verificável nesta máquina.
+#:
+#: Desenhado com folga de resolução (`_ICON_OVERSAMPLE`) porque o `QIcon` reduz
+#: bem e amplia mal: num monitor a 200% o pixmap de 16 px sairia borrado.
+_ICON_OVERSAMPLE = 4
+
+
+def board_transform_icon(name: str, size: int = 16) -> QtGui.QIcon:
+    """Ícone de `rotate`, `flip` ou `clear` para os botões do editor."""
+    side = max(8, size) * _ICON_OVERSAMPLE
+    pixmap = QtGui.QPixmap(side, side)
+    pixmap.fill(QtCore.Qt.transparent)
+
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+    # Cor da paleta do sistema: o ícone acompanha a troca de tema, como os
+    # botões destrutivos da §41.4 já fazem.
+    ink = QtGui.QGuiApplication.palette().color(QtGui.QPalette.WindowText)
+    pen = QtGui.QPen(ink, side * 0.09, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin)
+    painter.setPen(pen)
+
+    if name == "rotate":
+        _paint_rotate(painter, side, ink)
+    elif name == "flip":
+        _paint_flip(painter, side, ink)
+    elif name == "clear":
+        _paint_clear(painter, side)
+    else:
+        painter.end()
+        raise ValueError(f"ícone de transformação desconhecido: {name!r}")
+    painter.end()
+
+    icon = QtGui.QIcon(pixmap)
+    return icon
+
+
+def _paint_rotate(painter: QtGui.QPainter, side: float, ink: QtGui.QColor) -> None:
+    """Arco quase fechado com uma seta na ponta: o sentido horário se lê da seta."""
+    box = QtCore.QRectF(side * 0.20, side * 0.22, side * 0.60, side * 0.60)
+    painter.setBrush(QtCore.Qt.NoBrush)
+    # Qt mede em 1/16 de grau, 0 às 3 horas e crescendo no anti-horário. O vão
+    # fica em cima, à direita, que é onde a seta entra.
+    painter.drawArc(box, 75 * 16, -285 * 16)
+
+    ponta = QtCore.QPointF(
+        box.center().x() + box.width() / 2 * 0.26,
+        box.top() - side * 0.01,
+    )
+    seta = QtGui.QPolygonF(
+        [
+            QtCore.QPointF(ponta.x() + side * 0.16, ponta.y() + side * 0.05),
+            QtCore.QPointF(ponta.x() - side * 0.06, ponta.y() - side * 0.06),
+            QtCore.QPointF(ponta.x() - side * 0.02, ponta.y() + side * 0.17),
+        ]
+    )
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtGui.QBrush(ink))
+    painter.drawPolygon(seta)
+
+
+def _paint_flip(painter: QtGui.QPainter, side: float, ink: QtGui.QColor) -> None:
+    """Eixo cheio com um triângulo de cada lado, apontando para longe dele.
+
+    O mesmo objeto dos dois lados de uma linha é o que diz *espelhar* em vez de
+    *mover*.
+    """
+    # Duas revisões deste desenho, ambas por tê-lo olhado renderizado:
+    #
+    # 1. bases em 0,41 e 0,59 encostavam os triângulos no eixo e escondiam a
+    #    linha; o conjunto lia como um losango;
+    # 2. o eixo tracejado e o triângulo de baixo vazado sumiam nos 16 px em que o
+    #    botão de fato desenha o ícone — detalhe que só existe na ampliação é
+    #    detalhe que não existe.
+    #
+    # O que sobrou é o que resiste ao tamanho real: linha cheia, dois triângulos
+    # cheios apontando para longe dela, e folga suficiente para se ver que são
+    # três objetos e não um.
+    painter.setPen(QtGui.QPen(ink, side * 0.08, QtCore.Qt.SolidLine, QtCore.Qt.FlatCap))
+    painter.drawLine(
+        QtCore.QPointF(side * 0.05, side * 0.50),
+        QtCore.QPointF(side * 0.95, side * 0.50),
+    )
+
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtGui.QBrush(ink))
+    for apex, base in ((side * 0.04, side * 0.32), (side * 0.96, side * 0.68)):
+        painter.drawPolygon(
+            QtGui.QPolygonF(
+                [
+                    QtCore.QPointF(side * 0.50, apex),
+                    QtCore.QPointF(side * 0.22, base),
+                    QtCore.QPointF(side * 0.78, base),
+                ]
+            )
+        )
+
+
+def _paint_clear(painter: QtGui.QPainter, side: float) -> None:
+    painter.drawLine(
+        QtCore.QPointF(side * 0.24, side * 0.24),
+        QtCore.QPointF(side * 0.76, side * 0.76),
+    )
+    painter.drawLine(
+        QtCore.QPointF(side * 0.76, side * 0.24),
+        QtCore.QPointF(side * 0.24, side * 0.76),
+    )
+
+
 def _set_button_piece_visual(button: QtWidgets.QPushButton, piece: str, icon_size: int) -> None:
     pixmaps = _get_piece_pixmaps()
     pix = pixmaps.get(piece)
@@ -667,9 +786,24 @@ class SelectablePageWidget(QtWidgets.QLabel):
 class BeforeAfterWidget(QtWidgets.QWidget):
     """Miniaturas lado a lado do diagrama: como esta hoje x como vai ficar."""
 
-    def __init__(self, thumb_height: int = 150) -> None:
+    def __init__(
+        self,
+        thumb_height: int = 150,
+        before_title: str = "Antes",
+        after_title: str = "Depois",
+        expanding: bool = False,
+    ) -> None:
+        """`expanding` troca a altura fixa por "o que a janela der".
+
+        No painel lateral a altura é fixa de propósito: o widget divide espaço
+        vertical com o editor de tabuleiro e a lista, e um par de miniaturas que
+        cresce empurraria os dois para fora da tela. Numa janela cujo assunto *é*
+        o diagrama (§54) a conta se inverte — ali a imagem deve tomar tudo o que
+        sobrar, e `thumb_height` vira só o mínimo.
+        """
         super().__init__()
         self._thumb_height = max(80, int(thumb_height))
+        self._expanding = bool(expanding)
         self._before_png: Optional[bytes] = None
         self._after_png: Optional[bytes] = None
 
@@ -684,13 +818,15 @@ class BeforeAfterWidget(QtWidgets.QWidget):
         thumbs_layout = QtWidgets.QHBoxLayout(self.thumbs)
         thumbs_layout.setContentsMargins(0, 0, 0, 0)
         thumbs_layout.setSpacing(10)
-        thumbs_layout.addLayout(self._make_column("Antes", self.before_label), 1)
-        thumbs_layout.addLayout(self._make_column("Depois", self.after_label), 1)
+        thumbs_layout.addLayout(self._make_column(before_title, self.before_label), 1)
+        thumbs_layout.addLayout(self._make_column(after_title, self.after_label), 1)
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(self.message_label)
-        root.addWidget(self.thumbs)
+        # Só o modo expansivo dá esticão às miniaturas; sem ele o layout é o de
+        # antes, com as duas coladas no topo e a altura mandando no tamanho.
+        root.addWidget(self.thumbs, 1 if self._expanding else 0)
         self.thumbs.setVisible(False)
 
     @staticmethod
@@ -712,7 +848,14 @@ class BeforeAfterWidget(QtWidgets.QWidget):
             "QLabel { background-color: palette(base); border: 1px solid palette(mid); "
             "border-radius: 4px; }"
         )
-        label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+        # `Ignored` nas duas direções, e não `Expanding`: o rótulo recebe um
+        # pixmap grande e o `sizeHint` passaria a ser o tamanho da imagem, que
+        # faria o layout crescer, que faria a imagem crescer. `Ignored` corta esse
+        # laço — a imagem é escalada para o rótulo, nunca o contrário.
+        label.setSizePolicy(
+            QtWidgets.QSizePolicy.Ignored,
+            QtWidgets.QSizePolicy.Ignored if self._expanding else QtWidgets.QSizePolicy.Fixed,
+        )
         return label
 
     def set_message(self, message: str) -> None:
@@ -741,10 +884,13 @@ class BeforeAfterWidget(QtWidgets.QWidget):
             label.clear()
             return
         available_width = max(48, label.width() - 6)
+        available_height = (
+            max(48, label.height() - 6) if self._expanding else self._thumb_height - 6
+        )
         label.setPixmap(
             pixmap.scaled(
                 available_width,
-                self._thumb_height - 6,
+                available_height,
                 QtCore.Qt.KeepAspectRatio,
                 QtCore.Qt.SmoothTransformation,
             )
@@ -804,7 +950,28 @@ class BoardEditorWidget(QtWidgets.QWidget):
         palette.setContentsMargins(0, 0, 0, 0)
         palette.setHorizontalSpacing(4)
         palette.setVerticalSpacing(4)
-        for idx, piece in enumerate(PIECE_VALUES):
+        # A paleta é a transposta da que estava aqui: era 7 colunas × 2 linhas
+        # **acima** do tabuleiro, agora é 2 × 7 **ao lado**. Devolve 70 px de
+        # altura ao painel — que é o recurso escasso, medido na §41.2 — ao custo
+        # de 70 px de largura, que sobra.
+        #
+        # O agrupamento sobrevive à rotação, e é ele que torna a troca barata:
+        # antes era linha de cima (vazia + brancas) e linha de baixo (pretas),
+        # agora é coluna da esquerda e da direita.
+        #
+        # A casa vazia foi para o fim, e isso **não** é transposição pura. Na
+        # ordem do `PIECE_VALUES` ela ocupa o primeiro lugar e empurrava as
+        # brancas uma linha para baixo, deixando o peão branco ao lado do cavalo
+        # preto. Em duas linhas ninguém reparava; em duas colunas a leitura por
+        # tipo é a que o olho tenta fazer, e a falta dela salta. Posições
+        # explícitas em vez de aritmética de índice porque o pareamento é o que
+        # importa aqui, e assim ele se lê no código.
+        brancas = [p for p in PIECE_VALUES if p != "." and p.isupper()]
+        pretas = [p for p in PIECE_VALUES if p != "." and p.islower()]
+        posicoes = [(p, linha, 0) for linha, p in enumerate(brancas)]
+        posicoes += [(p, linha, 1) for linha, p in enumerate(pretas)]
+        posicoes.append((".", len(brancas), 0))
+        for piece, linha, coluna in posicoes:
             button = QtWidgets.QPushButton()
             button.setCheckable(True)
             button.setFixedSize(30, 30)
@@ -817,14 +984,25 @@ class BoardEditorWidget(QtWidgets.QWidget):
             button.clicked.connect(lambda checked=False, value=piece: self._select_palette_piece(value))
             self._palette_group.addButton(button)
             self._palette_buttons[piece] = button
-            palette.addWidget(button, idx // 7, idx % 7)
+            palette.addWidget(button, linha, coluna)
 
         self._palette_buttons[self._active_piece].setChecked(True)
         self._refresh_palette_styles()
 
-        root = QtWidgets.QVBoxLayout(self)
-        root.addLayout(palette)
-        root.addWidget(self._board_container, 0, QtCore.Qt.AlignLeft)
+        # O quadro em volta da paleta separa "com que peça pinto" de "onde
+        # pinto", que a versão empilhada resolvia pela distância vertical e esta
+        # não resolveria sozinha. `StyledPanel` vem do tema: sem folha de estilo
+        # própria, ele acompanha claro/escuro sem nada a manter.
+        self._palette_frame = QtWidgets.QFrame()
+        self._palette_frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        palette_frame_layout = QtWidgets.QVBoxLayout(self._palette_frame)
+        palette_frame_layout.setContentsMargins(4, 4, 4, 4)
+        palette_frame_layout.addLayout(palette)
+        palette_frame_layout.addStretch(1)
+
+        root = QtWidgets.QHBoxLayout(self)
+        root.addWidget(self._board_container, 0, QtCore.Qt.AlignTop)
+        root.addWidget(self._palette_frame, 0, QtCore.Qt.AlignTop)
         root.addStretch(1)
 
         self.refresh_ui()

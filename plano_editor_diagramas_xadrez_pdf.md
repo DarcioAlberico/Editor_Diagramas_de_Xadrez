@@ -23,7 +23,7 @@ Technique*, 898 páginas). O que existe hoje:
 | Apagamentos (erase) | ✅ pronto |
 | **Prévia ao vivo do resultado (WYSIWYG)** | ✅ **novo — ver §21** |
 | **Fila de conferência dos candidatos do OCR** | ✅ **novo — ver §23** |
-| Projeto/checkpoint versionado (`schema_version=8`) | ✅ pronto |
+| Projeto/checkpoint versionado (`schema_version=10`) | ✅ pronto |
 | Modo Estudo (PGN, variantes, comentários por lance) | ✅ pronto (`study`) |
 | Workers em segundo plano (OCR em lote / exportação) | ✅ pronto — ver §25.1 |
 | Undo/redo no modo edição | ✅ pronto — ver §25.2 |
@@ -42,6 +42,11 @@ Technique*, 898 páginas). O que existe hoje:
 | **Empacotamento (executável Windows)** | ✅ **novo — ver §28.2** |
 | **Página com `/Rotate` e/ou CropBox deslocada** | ✅ **novo — ver §46 e §48** |
 | **Script do instalador (Inno Setup)** | ✅ **novo — ver §49**; falta compilar |
+| **Painel: paleta ao lado, comandos numa linha** | ✅ **novo — ver §50** |
+| **Painel repartido em abas; fluxo sem rolagem em 900** | ✅ **novo — ver §51** |
+| **Galeria: rodapé de edição, filtro e aplicação em lote** | ✅ **novo — ver §52** |
+| **Link Lichess por diagrama (e não só global)** | ✅ **novo — ver §52.1** |
+| **README em dia com a interface atual** | ✅ **novo — ver §53** |
 | Instalador assinado / validação em máquina limpa | ❌ pendente — ver §28.4 |
 
 **O desvio da §5/§6 foi fechado.** Até a versão 1.5 o reconhecimento existia só
@@ -563,6 +568,13 @@ Beta (meta):
 19. **Rotação + CropBox: recusa explícita** ✅ — ver §47.
 20. **Rotação + CropBox: resolvida** ✅ — ver §48. Com ela, a §47 fecha.
 21. **Instalador Windows (o script)** ✅ — ver §49. Falta compilá-lo.
+22. **Despoluir o painel: paleta ao lado, comandos numa linha** ✅ — ver §50.
+23. **Repartir o painel em abas por assunto** ✅ — ver §51. Com ele o critério de
+    rolagem da §20.5 fecha, e a "lista única" da §20.4 fica completa.
+24. **Galeria como lugar de trabalho: rodapé de edição, filtro e aplicação em lote;
+    link Lichess por diagrama** ✅ — ver §52. Schema do projeto salvo vai a 10.
+25. **README em dia com os três sprints de interface** ✅ — ver §53. Sem código: o
+    README descrevia as abas anteriores e o critério de rolagem já vencido.
 
 ### 15.1 O que falta (revisado em 2026-08-09)
 
@@ -576,7 +588,7 @@ da interface) e §22.5 (as oito ferramentas sugeridas). Sobram **cinco** itens, 
 | **Compilar** o instalador | §49 | o `.iss` existe; falta o Inno Setup 6 instalado para rodar o `ISCC.exe` |
 | Assinatura de código | §28.4 | precisa de um certificado |
 | Validação em Windows sem Python | §28.4 | precisa da máquina limpa |
-| Painel sem rolagem em 1500×900 | §20.5 | **decidido não forçar**: faltam 191 px e o caminho já foi medido e reprovado (§41.2, §34.3) |
+| ~~Painel sem rolagem em 1500×900~~ | §20.5 | **cumprido** no Sprint 9.23 (§51), com a prévia expandida. Saiu desta tabela |
 
 Os quatro primeiros são dependências físicas, não decisões pendentes. O quinto é uma
 decisão registrada, com o número medido: o fluxo cabe a partir de 1.100 px de altura.
@@ -852,10 +864,14 @@ Painel lateral: Edição
    - Destacar uma ação principal por estado.
    - Exige cuidado com sinais/eventos da UI.
 
-4. **Lista única de alterações**
+4. **Lista única de alterações** ✅ — completada no Sprint 9.23, ver §51.4.
    - Consolidar substituições e apagamentos em uma visão principal.
    - Manter compatibilidade com as estruturas internas atuais.
    - Exige revisão de seleção, remoção, foco e overlays.
+   - Metade foi feita cedo (substituições e apagamentos unificados na `changes_list`)
+     e passou por pronta; a `fen_ops_list` continuou ao lado, na aba FEN, mostrando as
+     mesmas operações com a sua própria seleção. Saiu na §51.4, junto com os três
+     desvios de código que só existiam por causa dela.
 
 5. **Paleta visual de peças**
    - Substituir combo por botões de peças.
@@ -876,12 +892,19 @@ do único que não passou.
       Rótulo contextual por estado, com **um** botão em destaque de cada vez.
 - [x] Configurações avançadas não aparecem por padrão. Os dois grupos `Avançado`
       abrem recolhidos, e agora o estado que o usuário escolher persiste (§41.3).
-- [ ] O painel lateral não exige rolagem para executar o fluxo básico em tela
-      1500x900. **Não cumprido, medido:** faltam 191 px. O painel de cima fica preso
-      no seu mínimo de 538 px e o visor das abas fica com 222 px para 745 px de
-      conteúdo. O fluxo cabe a partir de **1.100 px** de altura (1.050 com a prévia
-      recolhida). Ver §41.2, incluindo por que forçar não valeria a pena.
-- [~] O fluxo básico é possível com estes passos visíveis:
+- [x] O painel lateral não exige rolagem para executar o fluxo básico em tela
+      1500x900. **Cumprido no Sprint 9.23 (§51), com a prévia expandida.** A §41.2
+      mediu isto como 191 px em falta e concluiu que não valia forçar; o caminho que
+      ela mesma apontava — mexer na divisão do painel, não no tabuleiro — resolveu em
+      dois sprints:
+      - 9.22 (§50): paleta ao lado do tabuleiro e os quatro comandos numa linha
+        devolveram 116 px. Faltavam 79.
+      - 9.23 (§51): o que não é etapa saiu da aba do fluxo (fila de conferência,
+        estado do motor, preferências, configuração do motor). Faltam 0.
+
+      O limiar de altura foi de 1.100/1.050 px para **880 px (prévia expandida) e
+      790 px (recolhida)**. Ver §51.6.
+- [x] O fluxo básico é possível com estes passos visíveis:
   1. abrir PDF;
   2. selecionar diagrama;
   3. reconhecer seleção;
@@ -889,8 +912,10 @@ do único que não passou.
   5. adicionar substituição;
   6. exportar PDF.
 
-      Todos existem e ficam habilitados no momento certo; o passo 5 exige rolagem em
-      900 px de altura, pela mesma causa do item acima.
+      Todos existem, ficam habilitados no momento certo e — desde o Sprint 9.23
+      (§51) — **cabem em 900 px de altura sem rolagem**, com a prévia expandida. O
+      passo 5 exigia rolagem, pela mesma causa do item acima, e deixou de exigir
+      pela mesma correção.
 - [x] A correção manual no tabuleiro exige menos cliques do que o combo atual.
       Paleta: 2 cliques (peça + casa). Combo: 3 (abrir, escolher, casa).
 - [x] Comandos destrutivos, como remover/limpar, têm menos destaque que ações
@@ -1139,8 +1164,11 @@ Ordenadas por (valor percebido ÷ esforço):
    de graça: o CairoSVG opcional só serve para *rasterizar* o SVG, gerá-lo é
    `python-chess` puro.
 
-7. **Modo "revisar pendências"** — fila só com as posições marcadas como
-   incertas (depende de `confidence` funcionar, §22.4).
+7. ~~**Modo "revisar pendências"**~~ — feito no Sprint 9.1, ver §29. A dependência
+   anotada aqui (`confidence` funcionar, §22.4) era real e foi o que segurou o item:
+   ele só passou a valer a pena com a confiança da **pior casa** do Sprint 7 e com
+   volume de candidatos para filtrar. Virou dois controles na fila de conferência —
+   `Só leituras incertas` e `Mais incertos primeiro` — e não um modo à parte.
 
 8. ~~**Diff de projeto**~~ — feito no Sprint 9.12, ver §40. O casamento teve de ser
    geométrico: por chave exata, todo diagrama reenquadrado sairia como removido +
@@ -3052,6 +3080,22 @@ teste em vez de espalhado pelo construtor.
 | correção manual com menos cliques que o combo | **cumprido** — 2 cliques (peça + casa) contra 3 |
 | destrutivos com menos destaque | **cumprido** — a partir deste sprint (§41.4) |
 
+> **Atualizado nos Sprints 9.22 (§50) e 9.23 (§51).** As duas linhas de rolagem
+> mudaram de veredito, e no fim as duas ficaram **cumpridas** — com a prévia
+> expandida, sem esconder nada e sem remover controle nenhum.
+> O diagnóstico desta seção continua certo — o gargalo era o bloco de cima preso em
+> 538 px —, mas a conclusão de que não valia a pena mexer nele estava presa ao
+> tabuleiro: a §34.3 tinha reprovado *encolher o tabuleiro*, e daí se leu que o topo
+> não tinha o que ceder. Tinha, e por dois lados que esta seção não olhou:
+>
+> - **em volta do tabuleiro** — a paleta e os quatro comandos somavam 136 px sem
+>   tocar no tabuleiro; o Sprint 9.22 devolveu 116 (§50);
+> - **dentro da aba de baixo** — a fila de conferência, o estado do motor e duas
+>   preferências ocupavam a aba do fluxo sem serem etapa dele; o Sprint 9.23 tirou
+>   os 79 px que faltavam (§51).
+>
+> Ver §51.6 para a tabela dos três estados.
+
 ### 41.6 Cobertura de teste
 
 `tests/test_side_panel.py` (11), a contraparte do `test_toolbar.py`.
@@ -3796,3 +3840,1168 @@ instaladores com o mesmo nome, e instalador antes do auto-teste.
 para compilar e de um Windows sem Python para instalar — as duas coisas que a §28.4
 lista e que não existem aqui. O que este sprint muda é que agora falta **só rodar**,
 não escrever.
+
+---
+
+## 50) Sprint 9.22 — despoluir o painel: a paleta ao lado, os comandos numa linha (2026-08-10)
+
+A §41.2 mediu o painel direito e parou num veredito: o fluxo básico não cabe em
+1500×900, faltam **191 px**, e forçar não valia a pena. A §15.1 registrou isso como
+decisão, não como tarefa. O que ela deixou escrito foi por onde alguém retomaria —
+"mexer na divisão do painel direito (não no widget, como a §34.3 já concluiu)".
+
+É o que este sprint faz. Três mudanças, e as duas primeiras atacam o mesmo recurso
+escasso: os 538 px em que o bloco de cima estava **preso no próprio mínimo**.
+
+### 50.1 De onde saem os 538 px
+
+Medido antes de mexer, e é a decomposição que decide tudo o que vem depois:
+
+| | px |
+|---|---|
+| rótulo `Editor de Tabuleiro` | 12 |
+| **paleta de peças**, 7 colunas × 2 linhas, *acima* do tabuleiro | **64** |
+| tabuleiro (casa de 42) | 336 |
+| **os 4 comandos**, em 3 linhas | **72** |
+| margens e espaçamentos | 54 |
+
+Os dois destacados somam 136 px e nenhum deles é o tabuleiro — que é o que a §34.3
+tentou encolher, mediu e reverteu. Essa é a razão de a §34.3 ter falhado e isto não:
+ela mexeu no widget que carrega o conteúdo, e aqui se mexe no que está em volta.
+
+### 50.2 A paleta girada, e o detalhe que não é giro
+
+7×2 acima virou 2×7 ao lado: **−70 px de altura, +70 px de largura**. A altura é o
+recurso escasso (a largura sobra: o painel tem 598 px), então a troca é boa pelo
+mesmo motivo que a da §34.3 era ruim.
+
+O agrupamento sobrevive à rotação, e é isso que a torna barata: era linha de cima
+(vazia + brancas) e linha de baixo (pretas), virou coluna da esquerda e da direita.
+
+**Mas a transposição pura estava errada**, e só se viu renderizando. Na ordem do
+`PIECE_VALUES` a casa vazia vem primeiro, e em duas colunas ela empurrava as brancas
+uma linha para baixo: o peão branco ficava ao lado do cavalo preto. Em duas linhas
+ninguém reparava; em duas colunas a leitura por tipo é a que o olho tenta fazer, e a
+falta dela salta. A casa vazia foi para o fim, e as posições passaram a ser
+explícitas em vez de aritmética de índice — o pareamento é o que importa, então ele
+tem de se ler no código.
+
+O quadro em volta (`QFrame.StyledPanel`, sem folha de estilo própria) separa "com que
+peça pinto" de "onde pinto", que a versão empilhada resolvia pela distância vertical.
+
+### 50.3 Os quatro comandos numa linha: por que três viram ícone
+
+Três linhas (72 px) viraram uma (26 px). Com os rótulos inteiros a linha **não cabe**:
+`Auto-orientar` + `Rotacionar 90°` + `Espelhar Vertical` + `Limpar Tabuleiro` pedem
+794 px, e a linha tem 422 na largura mínima do painel. Texto curto (`Auto`, `90°`,
+`Espelhar`, `Limpar`) daria 374 px — cabia nos 380 de então por 6 px, o tipo de folga
+que a primeira mudança de tema consome.
+
+Sobrou ícone. **`Auto-orientar` manteve o rótulo**, e a escolha de qual manter não é
+arbitrária: girar e espelhar o usuário confere olhando o tabuleiro, e auto-orientar é
+o único que decide sozinho — ou seja, o único que ninguém adivinha por um desenho.
+
+**Os ícones são desenhados**, e os três caminhos foram pesados pelo modo de falha,
+como a §49.3 manda fazer onde não dá para medir:
+
+| Caminho | Como falha |
+|---|---|
+| `StandardPixmap` do Qt | nenhum significa "espelhar"; o mais próximo de girar é `SP_BrowserReload`, que é *recarregar página* — diz a coisa errada |
+| glifo Unicode (`↻`, `⇅`) | depende de cobertura de fonte **que não dá para medir aqui**: sob a plataforma offscreen o `inFont()` responde `False` até para o `×` que a paleta usa e que aparece na tela. Se faltar na máquina do usuário, o botão fica **em branco** |
+| desenhar | fica feio — e é o único dos três verificável nesta máquina |
+
+E foi verificado, duas vezes, com o desenho renderizado e olhado. As duas correções
+que isso rendeu estão no ícone de espelhar: os triângulos encostavam no eixo e o
+conjunto lia como um losango; depois, o eixo tracejado e o triângulo vazado sumiam
+nos **16 px** em que o botão de fato desenha o ícone. Detalhe que só existe na
+ampliação é detalhe que não existe.
+
+Duas consequências que vieram junto, e nenhuma é opcional:
+
+- **`Limpar Tabuleiro` entrou na lista de destrutivos.** Nas três linhas o peso dele
+  se lia da posição — tinha uma linha para si. Lado a lado com girar e espelhar, ele
+  seria o quarto botão de uma série, que é a leitura que a §41.4 evita. Ganhou o
+  estilo achatado e um vão que o separa dos outros três.
+- **Girar, espelhar e limpar ganharam ação, menu e atalho** (Ctrl+R, Ctrl+M,
+  Ctrl+Shift+L). Existiam **só** como botão — sem `QAction`, sem menu, sem teclado.
+  Perder o rótulo sem isso deixaria o comando alcançável só por quem adivinhasse o
+  desenho, e é a regra que o `test_toolbar` já cobrava da barra desde a §34.
+
+### 50.4 A largura mínima deixou de ser um número escrito à mão
+
+O painel declarava `setMinimumWidth(380)`. Com a paleta ao lado o editor passou a
+pedir 452, e um número fixo teria de ser corrigido junto — o par mantido nos dois
+lados que a §45 documenta como forma de defeito. Pior: num tema com moldura mais
+grossa que a desta máquina o número certo é outro, e ninguém estaria aqui para medir.
+Agora o painel **pergunta ao próprio widget**.
+
+### 50.5 A ação principal que faltava em um estado
+
+Terceira mudança, e a de melhor relação valor/esforço: uma linha.
+
+O `_set_primary_button` já listava `Reconhecer página` e `Detectar no PDF` entre os
+candidatos desde que foi escrito. O que faltava era um estado elegê-los — e havia um
+buraco exatamente onde eles servem:
+
+| Estado | Ação principal, antes |
+|---|---|
+| sem PDF | nenhuma |
+| seleção + posição | `Adicionar substituição` |
+| só seleção | `Reconhecer seleção` |
+| há alterações | nenhuma |
+| **PDF aberto, nada feito** | **nenhuma** |
+
+O último dizia *"Selecione um diagrama na página para começar"* e não destacava nada
+— justamente o momento em que o lote responde melhor que a mão, porque um livro de
+898 páginas não se seleciona a dedo. Agora `Detectar no PDF` lidera ali, e devolve a
+liderança a `Reconhecer seleção` assim que existe seleção. Um de cada vez, que é a
+regra da §20.5.
+
+O rótulo de contexto teve de ser reescrito **curto**: a primeira versão explicava o
+lote por extenso, quebrava em duas linhas e custava 28 px — num painel onde a conta é
+de dezenas. O botão em destaque já diz o que ele faz.
+
+### 50.6 O que isso fez com o critério da §20.5
+
+Medido nas mesmas condições da §41.2 (1500 px de largura, PDF aberto, offscreen):
+
+| | antes | agora |
+|---|---|---|
+| bloco de cima | 538 px | **422 px** |
+| visor da aba `OCR` | 222 px | **338 px** |
+| falta para o passo 5 em 900 px | **191 px** | **79 px** |
+| altura mínima, prévia expandida | 1.100 px | **980 px** |
+| altura mínima, prévia recolhida | 1.050 px | **900 px** |
+
+A última linha é a que muda o veredito: **com a prévia recolhida o fluxo básico passa
+a caber na janela padrão** — estado que já persiste desde a §41.3, então quem o
+escolhe uma vez trabalha assim. Com a prévia expandida ainda faltam 79 px, e para
+esses o caminho medido continua sendo o da análise que abriu este sprint: tirar da
+aba `OCR` o que não é etapa do fluxo (o rótulo de estado do motor, 58 px, e o botão
+`Ajustar seleção`, 20 px, que já está na barra com Ctrl+B).
+
+O critério da §20.5 sai de **não cumprido** para **cumprido com a prévia recolhida**.
+
+> **Fechado no Sprint 9.23 (§51).** Os 79 px que sobravam saíram tirando da aba do
+> fluxo o que não é etapa dele, e o critério passou a valer também com a prévia
+> expandida. A tabela acima vale como registro deste sprint; a atual está em §51.6.
+
+### 50.7 Cobertura de teste
+
+`tests/test_board_editor_panel.py` (21) e uma adição ao `test_side_panel.py`. O que
+eles prendem não é o número — é a estrutura de onde ele sai, porque o número volta a
+subir sozinho se alguém empilhar de novo:
+
+- a paleta **ao lado** por geometria, não por contagem de widgets;
+- brancas e pretas em colunas separadas;
+- os quatro comandos numa faixa horizontal comum;
+- a linha cabendo na largura mínima do painel;
+- todo comando sem rótulo com ícone, dica e atalho;
+- os atalhos novos sem colidir com os antigos, e fazendo o mesmo que os botões;
+- os três ícones com tinta e **diferentes entre si**;
+- `Detectar no PDF` liderando sem seleção, e devolvendo a liderança com ela;
+- o rótulo de contexto em uma linha.
+
+**Cinco mutações conferidas**, e uma delas achou um defeito no próprio teste: voltar
+os comandos para três linhas **passava** pelo teste da linha única. A fixture entrega
+a janela sem `show()`, e sem layout calculado os quatro botões respondem `y=0` e
+compartilham a faixa por acidente. O teste agora força o layout antes de medir — e é
+por isso que a mutação existe.
+
+As outras quatro: paleta empilhada de novo, destaque do lote removido, dois ícones
+com o mesmo desenho, e um ícone sem tinta. Cada uma pega por exatamente um teste,
+salvo as de layout, que caem também no teste de altura do bloco — o que é a
+consequência, não redundância.
+
+**O que continua sem prova:** que os 422 px valem no Windows real. A medição é
+offscreen, a mesma base da §41.2 e portanto comparável com ela, mas lá o botão é mais
+alto e a aritmética muda dos dois lados. O limiar de 980/900 px precisa ser remedido
+no destino antes de a §15.1 ser reescrita.
+
+---
+
+## 51) Sprint 9.23 — repartir o painel: o que não é etapa sai da aba do fluxo (2026-08-10)
+
+O Sprint 9.22 (§50) devolveu 116 px mexendo no que estava **em volta** do tabuleiro.
+Sobravam 79 px para o fluxo caber em 900, e a análise que abriu aquele sprint já
+dizia onde estavam: em coisas que ocupam a aba do fluxo sem serem etapa dele.
+
+Este sprint tira essas coisas de lá. O critério cabe numa frase — **na aba do fluxo
+fica o que é etapa do fluxo** — e é ele que está congelado em teste, não o desenho.
+
+### 51.1 O desequilíbrio, medido
+
+| Aba | Conteúdo pedia | O que carregava |
+|---|---|---|
+| **OCR** | **745 px** | contexto, 5 etapas numeradas, a fila de conferência e um grupo `Avançado` com aparência **e** configuração do motor |
+| FEN | 417 px | FEN, avisos, metadados, e uma segunda lista das substituições |
+| Aparência | **59 px** | um único grupo recolhido |
+
+Uma aba com tudo e duas quase vazias. O visor dava 222 px para os 745.
+
+### 51.2 A fila de conferência tem aba própria
+
+Conferir um lote não é o passo 2 de editar um diagrama: é o que se faz **depois** de
+um lote, sobre dezenas de posições, e com filtro e ações em massa próprios. Estava no
+meio do fluxo como uma seção que aparecia e sumia — e quando aparecia empurrava os
+passos seguintes 324 px para baixo.
+
+Três decisões dela:
+
+- **A aba só existe quando há o que conferir.** Uma aba permanentemente vazia em quem
+  nunca roda um lote é poluição com outro nome. `setTabVisible` a mostra e a esconde.
+- **O fim do lote leva o usuário até ela**, e só aí. A troca de aba acontece na
+  *transição* de vazia para cheia, não a cada refresh: o filtro mora dentro desta aba,
+  e trocar a aba a cada atualização arrancaria o usuário do lugar no meio do trabalho
+  dele.
+- **O `candidates_section` continua sendo um widget dentro da aba**, e não a aba. É o
+  que mantém de pé o contrato da §29: o filtro pode esvaziar a lista sem fazer sumir o
+  controle que desliga o filtro. Quem esconde a seção é o mesmo código de antes; a aba
+  tem a sua própria visibilidade, que é outra coisa.
+
+**O fluxo renumerou de 1–5 para 1–4.** Manter os números antigos deixaria um buraco no
+2, e uma sequência furada não diz quantas etapas faltam — que é para o que o número
+serve. `Conferir` fica fora da numeração de propósito.
+
+### 51.3 A aba `Ajustes`, repartida por assunto e não por dificuldade
+
+O grupo `Avançado` juntava fonte Merida, whiteout, motor de reconhecimento, modelo
+local e endpoint. "Avançado" é uma categoria sobre o *usuário*, não sobre a coisa —
+e por isso cabia tudo. Agora são dois grupos numa aba própria:
+
+| Grupo | O que tem |
+|---|---|
+| **Aparência do diagrama** | padding, borda, link Lichess, coordenadas, estilo em lote, whiteout, fonte Merida |
+| **Reconhecimento** | estado do motor, aplicar sem conferir, detectar por clique, motor, modelo local, endpoint |
+
+Os dois abrem recolhidos, que é o critério da §20.5 — a aba própria **não** substitui o
+recolhimento: abri-la mostraria tudo de uma vez.
+
+Duas saídas desta aba valem por si, e são as que fecham a conta dos 79 px:
+
+- o **rótulo de estado do motor** (58 px) é um parágrafo que não se lê duas vezes;
+- **`Aplicar sem conferir`** (17 px) é preferência, não etapa.
+
+Ambos ficavam **acima** do último passo, e é só o que está acima do último passo que
+decide se o fluxo rola.
+
+### 51.4 A lista única, a metade que faltava da §20.4
+
+A §20.4 pedia "lista única de alterações". Metade tinha sido feita: substituições e
+apagamentos foram unificados entre si na `changes_list`. A outra metade continuava ao
+lado — a `fen_ops_list`, na aba FEN, mostrando **as mesmas operações** com a sua
+própria seleção, o seu botão `Remover posição` e o seu atalho de apagar.
+
+Duas listas com duas seleções custavam mais do que a duplicação: espalhavam desvios
+pelo código. Em três lugares havia a mesma pergunta escrita duas vezes — "qual
+operação está selecionada?" respondida por `_selected_operation_index()` e, se ela
+desse `None`, pela linha corrente da outra lista. Os três desvios saíram junto com a
+lista, e não por limpeza: eles **só existiam** porque havia uma segunda seleção.
+
+No lugar dela, a aba FEN diz de quem são os campos que mostra (`Substituição 001 ·
+pág 4`) e os desabilita quando o selecionado é um apagamento — que não tem FEN.
+Deixá-los mostrando os da substituição anterior seria oferecer a edição de algo que o
+usuário não está vendo.
+
+### 51.5 Dois defeitos que só a tela mostrou
+
+**Barra de rolagem horizontal na aba `Ajustes`.** O rótulo de uma `QCheckBox` **não
+quebra linha**: a largura mínima dela é a frase inteira. `Aplicar automaticamente ao
+reconhecer página/PDF` pedia 600 px num painel de 598. O que sai disso não é um rótulo
+apertado — é uma barra horizontal na aba inteira, que esconde metade dos controles
+atrás de um arrasto. O texto encurtou para `Aplicar sem conferir` e o que se perdeu
+dele foi para a dica, que é onde cabe.
+
+Este defeito **já existia** antes do sprint, na aba `OCR`; mudar de aba só o tornou
+visível. Agora há teste.
+
+**Campo de caminho mais dois botões numa linha.** Mesma causa, no bloco da fonte
+Merida. Campo numa linha e botões na seguinte.
+
+Os dois apareceram renderizando o painel e olhando — a mesma prática que a §50.3 já
+tinha cobrado dos ícones.
+
+### 51.6 O critério da §20.5, fechado
+
+| | §41.2 | Sprint 9.22 | **Sprint 9.23** |
+|---|---|---|---|
+| visor da aba do fluxo | 222 px | 338 px | **352 px** |
+| conteúdo pedido pela aba | 745 px | 749 px | **643 px** |
+| falta para o passo final em 900 px | **191 px** | 79 px | **0 px** |
+| altura mínima, prévia expandida | 1.100 px | 980 px | **880 px** |
+| altura mínima, prévia recolhida | 1.050 px | 900 px | **790 px** |
+
+**O fluxo básico cabe em 1500×900 sem rolar e com a prévia expandida** — sem pedir ao
+usuário que esconda justamente o que o app faz de melhor (§21). É o critério que a
+§41.2 mediu como impossível e que a §15.1 registrava como *decidido não forçar*.
+
+Vale dizer o que **não** foi a solução, porque a §34.3 já tinha pago por isso: não se
+encolheu o tabuleiro, não se recolheu a prévia por padrão, e nenhum controle foi
+removido do app. O que mudou foi onde as coisas moram.
+
+### 51.7 Cobertura de teste
+
+`tests/test_panel_tabs.py` (15), mais a revisão das constantes do `test_side_panel`.
+
+O teste central é o `test_the_flow_tab_holds_only_the_flow`, e o seu par
+`test_the_flow_tab_still_holds_every_step`: juntos escrevem o critério de repartição
+como código. Despoluir não pode virar esvaziar, e a segunda metade é que garante isso.
+
+Os demais: as abas nomeadas e cabendo na barra; os grupos de ajuste recolhidos; a aba
+de conferência escondida até haver fila, aparecendo com o lote, levando o usuário até
+ela **uma vez só**, sumindo quando a fila esvazia, e com a contagem no título; a lista
+única sem a segunda lista, com os campos da aba FEN seguindo a seleção e se
+desabilitando num apagamento; e nenhuma aba exigindo rolagem horizontal.
+
+**Seis mutações conferidas**, e duas foram construídas errado antes de acertar — as
+duas registradas porque a razão é a mesma: em Qt, `addWidget` **reparenta**. Mover um
+widget "de volta" para a aba do fluxo sem tirá-lo do destino é um no-op, porque o
+`addWidget` que vem depois vence. Uma mutação que não muda nada passa por qualquer
+teste, e por um instante isso se lê como cobertura.
+
+As seis, depois de corrigidas: rótulo de estado do motor de volta acima do fluxo (pega
+por 4 testes — o estrutural e os três de altura, que são a consequência); aba de
+conferência sempre visível (3); lote sem levar à aba (1); troca de aba a cada refresh
+(1); campos da aba FEN sem seguir a seleção (1); e o rótulo longo de volta na checkbox
+(1).
+
+**O que continua sem prova:** o mesmo da §50 — os números são offscreen. A base é a da
+§41.2 e portanto comparável com ela, mas no Windows real as métricas de widget mudam,
+e a fonte de lá é mais estreita que a daqui (ou seja, a régua de largura usada aqui é
+mais dura que a realidade, não mais frouxa). Os limiares de 880/790 px precisam ser
+remedidos no destino antes de a §15.1 ser reescrita.
+
+---
+
+## 52) Sprint 9.24 — a galeria vira lugar de editar, e o link Lichess vira por diagrama (2026-08-10)
+
+A galeria da §31 mostra o livro inteiro, antes e depois, e é o único lugar do app com
+essa visão. Só que ela servia para **achar** um diagrama: ajustar qualquer coisa nele
+exigia fechar a galeria, voltar ao painel e reencontrá-lo lá — percorrendo justamente
+o caminho que a galeria existe para poupar.
+
+Este sprint põe no rodapé dela os campos que valem por diagrama. E, ao fazer isso,
+esbarra numa opção que não podia ser por diagrama porque **não existia** por diagrama.
+
+### 52.1 O link Lichess era global, e isso era uma limitação e não uma escolha
+
+`include_lichess_link` era uma caixa só, para o PDF inteiro. Dois diagramas na mesma
+página não podiam discordar — e discordar é o caso normal: o diagrama de uma posição
+crítica pede link para analisar, o de um mate em dois já resolvido no texto não.
+
+O campo entrou em `OverlayOperation` com **três estados**, e não dois:
+
+| Valor | Significado |
+|---|---|
+| `None` | segue a opção global |
+| `True` | com link, mesmo que a global esteja desligada |
+| `False` | sem link, mesmo que a global esteja ligada |
+
+Dois estados teriam obrigado todo projeto antigo a nascer com um valor **escolhido por
+nós** em cada diagrama, e a global deixaria de surtir efeito em qualquer um deles —
+uma caixa que continua na tela e não faz mais nada.
+
+Por causa disso o rótulo da caixa mudou de `Incluir link Lichess no PDF exportado`
+para `Link Lichess por padrão`. Ela manda só em quem não escolheu, e prometer o resto
+seria promessa que ela não pode cumprir: desmarcá-la não tira o link de um diagrama
+que pediu para tê-lo.
+
+**Uma função decide, e todos os caminhos passam por ela.** `wants_lichess_link(op,
+global)` fica no `pdf_service`, e exportação, prévia e galeria a chamam. A regra
+escrita em três lugares seria o par mantido à mão da §45 — e aqui com um agravante: a
+§21 garante por teste que a prévia é igual ao PDF exportado byte a byte, então as duas
+divergirem quebraria a garantia mais forte que o app tem.
+
+### 52.2 Schema 10, e uma migração que não migra nada
+
+O contrato da §28.1 é claro: formato novo, número novo, função nova em `_MIGRATIONS`.
+A `_v9_to_v10` não converte coisa alguma, e **é esse o ponto** — o campo é opcional e
+ausente significa "segue a global", que é literalmente o comportamento do schema 9. Um
+projeto de 9 reaberto exporta o mesmo PDF de antes.
+
+A função existe mesmo assim porque sem ela o schema 10 seria gravado por este app e
+lido por ele como se fosse 9, e a tabela do cabeçalho das migrações deixaria de
+descrever o formato — que é exatamente o defeito que os schemas 1–7 acumularam e que a
+§28.1 criou a migração para não repetir.
+
+### 52.3 O rodapé
+
+Quatro campos numa linha, para a substituição (ou o candidato) selecionado: **vez de
+jogar**, **lance**, **link Lichess** e **borda**. Padding ficou de fora de propósito:
+são quatro números, e quatro números viram um segundo formulário, não um rodapé.
+
+Três decisões de implementação:
+
+- **O rodapé edita o mesmo objeto que a janela principal guarda.** A galeria recebe as
+  listas por referência, então não há cópia para reconciliar depois — o dado já está
+  certo quando o sinal chega do outro lado.
+- **A seleção segue o item corrente, não o clique.** Assim as setas do teclado também
+  atualizam o rodapé. Navegar a janela principal continua sendo coisa do clique, que é
+  um gesto deliberado.
+- **A legenda marca só quem discorda da global** (`· sem link`, `· com link`). Marcar
+  os dois casos não marcaria nada: o que se procura numa grade de centenas é a exceção.
+
+Do outro lado, `_on_gallery_entry_edited` atualiza o que derivava do dado e não se
+atualiza sozinho: listas, prévia, link, e **o histórico**. Sem o commit, um `Ctrl+Z`
+depois da edição desfaria a *ação anterior* e deixaria esta de pé — o pior desfazer
+possível.
+
+### 52.4 Uma miniatura editada tem de ser refeita, e sem dois workers
+
+Mudar a borda ou o link muda o "depois" do diagrama. Uma grade que continua mostrando
+o resultado antigo é pior que uma grade sem miniatura: ela **afirma** algo que deixou
+de ser verdade.
+
+O refazimento é enfileirado, nunca concorrente. Enquanto o render inicial roda, a
+chave editada só entra em `_dirty_keys`; quem esvazia a fila é o `_on_completed`. A
+justificativa que eu tinha escrito era ordem de entrega — dois workers sobre a mesma
+chave entregam fora de ordem e o mais velho pode vencer. A mutação mostrou que é pior:
+sem a guarda, **o processo morre**.
+
+### 52.5 O lote, e por que ele não é "os campos valem para a seleção"
+
+Um livro tem centenas de diagramas. Decidir link e borda um a um é o mesmo gargalo
+que a §29 resolveu para a conferência, e a resposta aqui é a mesma: agir sobre um
+conjunto. A grade passou a aceitar seleção múltipla (Ctrl, Shift, Ctrl+A).
+
+**O desenho recusado primeiro.** O óbvio seria os campos do rodapé passarem a valer
+para a seleção inteira. Recusado: um lote não pode ser efeito colateral de mexer num
+campo. Quem tivesse o livro todo selecionado e encostasse no spin do lance carimbaria
+"lance 5" em trezentas posições sem ter pedido nada.
+
+O que entrou são **dois gestos explícitos**, que é a disciplina da §23 — ação em massa
+declara o alcance antes de agir:
+
+1. escolher os diagramas (a seleção);
+2. marcar **quais campos** o lote toca (as caixas `Vez`, `Lance`, `Link`, `Borda`).
+
+Nenhuma caixa vem marcada, então o botão nasce desabilitado. E o botão diz o número:
+`Aplicar aos 12`.
+
+`Lance` está entre as caixas por simetria, mas é o que menos faz sentido em lote —
+cada diagrama tem o seu. `Link` e `Borda` são o motivo da linha existir: são as
+escolhas que valem para um capítulo inteiro.
+
+**Um defeito de desenho meu, achado montando o teste do desfazer.** Com vários
+selecionados, mexer no rodapé para preparar os valores **editava de passagem o item
+corrente** — porque o rodapé escreve na hora, que é o certo quando há um só. O usuário
+ficava com dois passos de desfazer para o que fez como um, e o primeiro `Ctrl+Z`
+desfazia o lote deixando um diagrama alterado no meio da seleção.
+
+A correção: com dois ou mais selecionados o rodapé **para de escrever ao vivo** e passa
+a ser um formulário de valores; quem grava é o botão. O título do grupo muda junto
+(`3 diagramas selecionados`), porque a função do rodapé mudou e um rótulo parado
+prometeria o contrário.
+
+**Duas consequências que vieram com a seleção múltipla:**
+
+- **Ctrl e Shift não navegam.** São gestos de seleção. Sem a guarda, montar uma
+  seleção de 20 diagramas levaria a janela principal a 20 páginas pelo caminho — 20
+  renders para chegar onde nem se queria ir.
+- **Um lote é um passo de desfazer.** Sinal próprio (`batch_edited`), um commit só,
+  com a contagem no rótulo. N commits fariam o usuário apertar `Ctrl+Z` trezentas
+  vezes para voltar de uma decisão que ele tomou com um clique — na prática, o mesmo
+  que não poder desfazer.
+
+### 52.6 O filtro, e a regra que ele obriga a cumprir
+
+`Ctrl+A` já pegava tudo; o que faltava era pegar **um pedaço** sem rolar e
+Shift+clicar por 90 páginas. Três recortes, que são os que se pedem na prática:
+
+| Recorte | Para quê |
+|---|---|
+| faixa de páginas | o capítulo |
+| tipo | o que já está aplicado × o que ainda é candidato |
+| escolha de link | achar as exceções — num livro de centenas, agulha em palheiro |
+
+**O filtro é de vista, não de trabalho.** As miniaturas de todos continuam sendo
+renderizadas: o filtro muda a qualquer momento, e um render que só cobrisse o recorte
+atual teria de recomeçar a cada mudança.
+
+**A regra da §23, que aqui é obrigatória e não opcional.** Em Qt, `setHidden` **não**
+deseleciona. Um item filtrado para fora e ainda selecionado entraria no lote sem
+aparecer na tela — o usuário leria "aplicado em 2" e teria mexido em 6, descobrindo o
+contrário só no PDF exportado. São dois mecanismos, de propósito:
+
+1. `_apply_filter` deseleciona o que esconde;
+2. `_selected_keys` ignora o que está escondido.
+
+Qualquer um sozinho bastaria, e é por isso que uma mutação em cada um passa pelo teste
+do outro — cada um tem o seu teste direto. O segundo fica no caminho por onde o lote
+de fato passa, para que um caminho novo que esconda sem deselecionar não vire um lote
+que mexe no invisível.
+
+E a outra metade da regra: o aviso do lote diz quantos ficaram de fora
+(`4 fora do filtro não foram tocados`), como a §23 faz com os candidatos.
+
+**Duas decisões menores, ambas registradas porque a alternativa é defensável:**
+
+- **Faixa invertida é lida como o usuário quis.** Quem digita "40 a 12" quis 12 a 40;
+  recusar transformaria um engano de digitação numa grade vazia.
+- **O filtro não se reaplica depois de uma edição.** Filtrar por "sem link" e então
+  marcar "padrão" faria a seleção inteira sumir no instante do clique. A legenda se
+  atualiza no lugar, o que mostra o que aconteceu sem tirar da tela o que se está
+  olhando. Quem quiser o recorte novo mexe no filtro.
+
+### 52.7 Cobertura de teste
+
+`tests/test_gallery_footer.py` (44). **Quinze mutações**, e quatro acharam buracos
+reais — três no código, uma no próprio teste:
+
+**A mutação que achou o buraco no código.** Trocar `_optional_bool` por um `bool(...)`
+distraído — colapsando `None` em `False` — **passava pela suíte inteira**. A rede da
+§45 confere que um campo *preenchido* sobrevive ao round-trip; ela não olha o campo
+*ausente*. E é aí que estaria o estrago: todo projeto de schema 9 reabriria com cada
+diagrama recusando o link **de propósito** e imune à opção global, sem nada quebrar e
+sem nada avisar, exportando um PDF diferente do que o usuário já tinha conferido. O
+teste que faltava agora existe, e é o mais importante do arquivo.
+
+**A mutação que achou o buraco no teste.** Remover a guarda `_loading_footer` — que
+impede o preenchimento de gravar de volta no objeto que acabou de ser lido — não era
+pega, porque o teste usava uma operação recém-criada: `setCurrentIndex(0)` num combo
+que já está em 0 não emite sinal nenhum. Agora todos os valores do teste diferem do
+padrão do widget, e é isso que o torna um teste.
+
+**Os outros dois buracos de código** apareceram montando os testes, não escrevendo a
+funcionalidade — que é o argumento inteiro a favor de escrevê-los:
+
+- **o rodapé escrevendo ao vivo com vários selecionados** (§52.5), achado pelo teste
+  do desfazer ponta a ponta;
+- **o grupo do rodapé habilitado só pelo item corrente** (§52.5), achado porque
+  `Ctrl+A` não define um item corrente: o botão do lote aparecia e não se deixava
+  clicar, no caminho mais natural de todos.
+
+As outras onze: ignorar a escolha por diagrama (pega por 5), legenda sem consultar a
+operação viva (2), worker concorrente (1, e derruba a suíte), `False` explícito
+confundido com ausência (1), lote ignorando as caixas (1), lote pegando o livro em vez
+da seleção (1), um sinal por item em vez de um do lote (2), Ctrl+clique voltando a
+navegar (1), esconder sem deselecionar (1), `_selected_keys` sem a rede redundante (1),
+e faixa de páginas sem tolerar a ordem invertida (1).
+
+**O que continua sem prova:** nada de novo. Os testes de PDF exportado abrem o arquivo
+e leem os links de verdade, então a cadeia inteira — rodapé → objeto → `wants_lichess_link`
+→ anotação no PDF — está coberta ponta a ponta.
+
+---
+
+## 53) Sprint 9.25 — o README que descrevia a interface anterior (2026-08-11)
+
+O README manda: *"O plano técnico é atualizado no mesmo commit que a implementação."*
+Ele não diz nada sobre si mesmo, e foi exatamente aí que a conta ficou aberta. Os
+Sprints 9.22, 9.23 e 9.24 mexeram na interface por três commits seguidos; o plano
+acompanhou os três, o README não acompanhou nenhum.
+
+### 53.1 O tipo de erro que isso vira
+
+Documentação atrasada não envelhece igual em todo lugar. Um parágrafo que descreve uma
+funcionalidade **que ainda existe** só fica incompleto. Um que dá um **caminho de menu**
+manda o leitor a um lugar que não existe mais — e quem segue o passo a passo não conclui
+que o texto está velho, conclui que não achou. As quinze referências abaixo eram todas
+desse segundo tipo:
+
+| O README dizia | Onde de fato está | Quantas vezes |
+|---|---|---|
+| aba `OCR` | aba `Diagrama` | 3 |
+| `OCR` > `Avancado` | `Ajustes` > `Reconhecimento` | 5 |
+| aba `Aparência` / `Aparencia` | aba `Ajustes` | 5 |
+| seção `2 · Conferir` | aba `Conferir` | 2 |
+
+Em três das cinco da terceira linha, o grupo dentro da aba também mudou de nome:
+`Ajustes avançados` virou `Aparência do diagrama`.
+
+Mais dois rótulos que mudaram de nome junto com a coisa que nomeiam:
+`Incluir link Lichess no PDF exportado` → `Link Lichess por padrão` (§52.1), e
+`Aplicar automaticamente ao reconhecer página/PDF` → `Aplicar sem conferir`.
+
+### 53.2 A seção que estava pior era a que tinha número
+
+`O painel lateral` afirmava que o fluxo básico não cabe em 900 px, que
+`Adicionar substituição` fica abaixo da dobra, e que o mínimo é 1.100 px de altura.
+Estava certo quando foi escrito e passou a estar errado no Sprint 9.23 — que fechou
+justamente esse critério (§51.6), levando o mínimo a 880 px.
+
+**Um número errado é pior que um número ausente**, porque ele é a parte do texto em que
+o leitor confia sem verificar. Alguém decidindo em que tela usar o app leria 1.100 px e
+concluiria que a máquina dele não serve. A seção foi reescrita com a tabela de abas, a
+paleta ao lado do tabuleiro (§50) e os três números novos.
+
+### 53.3 A galeria: três seções que não existiam
+
+O Sprint 9.24 inteiro estava fora do README — o rodapé de edição, o lote e o filtro. A
+parte que mais precisava de texto é a que não se descobre clicando: o
+`Link Lichess` de **três** estados. `Padrão` não é um "não" com outro nome, e a caixa
+global não vence quem escolheu. Quem supuser dois estados vai desmarcar a caixa global
+esperando tirar o link de todo mundo, e não vai tirar de quem pediu para tê-lo.
+
+### 53.4 Três coisas achadas pelo caminho
+
+- **O mapa de módulos tinha três buracos:** `migrations.py`, `types.py` e
+  `resources.py` nunca entraram na árvore de `Estrutura principal`. O primeiro é o que
+  mais incomoda: outra seção do próprio README manda escrever a migração nele.
+- **A §52 pulava de 52.4 para 52.6.** Não havia §52.5, e duas citações no código
+  (`gallery.py`) e nos testes apontavam para números que a seção não usava. Renumerado
+  para 52.1–52.7, com as quatro citações corrigidas junto — a alternativa seria inventar
+  uma §52.5 para tapar o buraco, o que é escrever texto para servir à numeração.
+- **O item 7 da §22.5 seguia sem tachado.** Foi feito no Sprint 9.1, e a §29 abre
+  dizendo isso com todas as letras. A §15.1 já dava a lista por fechada, então a §22.5
+  contradizia as duas. Agora os oito itens estão tachados.
+
+### 53.5 Sem cobertura de teste, e por quê
+
+Nada aqui é código: 653 testes antes, 653 depois, e o `ruff --select F` limpo. Vale
+dizer o que **não** se ganhou com isso — não existe teste que pegue um caminho de menu
+que deixou de existir no README, e é por isso que estas nove referências sobreviveram a
+três sprints. O que evita a repetição é o mesmo hábito que já protege o plano: o README
+faz parte do commit que muda a interface, não de uma varredura depois.
+
+---
+
+## 54) Sprint 9.26 — o navegador: um diagrama por vez, e etiquetas com retorno (2026-09-06)
+
+O pedido foi curto: *"uma janela pra eu navegar pelos diagramas reconhecidos, com
+campos para alterar as tags — principalmente o número do lance e a vez de jogar —
+mostrando o diagrama do PDF e como ele vai ficar"*. Metade disso já existia na
+galeria (§52), e é justamente a metade que não resolve o problema.
+
+### 54.1 O que a galeria não podia fazer
+
+A galeria responde **"onde estão os diagramas deste livro?"**. Ela é uma vista de
+conjunto: 150 px por lado, oito por tela, e um rodapé que edita o selecionado. O
+tamanho é uma escolha, não um limite — ninguém precisa de mais que isso para
+*reconhecer* um diagrama numa grade.
+
+Conferir as **etiquetas** é a pergunta oposta, e 150 px não a respondem:
+
+| O dado | Onde ele está | O que a grade mostra |
+|---|---|---|
+| número do lance | impresso ao lado ou abaixo do tabuleiro, corpo 8 | um borrão |
+| vez de jogar | na legenda ("as brancas jogam") | um borrão |
+
+Preencher esses dois campos exige **ler a página**. Daí a janela nova: um diagrama
+por vez, no maior tamanho que a janela der, os campos logo abaixo, e `Alt+Esquerda`
+/ `Alt+Direita` para andar na fila. O campo de posição pula direto para o n-ésimo —
+num livro de 300, voltar ao 147 depois de chegar ao 260 não pode ser 113 cliques.
+
+Ela **abre no diagrama que já estava selecionado** na janela principal. Reabrir
+sempre no primeiro seria pedir para reencontrar à mão, no navegador, o que a janela
+principal já tinha na mão.
+
+### 54.2 As etiquetas não mudam um pixel — e por isso a janela mostra a FEN
+
+Isto é o achado do sprint, e mudou o desenho da janela. `side_to_move` e
+`fullmove_number` **não entram no desenho do tabuleiro**: o render usa só o
+`piece_placement`. O que sai delas no PDF é
+
+* a FEN do link Lichess (`operation_full_fen` → `operation_lichess_url`),
+* a coluna do relatório (§26),
+* o `indice.csv` da exportação de diagramas isolados (§39).
+
+Ou seja: uma janela que mostrasse **só** o par de imagens — que é o que o pedido
+descreve — deixaria o campo mais importante sem retorno nenhum. O usuário trocaria
+`Vez de jogar` e veria exatamente a mesma figura dos dois lados, sem nada que
+confirmasse que a troca pegou. As duas imagens continuam ali, porque é por elas que
+se decide se a *substituição* está certa; mas sozinhas elas não servem à pergunta
+que a janela existe para responder.
+
+Por isso o painel de baixo tem três linhas além dos campos:
+
+| Linha | O que ela prova |
+|---|---|
+| `FEN final` | a string exata que vai para o link, o relatório e a exportação |
+| Link | se o PDF vai levar link, e para onde |
+| Legalidade | a auditoria da §37, feita com o lado a jogar escolhido |
+
+A terceira é a que faz diferença de verdade. A auditoria testa **os dois lados** e
+sabe distinguir "a posição é impossível" de "a posição só é ilegal com este lado" —
+e o segundo caso vira a frase `o lado a jogar provavelmente está trocado`. Como o
+app preenche `brancas` por padrão em todo diagrama reconhecido, esse é o erro mais
+comum que existe neste campo, e agora ele é apontado no lugar onde se corrige.
+
+**Uma cópia a menos.** `_operation_full_fen` e `_operation_lichess_url` eram
+privadas em `pdf_service`. Escrever a regra de novo no navegador seria a terceira
+cópia (a segunda está em `app.py`, com a sua própria codificação de URL) e o par
+mantido à mão que a §45 documenta: no dia em que o campo `halfmove` deixasse de ser
+fixo, a janela passaria a exibir uma FEN que o PDF não usa. As duas viraram
+públicas, e o navegador chama as mesmas funções da exportação. A cópia de `app.py`
+continua lá — é dívida antiga, e trocá-la não é assunto deste sprint.
+
+### 54.3 A rajada do spinbox tinha de virar um passo só
+
+O rodapé da galeria emite um sinal por mexida, e cada sinal vira um `commit` no
+histórico. Arrastar o spin do lance de 1 até 40 empilha 39 passos de desfazer — num
+histórico que guarda 60. Duas mexidas assim e o resto da sessão saiu da pilha.
+
+No navegador o sinal é **atrasado** em 300 ms (o mesmo padrão do
+`_style_history_timer` da janela principal): uma mexida vira um passo, que é como o
+usuário a fez. O que **não** é atrasado é o texto — FEN, link e legalidade se
+atualizam a cada mexida. Fazê-los esperar pelo render seria esconder a única
+resposta imediata que estes campos têm.
+
+A edição pendente é entregue em três momentos, e nunca perdida: ao navegar para
+outro diagrama, ao fechar a janela, e no disparo do timer. Sem o primeiro, o sinal
+sairia com a chave certa mas o render que vem junto seria do diagrama errado; sem o
+segundo, fechar a janela no meio de um ajuste deixaria a alteração aplicada no
+objeto e **fora** do histórico — e o `Ctrl+Z` seguinte desfaria a ação anterior,
+deixando esta de pé.
+
+### 54.4 As listas trocam por baixo, e a galeria não se defende disso
+
+Desfazer não muta as listas: `_apply_history_snapshot` as **substitui** por cópias
+restauradas (`self.operations = snapshot.restore_operations()`). Quem guardou a
+referência antiga — a galeria guarda, e o navegador também — passa a editar uma
+lista órfã: a alteração é gravada num objeto que ninguém mais lê, sem erro nenhum,
+que é o pior jeito de sumir.
+
+O navegador tem `rebind()` para isso, e a janela principal o chama no fim de todo
+`_apply_history_snapshot`. Dois detalhes que não são óbvios:
+
+* a posição é preservada **pela chave**, não pelo número. Um desfazer que remove o
+  diagrama 4 faz o 7 virar o 6; ficar no "sétimo" seria ficar noutro diagrama.
+* a edição pendente é **descartada** em vez de entregue. O objeto que ela tocou
+  acabou de sair do projeto; anunciá-la mandaria a janela principal comitar um
+  índice que agora aponta para outro lugar.
+
+Abrir outro PDF fecha o navegador, pelo mesmo motivo: ele ficaria renderizando o
+caminho antigo e editando diagramas que não são mais do projeto.
+
+**A galeria continua sem essas duas defesas.** É defeito anterior a este sprint, e
+consertá-lo mexe num código com testes próprios — fica anotado aqui em vez de
+entrar de carona.
+
+### 54.5 O que foi reusado, e os dois parâmetros que faltavam
+
+Nada de render novo. O `GalleryWorker` ganhou `zoom` e `margin_ratio` (com os
+padrões da grade, então galeria e estilo em lote não mudam de comportamento), e o
+navegador o usa com 3.0 e 0.20 — mais pixel porque a imagem é grande, e mais margem
+porque aqui é preciso ler o que o livro escreveu **em volta** do tabuleiro, além do
+rótulo `Lichess` que a exportação põe logo abaixo. O contrato do Sprint 5.1 é o
+mesmo: o worker abre o seu próprio documento a partir do caminho, e o que cruza a
+fronteira são `bytes`.
+
+Um item por render, e nunca dois workers ao mesmo tempo — `refresh_now` cancela e
+espera o anterior, como o estilo em lote (§36). Um resultado que chega depois de a
+fila ter andado é descartado pela chave: sair correndo pela fila não pode pintar o
+diagrama anterior por cima do atual.
+
+O `BeforeAfterWidget` ganhou títulos configuráveis (`No PDF (como está)` / `Como vai
+ficar`) e um modo expansivo. No painel lateral a altura é fixa de propósito — o
+widget divide espaço com o editor de tabuleiro e a lista, e crescer empurraria os
+dois para fora da tela. Numa janela cujo assunto *é* o diagrama, a conta se inverte.
+Os rótulos usam `QSizePolicy.Ignored` nas duas direções, e não `Expanding`: com
+`Expanding` o `sizeHint` passaria a ser o tamanho do pixmap, o layout cresceria, e a
+imagem cresceria atrás — um laço.
+
+### 54.6 Duas coisas que só a tela mostrou
+
+* **`Close` em inglês.** O texto padrão do `QDialogButtonBox` sai no idioma do
+  sistema; numa máquina em inglês a janela inteira em português terminava num
+  `Close`. Trocado por `Fechar` (a galeria tem o mesmo problema, e continua com ele
+  pelo mesmo motivo da §54.4).
+* **Enter acionava um botão.** Num `QDialog` todo `QPushButton` nasce `autoDefault`,
+  e o campo com foco ao abrir é o da posição. Enter depois de digitar `147`
+  acionaria o primeiro botão da janela — `Anterior` no melhor caso, `Fechar` no
+  pior. Agora nenhum botão responde ao Enter; o spin já aplica o valor enquanto se
+  digita.
+
+### 54.7 Cobertura de teste
+
+`tests/test_navigator.py`, 34 testes; a suite vai de 653 para 687, e o
+`ruff --select F` continua limpo.
+
+| Grupo | O que fica provado |
+|---|---|
+| Navegação | abre no primeiro da ordem de leitura; `Anterior`/`Próximo` andam e desabilitam nas pontas; o spin pula; abre na chave pedida; candidato se anuncia como não aplicado, com a confiança; janela vazia se explica; Enter não aciona botão |
+| Etiquetas | os campos editam o objeto vivo; navegar preenche sem gravar de volta; a rajada vira um sinal só; sair do diagrama e fechar a janela entregam a edição pendente |
+| Retorno | a FEN exibida é a `operation_full_fen` da exportação; a linha do link distingue "o PDF vai levar" de "sem link no PDF"; `Padrão` segue a global; a auditoria acusa o lado trocado e cala quando ele é corrigido |
+| Render | o par chega e os dois lados diferem; um item por vez; resultado de outro diagrama é ignorado; fechar não deixa `QThread` viva; parar duas vezes é inócuo |
+| Listas trocadas | `rebind` reaponta a edição para a lista nova; preserva o diagrama e não o número; descarta a edição pendente; lista vazia se explica |
+| Integração | recusa sem PDF e sem diagramas; abre no que está selecionado; a edição vira um passo de histórico com rótulo próprio; desfazer reaponta a janela aberta; `Ir para este diagrama` leva a janela principal à página; abrir outro PDF e fechar o app fecham o navegador |
+
+---
+
+## 55) Sprint 9.27 — um JSON por reconhecimento, ao lado do livro (2026-09-06)
+
+O pedido: *"quando eu clicar em Reconhecer página ou Detectar no PDF, gostaria que
+fosse salvo automaticamente um arquivo JSON do reconhecimento para eu não perder a
+detecção feita"*.
+
+A primeira reação certa é desconfiar do pedido: o autosave (Sprint 5.3) existe há
+muito tempo, grava o projeto inteiro a cada dois minutos e ao fechar, e o
+cabeçalho dele começa com "o objetivo do sprint é nunca perder trabalho". Se ele
+cumprisse isso aqui, o pedido seria redundante.
+
+### 55.1 As três brechas do autosave, que não são defeitos dele
+
+| O que o autosave faz | Por que não cobre este medo |
+|---|---|
+| grava **um** arquivo por livro e sobrescreve | o reconhecimento de ontem deixa de existir depois do de hoje |
+| grava no diretório do app, com nome derivado de hash | achar o arquivo à mão é possível; ninguém faz isso no susto |
+| grava **o estado atual** | descartar a fila de candidatos por engano e esperar dois minutos apaga a detecção do disco — pelo próprio mecanismo que existe para não perder nada |
+
+A terceira é a que fecha a questão. O autosave é um espelho do presente; o que o
+usuário pediu é um **registro do passado**, que sobreviva ao próximo erro dele. Um
+mecanismo não pode ser os dois.
+
+### 55.2 O arquivo é um projeto, e não uma lista de detecções
+
+A leitura literal do pedido — "um JSON do reconhecimento" — daria um arquivo com
+as detecções daquela execução e nada mais. Seria um registro para **ler**, não para
+usar: recuperar exigiria digitar de volta, ou um importador novo com o seu próprio
+conjunto de decisões (o que fazer com o que já está aberto? mesclar? substituir?
+e se o PDF for outro?).
+
+O que se grava é o **projeto inteiro** no instante seguinte ao reconhecimento, no
+mesmo formato de `Salvar projeto`. Recuperar é `Arquivo` > `Carregar projeto`.
+Zero código novo de leitura, zero formato novo, e o usuário recupera também os
+apagamentos e as posições de estudo que já tinha — que um arquivo "só das
+detecções" teria jogado fora no caminho de volta.
+
+O que o formato de projeto não guarda entra como **uma** chave a mais no topo:
+
+```json
+"reconhecimento": {
+  "quando": "...", "origem": "livro", "destino": "candidatos",
+  "paginas": "1-898", "encontrados": 312, "ignorados": 7,
+  "grandes_descartadas": 3, "falhas": 1, "cancelado": false, "motor": "hybrid"
+}
+```
+
+Uma chave só, e não dez espalhadas: o leitor de projeto ignora o que não conhece,
+e um bloco único não tem como colidir com campo nenhum do `ProjectState`. Ainda
+assim `save_project_state` **recusa** um `extra` que colida com um campo do
+projeto, em vez de deixar vencer — quem chamasse assim estaria gravando um projeto
+diferente do `state` que passou, e o erro só apareceria ao recarregar o arquivo.
+
+### 55.3 As três decisões que foram do usuário, não minhas
+
+Onde o arquivo cai e quantos arquivos existem mudam o que aparece no disco dele,
+então foram perguntadas antes de escrever código. As respostas:
+
+* **ao lado do PDF** — o mesmo hábito que a exportação automática já tem com o
+  `_hq.pdf`. O módulo do autosave diz, com todas as letras, que evita "espalhar
+  `.json` pelas pastas de livros do usuário"; aqui a conta é outra, porque o ponto
+  do arquivo é ser **achado**;
+* **um arquivo por reconhecimento**, com data e hora no nome. Sobrescrever é
+  exatamente o defeito que o pedido aponta no autosave;
+* o formato (projeto + bloco) foi decisão minha, pelo motivo da §55.2.
+
+### 55.4 O que grava, e o que não grava
+
+Grava quando `encontrados > 0`. Um clique que não achou nada não tem o que perder,
+e gravar assim mesmo encheria a pasta do livro de arquivos que só dizem "nada
+aqui" — o custo de um arquivo por clique cai sobre quem varre página por página,
+que é justamente quem mais clica.
+
+Um lote **cancelado grava igual**, e é o caso que mais importa: quem para na
+página 400 tem 400 páginas de trabalho para não perder. O bloco registra
+`cancelado: true` e a faixa que de fato foi varrida, não a que se pediu.
+
+`Reconhecer seleção` ficou de fora: é uma detecção por vez, feita com a mão na
+seleção, e o usuário nomeou os outros dois. Acrescentá-lo é uma linha, no dia em
+que ele pedir.
+
+### 55.5 Falhar ao gravar não pode custar a detecção
+
+A pasta do livro pode ser de rede, só de leitura, ou estar cheia — e nenhuma
+dessas é razão para perder o que já está na tela. A gravação é embrulhada, o erro
+vira uma linha de log e um pedaço da mensagem de status
+(`| JSON do reconhecimento NÃO gravado: ...`), e o reconhecimento segue.
+
+`_save_recognition_snapshot` devolve **texto**, e não o caminho, por causa disso:
+quem chama já monta uma frase de status e (no lote) um modal. Uma segunda mensagem
+escrita de dentro do método apagaria a primeira, e qual das duas ficaria na tela
+dependeria da ordem das chamadas — que é o tipo de acoplamento que ninguém lembra
+ao mexer no código meses depois.
+
+A gravação em si é a atômica do §43 (temporário, `fsync`, `os.replace`), pela
+razão daquele sprint e com mais força: o arquivo é escrito logo depois de um lote
+de oito minutos, e um JSON truncado no lugar dele seria perder duas vezes.
+
+### 55.6 Cobertura de teste
+
+`tests/test_recognition_snapshot.py`, 18 testes; a suíte vai de 687 para 705.
+
+| Grupo | O que fica provado |
+|---|---|
+| Nome e lugar | cai na pasta do livro, com o nome do livro, o botão de origem e a data/hora; o segundo do mesmo segundo ganha `-2`, e o terceiro `-3` |
+| Conteúdo | o arquivo **carrega de volta** como projeto, com operações, candidatos e apagamentos; o bloco de metadados traz origem, faixa de páginas, contagens e `cancelado`; a chave a mais não atrapalha o leitor; `extra` colidindo com campo do projeto é recusado; não sobra `.tmp` |
+| Reconhecer página | grava um arquivo, com `origem=pagina` e a página certa; a barra de status diz onde salvou; sem detecção não grava nada; a caixa desligada não grava e o reconhecimento continua valendo; o segundo reconhecimento não apaga o primeiro; falha de gravação não custa a detecção e aparece na status |
+| Detectar no PDF | grava com `origem=livro` e a faixa varrida; um lote sem detecção não grava nada |
+
+Três dublês de `tests/test_autosave.py` precisaram do parâmetro novo
+(`save_project_state(path, state, extra=None)`). Trocar a assinatura e deixar o
+dublê para trás é o que faz um teste passar a exercitar uma função que não existe
+mais — foram corrigidos no mesmo commit.
+
+---
+
+## 56) Sprint 9.28 — o critério da §20.5 é do Windows, e o teste passa a dizer isso (2026-09-06)
+
+> **Corrigida pela [§57](#57-sprint-929--o-teste-media-a-janela-antes-de-ela-existir-2026-09-06).** A comparacao entre Windows e Ubuntu
+> que sustenta esta secao usou medicoes tiradas em momentos diferentes da vida da
+> janela; o `880 px` que ela trata como verdade era leitura feita cedo demais. O
+> que segue fica como registro do raciocinio, nao como conclusao valida.
+
+O PR que levou os Sprints 9.22 a 9.27 para o CI foi o primeiro a rodar aquele
+código fora desta máquina, e os três testes de altura do painel falharam nos dois
+jobs de Ubuntu — nas duas rodadas, com números idênticos.
+
+### 56.1 A primeira pergunta é se foi o commit da vez
+
+Não era, e isso foi **medido** antes de qualquer conserto. O script rodou a
+`MainWindow` e leu a mesma quantidade que o teste lê
+(`btn_add.mapTo(...)` mais `tab.viewport().height()`) em `982ddd4` e em `e0cc33d`:
+
+```
+ANTES:   pede=330 visor=332 | pede=330 visor=352 | pede=242 visor=242
+DEPOIS:  pede=330 visor=332 | pede=330 visor=352 | pede=242 visor=242
+```
+
+Número idêntico. O navegador (§54) não acrescenta um pixel à aba do fluxo — ele é
+uma janela separada e uma ação de menu.
+
+Vale registrar o hábito, porque ele se paga: diante de um CI vermelho, a
+tentação é consertar o sintoma no código que se acabou de escrever. Comparar a
+medição com o pai do commit custa dois minutos e responde a pergunta certa —
+*isto já estava assim?* — antes de mexer em qualquer coisa.
+
+### 56.2 O que a medição dos dois lados mostrou
+
+| | pede | visor | folga |
+|---|---|---|---|
+| Windows, 880 px | 330 | 332 | 2 px |
+| Windows, 790 px recolhida | 242 | 242 | **0 px** |
+| Ubuntu (CI), 880 px | 350 | 326 | −24 px |
+| Ubuntu (CI), 900 px | 350 | 346 | −4 px |
+
+Os mesmos widgets, o mesmo código: no Ubuntu do CI eles saem ~20 px mais altos, e
+o visor ainda dá 6 px a menos. Os limites da §50/§51 foram calibrados aqui, no
+Windows, e nunca tinham rodado no CI — a branch só foi empurrada no Sprint 9.26.
+
+A folga de 0 px na linha de baixo diz o resto: o critério não estava com margem
+sobrando em lugar nenhum. Ele foi espremido até o último pixel disponível, o que é
+o certo para um critério de aceite e péssimo para um número que se pretende
+universal.
+
+### 56.3 As três saídas, e por que esta
+
+| Saída | Por que não / por que sim |
+|---|---|
+| afrouxar o limite até a métrica do Ubuntu | o número deixaria de significar "cabe na tela do usuário" e passaria a significar "cabe na pior métrica que conheço" — um critério sobre nada |
+| achar os 24 px no layout do Linux | cumpre o critério de verdade, mas é trabalho de layout com orçamento incerto, para uma plataforma que não é a do produto |
+| **cobrar o critério só no Windows** | é o que o critério sempre foi; o que faltava era o teste dizer isso |
+
+A escolha foi do dono do projeto. Vale notar que ela não é uma concessão: o README
+abre dizendo que Windows é a plataforma prioritária, o instalador do §49 existe só
+para ela, e a §20.5 fala de "1500x900" como quem fala de uma tela concreta. Um
+teste que afirmasse o mesmo no Ubuntu estaria afirmando algo falso.
+
+### 56.4 O que entrou
+
+Um marcador só, `somente_windows`, nos três testes — e o comentário dele carrega a
+tabela da §56.2 inteira. É a diferença entre um `skipif` que parece preguiça e um
+que registra uma medição: quem chegar depois não precisa refazer a conta para
+saber de quanto é o buraco (24 px) nem se ele é conhecido.
+
+A razão do skip aparece no relatório do pytest, então o Ubuntu não fica em
+silêncio — ele diz, em cada rodada, que aqueles três não foram cobrados e por quê.
+
+O README ganhou o mesmo aviso ao lado da tabela de medições: os números são do
+Windows, no Ubuntu faltam 4 px em 900, e é lá que o critério é cobrado.
+
+### 56.5 O que continua em aberto
+
+Achar os 24 px continua sendo a saída boa, e não foi feita. Fica escrito aqui para
+não virar dívida esquecida: enquanto ela não vier, `Adicionar substituição` fica
+abaixo da dobra numa janela de 900 px no Linux, e o usuário de lá rola o painel —
+que é exatamente o incômodo que a §20.5 existe para eliminar.
+
+### 56.6 Cobertura de teste
+
+Nada de código novo, então nada de teste novo: 705 no Windows, 702 no Linux com os
+três pulados. O que **foi** verificado, e não por inspeção do código:
+
+* no Windows os três continuam rodando e passando (não viraram skip por engano);
+* fora do Windows os três pulam com a razão impressa — provado rodando o pytest
+  com `sys.platform` trocado por um plugin de uma linha, em vez de esperar o CI
+  dizer.
+
+---
+
+## 57) Sprint 9.29 — o teste media a janela antes de ela existir (2026-09-06)
+
+**Esta seção corrige a §56.** A conclusão de lá — "o critério é do Windows, e no
+Ubuntu os mesmos widgets pedem ~20 px a mais" — foi tirada de uma comparação
+inválida, e o `skipif` que ela produziu escondia um defeito em vez de registrar
+uma diferença de plataforma. O que segue é o que a medição mostrou depois.
+
+### 57.1 O sintoma que não fechava
+
+Prender os três testes ao Windows deixou os dois jobs de Ubuntu verdes e o de
+**Windows vermelho** — no mesmo commit que só acrescentava um marcador de skip. E
+com um número novo: `em 880 px o fluxo pede 344 px e o visor dá 332`, onde esta
+máquina lia 330.
+
+Duas coisas não fechavam. O código do app era byte a byte o do commit anterior,
+que passara no Windows. E a §56 tinha acabado de afirmar que o Windows era o lugar
+onde a conta fechava.
+
+Quando a explicação que se acabou de escrever não cobre o fato novo, o erro está
+na explicação.
+
+### 57.2 A medição, agora no relógio
+
+Instrumentando a mesma janela de 880 px e imprimindo cada mudança da leitura:
+
+```
+t=  24.7ms  pede 330
+t= 131.6ms  pede 344
+```
+
+Três execuções, sempre igual: ~25 ms e ~135 ms. Os 14 px são o `_preview_timer` —
+`_open_pdf` agenda a prévia ao vivo num `QTimer` de 140 ms, e quando ela chega o
+painel de comparação cresce e empurra `Adicionar substituição` para baixo.
+
+O teste chamava `qapp.processEvents()` **uma vez** e media. Ou seja: media aos
+~25 ms, numa janela que ainda não tinha a prévia dentro — uma janela que o usuário
+nunca vê, porque a dele já nasce com ela.
+
+### 57.3 O que isso quer dizer sobre a §56
+
+| Afirmação da §56 | Veredito |
+|---|---|
+| "no Ubuntu o fluxo pede 350 e no Windows 330" | comparação inválida: os dois números são de **momentos diferentes** da vida da janela, não de plataformas diferentes |
+| "o critério é do Windows" | pode até ser, mas não foi isto que provou |
+| "no Windows sobram 2 px em 880" | não sobram: **faltam 12** |
+
+A folga de 0 px que a §56.2 apontou com ar de "espremido até o último pixel" era
+o aviso. Um critério que fecha exatamente no zero costuma ser um critério medido
+errado, e valia ter puxado esse fio ali.
+
+### 57.4 A altura mínima de verdade
+
+Por bisseção, com a leitura assentada:
+
+| | antes (medido aos ~25 ms) | agora (assentado) |
+|---|---|---|
+| altura mínima, prévia expandida | 880 | **892** |
+| altura mínima, prévia recolhida | 790 | **790** |
+
+A recolhida não muda: sem a prévia expandida não há painel de comparação para
+crescer. A expandida sobe 12 px.
+
+**O critério da §20.5 continua cumprido.** Em 1500x900 com a prévia expandida o
+fluxo pede 344 e recebe 352 — cabe, com 8 px de folga em vez dos 22 que se
+acreditava ter. O que estava errado não era o critério: era o número que se
+publicou como altura mínima, e que o README repetia.
+
+### 57.5 A correção, em três partes
+
+**`_settle_layout`.** Roda o loop de eventos até a leitura assentar, com duas
+condições: três leituras iguais seguidas **e** 600 ms de eventos processados de
+fato. A segunda é indispensável — aos 25 ms a leitura já está estável, e fica
+estável por mais 110 ms, tempo de sobra para três rodadas concordarem sobre o
+número errado. Estabilidade sozinha teria mantido o defeito de pé com cara de
+rigor.
+
+**`FLOW_FITS_FROM_HEIGHT` 880 → 892**, com a tabela acima no comentário, para que
+a linha nova não seja lida como regressão.
+
+**O skip fora do Windows deixou de ser um decorador** e virou uma função que
+**mede, reporta e só então pula**:
+
+```python
+if sys.platform != "win32":
+    pytest.skip(f"{mensagem} — critério medido em métricas do Windows (§56)")
+assert bottom <= viewport, mensagem
+```
+
+A `mensagem` já traz os dois números. Assim cada rodada de CI publica a medição
+**assentada** do Linux na razão do skip, em vez de silêncio — e a pergunta "quanto
+falta lá?" passa a ter resposta a cada rodada, em vez de virar trabalho de campo.
+Os números de Ubuntu que a §56 usou eram todos da medição antiga; os novos vêm no
+próximo verde.
+
+Vale dizer o que isto **não** decide: se o critério deve ou não ser cobrado no
+Linux. A escolha do dono do projeto (cobrar só no Windows) continua de pé — o que
+mudou é que ela deixou de se apoiar num número inventado por um teste apressado.
+
+### 57.6 A lição, que é de método
+
+O `skipif` da §56 estava a um push de virar permanente, e teria "resolvido" o CI
+escondendo um defeito de medição — inclusive no Windows, onde o teste continuaria
+verde afirmando uma altura mínima que não existe.
+
+O que impediu isso não foi cuidado extra: foi o CI ter falhado **na plataforma
+errada**. Se o marcador tivesse deixado tudo verde, a §56 estaria fechada e errada
+até alguém abrir o app numa janela de 885 px e ter de rolar o painel.
+
+Daí a regra que este sprint deixa: **um teste que mede pixels tem de dizer quando
+mede.** Todo `processEvents()` solitário antes de uma medição de layout é uma
+aposta na velocidade da máquina, e a aposta paga em CI vermelho intermitente meses
+depois — ou, pior, em verde constante sobre um número errado.
+
+### 57.7 Cobertura de teste
+
+Nenhum teste novo: os três de sempre, agora medindo o que dizem medir. Rodam no
+Windows (14 de 14 no arquivo, seis execuções seguidas, processo frio e quente) e
+publicam a medição fora dele. A suíte segue em 705.
+
+---
+
+## 58) Sprint 9.30 — a medição do Linux, que agora chega sozinha (2026-09-06)
+
+A §57.5 trocou o `skipif` decorador por um skip que **mede, publica e só então
+pula**, e prometeu os números do Linux "no próximo verde". Eles chegaram — depois
+de uma correção a mais, porque o workflow rodava `pytest -q` e sem `-rs` o
+relatório diz "36 skipped" e joga a razão fora. Um skip aqui não é ausência de
+resultado; é um resultado com outro nome.
+
+### 58.1 As duas plataformas, medidas do mesmo jeito
+
+| | Windows | Ubuntu (CI) |
+|---|---|---|
+| 892 px, prévia expandida | 344 / 344 — cabe | 350 / 338 — faltam 12 |
+| **900 px** (o critério da §20.5) | 344 / 352 — **8 px de folga** | 350 / 346 — **faltam 4** |
+| 790 px, prévia recolhida | 242 / 242 — cabe | 256 / 236 — faltam 20 |
+
+A diferença entre as plataformas é de **12 px**, não dos ~20 que a §56 supôs:
+
+* 6 px no fluxo — o Ubuntu pede 350 onde o Windows pede 344;
+* 6 px no visor — lá ele dá `altura − 554`, aqui `altura − 548`.
+
+### 58.2 O detalhe que explica o erro da §56
+
+No Linux a leitura **não muda** com o assentamento: 350 antes e 350 depois. Os
+14 px do `_preview_timer` (§57.2) são um efeito do Windows.
+
+É por isso que a comparação antiga saiu torta: ela pôs lado a lado a leitura
+**tardia** do Linux (que lá é a única que existe) e a **precoce** do Windows.
+Duas medições feitas no mesmo instante do código, e ainda assim em momentos
+diferentes da vida da janela — o tipo de armadilha que só aparece quando se mede
+o mesmo número nas duas máquinas.
+
+### 58.3 O que isso muda na §56.5
+
+A §56.5 deixou "achar os 24 px" como a saída boa e em aberto. São **4 px**, e só
+no critério que interessa (1500x900). Isso muda a natureza da dívida: 24 px pedem
+rearranjo de painel; 4 px cabem numa margem, num espaçamento de layout ou no
+`contentsMargins` de uma das linhas da aba do fluxo.
+
+Continua não feito, e de propósito — mexer em 4 px de layout para uma plataforma
+que não é a do produto, no fim de um PR de seis commits, é o tipo de coisa que se
+faz com a cabeça fria e um sprint só para ela. Mas agora está dimensionado, que é
+o que faltava para decidir.
+
+### 58.4 O hábito que este par de sprints deixa
+
+Três correções seguidas no mesmo lugar, e nenhuma delas era sobre layout:
+
+1. medir antes de o layout assentar (§57);
+2. comparar medições tiradas em momentos diferentes (§58.2);
+3. jogar fora a medição no relatório do CI (`-rs`).
+
+As três têm a mesma forma: o número existia, mas ninguém tinha perguntado *quando*
+ele foi tirado. Vale para qualquer teste que produza um número em vez de um
+booleano — e a defesa é barata, que é publicar o número junto com a condição em que
+ele foi medido.
