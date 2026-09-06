@@ -2113,7 +2113,11 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         if not Path(last_project).exists():
             self.settings.remove("last_project_path")
             return False
-        self.project_path = last_project
+        # Sem pré-atribuir `project_path`: quem o define é o carregamento, e só quando
+        # ele dá certo. A linha que estava aqui era redundante no caminho feliz e
+        # nociva no outro — uma restauração que falha (agora também porque o PDF não
+        # abre, §59.5) deixava a janela apontando para um projeto que não carregou, e
+        # o autosave seguinte gravaria o estado de **outro** livro por cima dele.
         loaded = self._load_project_from_path(last_project, show_dialogs=False)
         if loaded:
             self.statusBar().showMessage(f"Projeto restaurado: {last_project}")

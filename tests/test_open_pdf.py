@@ -108,6 +108,29 @@ def test_a_project_pointing_at_an_unreadable_pdf_is_refused(
     assert any("Erro ao carregar projeto" == titulo for titulo, _ in no_modals)
 
 
+def test_a_failed_restore_does_not_claim_the_project_file(main_window, tmp_path, no_modals) -> None:
+    """Um projeto que não carrega não pode virar o destino do próximo autosave.
+
+    `_try_restore_last_project` pré-atribuía `project_path` **antes** de tentar. Numa
+    restauração que falha e cai para o último PDF, o autosave seguinte gravaria o
+    estado desse outro livro por cima do arquivo de projeto que o usuário mantém.
+    """
+    from chess_pdf_editor.autosave import write_project_atomically
+    from chess_pdf_editor.project_state import ProjectState
+
+    quebrado = _nao_e_pdf(tmp_path, "livro.pdf")
+    projeto = tmp_path / "projeto.json"
+    write_project_atomically(
+        str(projeto),
+        ProjectState(source_pdf=str(quebrado), source_pdf_fingerprint={}, operations=[]),
+    )
+    main_window.settings.setValue("last_project_path", str(projeto))
+    main_window.project_path = None
+
+    assert main_window._try_restore_last_project() is False
+    assert main_window.project_path is None, "a janela adotou um projeto que não carregou"
+
+
 # ---------------------------------------------------------------------------
 # As janelas que vivem do livro (§59.6)
 # ---------------------------------------------------------------------------
