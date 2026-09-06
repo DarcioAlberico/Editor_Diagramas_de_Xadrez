@@ -594,17 +594,19 @@ a mesma aba pede 643 px e recebe 352:
 | | antes | hoje |
 |---|---|---|
 | falta para o passo final em 900 px | 191 px | **0 px** |
-| altura minima, previa expandida | 1.100 px | **880 px** |
+| altura minima, previa expandida | 1.100 px | **892 px** |
 | altura minima, previa recolhida | 1.050 px | **790 px** |
 
 **O fluxo basico cabe em 1500x900 sem rolar e com a previa expandida** — sem esconder
 o resultado, sem encolher o tabuleiro e sem remover controle nenhum. O que mudou foi
 onde as coisas moram.
 
-Os numeros acima sao **do Windows**, que e a plataforma prioritaria do produto. Os
-mesmos widgets no Ubuntu do CI pedem ~20 px a mais, e ali o fluxo ainda nao cabe em
-900 px por 4 px; os tres testes que cobram o criterio rodam so no Windows, com a
-medicao dos dois lados registrada em `tests/test_side_panel.py`.
+Os numeros acima sao **do Windows**, que e a plataforma prioritaria do produto, e sao
+medidos **depois** de a previa ao vivo entrar — ela chega num timer de 140 ms e
+empurra o painel em 14 px, entao medir antes disso descreve uma janela que voce
+nunca ve. Em outras plataformas os mesmos widgets medem diferente; os tres testes
+que cobram o criterio rodam so no Windows e, fora dele, **publicam a medicao local**
+na razao do skip, em vez de calar (veja `tests/test_side_panel.py`).
 
 Na hierarquia dos botoes: a **acao principal do momento** aparece preenchida de azul
 (um botao por vez), as acoes secundarias ficam com o botao normal, e os comandos

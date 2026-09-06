@@ -11,40 +11,12 @@ aconteceu com a paleta de peças, e nenhum teste pegava.
 from __future__ import annotations
 
 import sys
+import time
 
 import pytest
 
 QtCore = pytest.importorskip("PySide6.QtCore")
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-
-#: Os três testes de altura do fluxo valem no Windows, e só nele (§56).
-#:
-#: Não é preguiça de fazê-los passar em toda parte: o critério da §20.5 é sobre
-#: **pixels na tela do usuário**, e a mesma janela mede diferente em cada
-#: plataforma. Medido no CI, com os mesmos widgets e o mesmo código:
-#:
-#: | | pede | visor | folga |
-#: |---|---|---|---|
-#: | Windows, 880 px | 330 | 332 | 2 px |
-#: | Windows, 790 px recolhida | 242 | 242 | 0 px |
-#: | Ubuntu, 880 px | 350 | 326 | −24 px |
-#: | Ubuntu, 900 px | 350 | 346 | −4 px |
-#:
-#: Ou seja: no Ubuntu do CI o fluxo **não** cabe, e afirmar que cabe seria o teste
-#: mentindo. Afrouxar o limite até o número de lá foi recusado — o número deixaria
-#: de significar "cabe na tela" e passaria a significar "cabe na pior métrica que
-#: conheço", que é um critério sobre nada.
-#:
-#: Windows é a plataforma prioritária do produto (o README diz isso, e é para ela
-#: que o instalador do §49 existe), então é lá que o critério é cobrado. Quem
-#: quiser cumpri-lo no Linux precisa achar os 24 px, não mexer aqui.
-somente_windows = pytest.mark.skipif(
-    sys.platform != "win32",
-    reason=(
-        "critério de layout da §20.5, medido em métricas do Windows; no Ubuntu do "
-        "CI os mesmos widgets pedem ~20 px a mais (§56)"
-    ),
-)
 
 #: Altura de janela a partir da qual o fluxo básico cabe sem rolar, medida em
 #: 1500 px de largura e com a prévia expandida.
@@ -55,11 +27,21 @@ somente_windows = pytest.mark.skipif(
 #: |---|---|---|
 #: | §41.2, com o topo preso em 538 px | 1.100 | 1.050 |
 #: | 9.22: paleta ao lado + comandos numa linha (§50) | 980 | 900 |
-#: | 9.23: o que não é etapa fora da aba do fluxo (§51) | **880** | **790** |
+#: | 9.23: o que não é etapa fora da aba do fluxo (§51) | 880 | **790** |
+#: | 9.29: a mesma janela, medida **depois** da prévia entrar (§57) | **892** | **790** |
+#:
+#: A última linha não é uma regressão: é a correção de uma medida. As três
+#: anteriores foram tiradas ~25 ms depois de abrir o PDF, antes de o
+#: `_preview_timer` (140 ms) trazer a prévia ao vivo e empurrar o painel em 14 px
+#: — ver `_settle_layout`. A janela que o usuário abre já nasce com a prévia
+#: dentro, então 892 é o número dele.
+#:
+#: O critério da §20.5 — caber em 1500x900 com a prévia expandida — **continua
+#: cumprido**, agora com 8 px de folga em vez dos 22 que se acreditava ter.
 #:
 #: Encolher o editor de tabuleiro continua reprovado (§34.3). O que resolveu foi
 #: mexer na divisão do painel — o caminho que a própria §41.2 apontava.
-FLOW_FITS_FROM_HEIGHT = 880
+FLOW_FITS_FROM_HEIGHT = 892
 
 #: Com a prévia recolhida.
 FLOW_FITS_COLLAPSED_FROM_HEIGHT = 790
@@ -237,6 +219,28 @@ def _flow_bottom_and_viewport(window) -> tuple[int, int]:
     return (top + window.btn_add.height(), tab.viewport().height())
 
 
+def _assert_flow_fits(bottom: int, viewport: int, mensagem: str) -> None:
+    """Cobra o critério da §20.5 no Windows; fora dele, **mede e reporta** (§56).
+
+    O critério é sobre pixels na tela do usuário, e a mesma janela mede diferente
+    em cada plataforma: no Ubuntu do CI os mesmos widgets pedem ~20 px a mais.
+    Afirmar lá que o fluxo cabe seria o teste mentindo, e afrouxar o limite até o
+    número de lá faria o número deixar de significar "cabe na tela" para significar
+    "cabe na pior métrica que eu conheço" — um critério sobre nada. Windows é a
+    plataforma prioritária do produto (o README diz, e o instalador do §49 só
+    existe para ela), então é lá que ele é cobrado.
+
+    O que **não** se faz é pular calado. A razão do skip leva a medição daquela
+    máquina, então cada rodada de CI publica quanto falta no Linux — que é o dado
+    de que alguém precisa no dia em que for atrás dos 24 px (§56.5). Um skip que
+    só diz "não é Windows" transformaria essa pergunta em trabalho de campo de
+    novo.
+    """
+    if sys.platform != "win32":
+        pytest.skip(f"{mensagem} — critério medido em métricas do Windows (§56)")
+    assert bottom <= viewport, mensagem
+
+
 def _window_with_pdf(qapp, tmp_path, altura: int, previa: bool):
     """Janela medível: aberta num PDF, na altura pedida, com a prévia como se quer.
 
@@ -257,11 +261,62 @@ def _window_with_pdf(qapp, tmp_path, altura: int, previa: bool):
     window.show()
     window._open_pdf(str(make_pdf(tmp_path / "book.pdf")), clear_ops=True)
     window.compare_group.setChecked(previa)
-    qapp.processEvents()
+    _settle_layout(qapp, window)
     return window
 
 
-@somente_windows
+def _settle_layout(
+    qapp,
+    window,
+    minimo_ms: int = 600,
+    limite_ms: int = 3000,
+    estaveis_exigidas: int = 3,
+) -> None:
+    """Roda o loop de eventos até a medição assentar, e por tempo suficiente (§56.7).
+
+    Qt faz layout em resposta a eventos, e **um** `processEvents()` não garante que
+    a passada terminou. Medido nesta máquina, na janela de 880 px:
+
+    | t | pede | o que aconteceu |
+    |---|---|---|
+    | ~25 ms | 330 | primeira passada de layout |
+    | ~135 ms | **344** | a prévia ao vivo entrou e empurrou o resto |
+
+    Os 14 px são o `_preview_timer`: `_open_pdf` agenda a prévia num `QTimer` de
+    140 ms, e quando ela chega o painel de comparação cresce. Medir antes disso lê
+    uma janela que o usuário nunca vê — a dele já nasce com a prévia dentro.
+
+    Este não é um detalhe de teste: era o defeito. As três medições da §50/§51
+    foram tiradas assim, aos ~25 ms, e por isso davam 880 px como altura mínima.
+    A altura mínima de verdade é 892 (§57).
+
+    Duas condições, e as duas são necessárias:
+
+    * **estabilidade** — três leituras iguais seguidas. Uma só não distingue
+      "assentou" de "ainda nem começou a se mexer";
+    * **tempo mínimo** — 600 ms de eventos processados de fato. Estabilidade
+      sozinha para cedo demais: aos 25 ms a leitura já está estável, e fica
+      estável por mais 110 ms — tempo de sobra para três rodadas concordarem
+      sobre o número errado.
+
+    O teto de 3 s existe para o teste falhar pela medição, e não por timeout, se
+    algum dia a janela nunca assentar.
+    """
+    inicio = time.monotonic()
+    anterior = None
+    estaveis = 0
+    while True:
+        qapp.processEvents(QtCore.QEventLoop.AllEvents, 20)
+        atual = _flow_bottom_and_viewport(window)
+        estaveis = estaveis + 1 if atual == anterior else 0
+        anterior = atual
+        decorrido_ms = (time.monotonic() - inicio) * 1000.0
+        if decorrido_ms >= minimo_ms and estaveis >= estaveis_exigidas:
+            return
+        if decorrido_ms >= limite_ms:  # pragma: no cover - janela que nunca assenta
+            return
+
+
 def test_the_basic_flow_fits_without_scrolling_from_the_measured_height(
     qapp, tmp_path
 ) -> None:
@@ -273,14 +328,15 @@ def test_the_basic_flow_fits_without_scrolling_from_the_measured_height(
     window = _window_with_pdf(qapp, tmp_path, FLOW_FITS_FROM_HEIGHT, previa=True)
     try:
         bottom, viewport = _flow_bottom_and_viewport(window)
-        assert bottom <= viewport, (
-            f"em {FLOW_FITS_FROM_HEIGHT} px o fluxo pede {bottom} px e o visor dá {viewport}"
+        _assert_flow_fits(
+            bottom,
+            viewport,
+            f"em {FLOW_FITS_FROM_HEIGHT} px o fluxo pede {bottom} px e o visor dá {viewport}",
         )
     finally:
         window.close()
 
 
-@somente_windows
 def test_the_flow_fits_the_default_window_with_the_preview_open(qapp, tmp_path) -> None:
     """O critério da §20.5, que a §15.1 dava como *decidido não forçar*.
 
@@ -295,21 +351,24 @@ def test_the_flow_fits_the_default_window_with_the_preview_open(qapp, tmp_path) 
     window = _window_with_pdf(qapp, tmp_path, DEFAULT_WINDOW_HEIGHT, previa=True)
     try:
         bottom, viewport = _flow_bottom_and_viewport(window)
-        assert bottom <= viewport, (
-            f"em {DEFAULT_WINDOW_HEIGHT} px o fluxo pede {bottom} px e o visor dá {viewport}"
+        _assert_flow_fits(
+            bottom,
+            viewport,
+            f"em {DEFAULT_WINDOW_HEIGHT} px o fluxo pede {bottom} px e o visor dá {viewport}",
         )
     finally:
         window.close()
 
 
-@somente_windows
 def test_the_flow_fits_an_even_shorter_window_with_the_preview_collapsed(qapp, tmp_path) -> None:
     window = _window_with_pdf(qapp, tmp_path, FLOW_FITS_COLLAPSED_FROM_HEIGHT, previa=False)
     try:
         bottom, viewport = _flow_bottom_and_viewport(window)
-        assert bottom <= viewport, (
+        _assert_flow_fits(
+            bottom,
+            viewport,
             f"em {FLOW_FITS_COLLAPSED_FROM_HEIGHT} px com a prévia recolhida o fluxo "
-            f"pede {bottom} px e o visor dá {viewport}"
+            f"pede {bottom} px e o visor dá {viewport}",
         )
     finally:
         window.close()

@@ -4737,6 +4737,11 @@ mais — foram corrigidos no mesmo commit.
 
 ## 56) Sprint 9.28 — o critério da §20.5 é do Windows, e o teste passa a dizer isso (2026-09-06)
 
+> **Corrigida pela [§57](#57-sprint-929--o-teste-media-a-janela-antes-de-ela-existir-2026-09-06).** A comparacao entre Windows e Ubuntu
+> que sustenta esta secao usou medicoes tiradas em momentos diferentes da vida da
+> janela; o `880 px` que ela trata como verdade era leitura feita cedo demais. O
+> que segue fica como registro do raciocinio, nao como conclusao valida.
+
 O PR que levou os Sprints 9.22 a 9.27 para o CI foi o primeiro a rodar aquele
 código fora desta máquina, e os três testes de altura do painel falharam nos dois
 jobs de Ubuntu — nas duas rodadas, com números idênticos.
@@ -4820,3 +4825,124 @@ três pulados. O que **foi** verificado, e não por inspeção do código:
 * fora do Windows os três pulam com a razão impressa — provado rodando o pytest
   com `sys.platform` trocado por um plugin de uma linha, em vez de esperar o CI
   dizer.
+
+---
+
+## 57) Sprint 9.29 — o teste media a janela antes de ela existir (2026-09-06)
+
+**Esta seção corrige a §56.** A conclusão de lá — "o critério é do Windows, e no
+Ubuntu os mesmos widgets pedem ~20 px a mais" — foi tirada de uma comparação
+inválida, e o `skipif` que ela produziu escondia um defeito em vez de registrar
+uma diferença de plataforma. O que segue é o que a medição mostrou depois.
+
+### 57.1 O sintoma que não fechava
+
+Prender os três testes ao Windows deixou os dois jobs de Ubuntu verdes e o de
+**Windows vermelho** — no mesmo commit que só acrescentava um marcador de skip. E
+com um número novo: `em 880 px o fluxo pede 344 px e o visor dá 332`, onde esta
+máquina lia 330.
+
+Duas coisas não fechavam. O código do app era byte a byte o do commit anterior,
+que passara no Windows. E a §56 tinha acabado de afirmar que o Windows era o lugar
+onde a conta fechava.
+
+Quando a explicação que se acabou de escrever não cobre o fato novo, o erro está
+na explicação.
+
+### 57.2 A medição, agora no relógio
+
+Instrumentando a mesma janela de 880 px e imprimindo cada mudança da leitura:
+
+```
+t=  24.7ms  pede 330
+t= 131.6ms  pede 344
+```
+
+Três execuções, sempre igual: ~25 ms e ~135 ms. Os 14 px são o `_preview_timer` —
+`_open_pdf` agenda a prévia ao vivo num `QTimer` de 140 ms, e quando ela chega o
+painel de comparação cresce e empurra `Adicionar substituição` para baixo.
+
+O teste chamava `qapp.processEvents()` **uma vez** e media. Ou seja: media aos
+~25 ms, numa janela que ainda não tinha a prévia dentro — uma janela que o usuário
+nunca vê, porque a dele já nasce com ela.
+
+### 57.3 O que isso quer dizer sobre a §56
+
+| Afirmação da §56 | Veredito |
+|---|---|
+| "no Ubuntu o fluxo pede 350 e no Windows 330" | comparação inválida: os dois números são de **momentos diferentes** da vida da janela, não de plataformas diferentes |
+| "o critério é do Windows" | pode até ser, mas não foi isto que provou |
+| "no Windows sobram 2 px em 880" | não sobram: **faltam 12** |
+
+A folga de 0 px que a §56.2 apontou com ar de "espremido até o último pixel" era
+o aviso. Um critério que fecha exatamente no zero costuma ser um critério medido
+errado, e valia ter puxado esse fio ali.
+
+### 57.4 A altura mínima de verdade
+
+Por bisseção, com a leitura assentada:
+
+| | antes (medido aos ~25 ms) | agora (assentado) |
+|---|---|---|
+| altura mínima, prévia expandida | 880 | **892** |
+| altura mínima, prévia recolhida | 790 | **790** |
+
+A recolhida não muda: sem a prévia expandida não há painel de comparação para
+crescer. A expandida sobe 12 px.
+
+**O critério da §20.5 continua cumprido.** Em 1500x900 com a prévia expandida o
+fluxo pede 344 e recebe 352 — cabe, com 8 px de folga em vez dos 22 que se
+acreditava ter. O que estava errado não era o critério: era o número que se
+publicou como altura mínima, e que o README repetia.
+
+### 57.5 A correção, em três partes
+
+**`_settle_layout`.** Roda o loop de eventos até a leitura assentar, com duas
+condições: três leituras iguais seguidas **e** 600 ms de eventos processados de
+fato. A segunda é indispensável — aos 25 ms a leitura já está estável, e fica
+estável por mais 110 ms, tempo de sobra para três rodadas concordarem sobre o
+número errado. Estabilidade sozinha teria mantido o defeito de pé com cara de
+rigor.
+
+**`FLOW_FITS_FROM_HEIGHT` 880 → 892**, com a tabela acima no comentário, para que
+a linha nova não seja lida como regressão.
+
+**O skip fora do Windows deixou de ser um decorador** e virou uma função que
+**mede, reporta e só então pula**:
+
+```python
+if sys.platform != "win32":
+    pytest.skip(f"{mensagem} — critério medido em métricas do Windows (§56)")
+assert bottom <= viewport, mensagem
+```
+
+A `mensagem` já traz os dois números. Assim cada rodada de CI publica a medição
+**assentada** do Linux na razão do skip, em vez de silêncio — e a pergunta "quanto
+falta lá?" passa a ter resposta a cada rodada, em vez de virar trabalho de campo.
+Os números de Ubuntu que a §56 usou eram todos da medição antiga; os novos vêm no
+próximo verde.
+
+Vale dizer o que isto **não** decide: se o critério deve ou não ser cobrado no
+Linux. A escolha do dono do projeto (cobrar só no Windows) continua de pé — o que
+mudou é que ela deixou de se apoiar num número inventado por um teste apressado.
+
+### 57.6 A lição, que é de método
+
+O `skipif` da §56 estava a um push de virar permanente, e teria "resolvido" o CI
+escondendo um defeito de medição — inclusive no Windows, onde o teste continuaria
+verde afirmando uma altura mínima que não existe.
+
+O que impediu isso não foi cuidado extra: foi o CI ter falhado **na plataforma
+errada**. Se o marcador tivesse deixado tudo verde, a §56 estaria fechada e errada
+até alguém abrir o app numa janela de 885 px e ter de rolar o painel.
+
+Daí a regra que este sprint deixa: **um teste que mede pixels tem de dizer quando
+mede.** Todo `processEvents()` solitário antes de uma medição de layout é uma
+aposta na velocidade da máquina, e a aposta paga em CI vermelho intermitente meses
+depois — ou, pior, em verde constante sobre um número errado.
+
+### 57.7 Cobertura de teste
+
+Nenhum teste novo: os três de sempre, agora medindo o que dizem medir. Rodam no
+Windows (14 de 14 no arquivo, seis execuções seguidas, processo frio e quente) e
+publicam a medição fora dele. A suíte segue em 705.
