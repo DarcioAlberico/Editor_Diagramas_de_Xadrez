@@ -68,6 +68,7 @@ def main_window(qapp, tmp_path):
     QtCore = pytest.importorskip("PySide6.QtCore")
     from chess_pdf_editor import app as app_module
     from chess_pdf_editor.pdf_service import clear_board_render_cache
+    from chess_pdf_editor.project_state import clear_fingerprint_cache
 
     settings = QtCore.QSettings(str(tmp_path / "settings.ini"), QtCore.QSettings.IniFormat)
     # O aviso de privacidade do Sprint 7 usa um QMessageBox de instancia (precisa de
@@ -76,6 +77,9 @@ def main_window(qapp, tmp_path):
     # limpa a chave e usa a fixture `privacy_prompt`.
     settings.setValue("remote_privacy_ack", True)
     clear_board_render_cache()
+    # O digest do PDF passou a ser cacheado por (caminho, tamanho, mtime) (§59.13);
+    # um teste nao pode herdar o do anterior.
+    clear_fingerprint_cache()
 
     window = app_module.MainWindow(settings=settings)
     try:
@@ -83,6 +87,7 @@ def main_window(qapp, tmp_path):
     finally:
         window.close()
         clear_board_render_cache()
+        clear_fingerprint_cache()
 
 
 def make_pdf(path: Path, pages: int = 2) -> Path:

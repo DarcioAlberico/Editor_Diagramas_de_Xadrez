@@ -293,6 +293,19 @@ class LocalRecognizer:
                 )
             )
 
+        if len(boards) >= self.max_boards:
+            # O detector avisa sozinho quando o teto corta candidato bom, mas o texto
+            # dele manda "aumente 'Max diagramas'" — uma opção que este app não expõe
+            # (§59.17.3). Daí o aviso próprio, com o número que permite reconhecer o
+            # caso num log de suporte. Sem ele o corte é silencioso, e o corte é **por
+            # score**: numa grade 3x3 o que fica de fora pode ser o do canto superior
+            # direito, e nada na tela diz que faltou um.
+            logger.warning(
+                "Página %s bateu o teto de %d diagramas do detector local; se ela tem "
+                "mais que isso, algum ficou de fora",
+                filename,
+                self.max_boards,
+            )
         logger.info(
             "Reconhecimento local: %d tabuleiro(s) em %s (%dx%d px)",
             len(results),
