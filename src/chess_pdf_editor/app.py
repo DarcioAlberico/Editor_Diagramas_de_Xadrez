@@ -1744,6 +1744,12 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                 self.navigator_dialog.rebind(
                     self.operations, self.candidates, self.erase_operations
                 )
+            if self.gallery_dialog is not None:
+                # Pelo mesmo motivo, e a galeria tinha ficado de fora (§59.7): ela
+                # guarda as mesmas referências, e o rodapé dela edita por elas.
+                self.gallery_dialog.rebind(
+                    self.operations, self.candidates, self.erase_operations
+                )
         finally:
             self._restoring_history = False
         self._mark_project_dirty()
