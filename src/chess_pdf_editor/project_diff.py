@@ -53,6 +53,11 @@ REASON_RECT = "retangulo"
 REASON_CONFIDENCE = "confianca"
 REASON_STYLE = "estilo"
 REASON_META = "lado_ou_lance"
+#: A escolha de link **por diagrama** (§52). Entrou no schema 10 e o diff nao foi
+#: junto: trocar o link de 300 diagramas na galeria e comparar os dois projetos
+#: respondia "nada mudou" (§59.12). E a mesma familia do cache de previa — um campo
+#: novo que so metade do codigo conhece.
+REASON_LINK = "link_lichess"
 
 
 def rect_iou(a: Rect, b: Rect) -> float:
@@ -192,6 +197,13 @@ def _reasons(before: OverlayOperation, after: OverlayOperation) -> tuple[str, ..
         or int(getattr(before, "fullmove_number", 1)) != int(getattr(after, "fullmove_number", 1))
     ):
         reasons.append(REASON_META)
+    # `None` (segue a global) e `False` (recusa deste diagrama) sao estados
+    # diferentes, e a comparacao precisa distingui-los — dai `is not`, e nao `!=`
+    # sobre booleanos convertidos.
+    if getattr(before, "include_lichess_link", None) is not getattr(
+        after, "include_lichess_link", None
+    ):
+        reasons.append(REASON_LINK)
     return tuple(reasons)
 
 

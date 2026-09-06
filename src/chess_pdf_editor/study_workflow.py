@@ -233,8 +233,24 @@ class StudyWorkflowMixin:
         except ValueError:
             pos.fullmove_number = 1
 
+    def _on_study_start_position_changed(self) -> None:
+        """O painel trocou a posição **inicial** da linha por ação do usuário (§59.9).
+
+        Ligado a um sinal do painel, e não pendurado no `line_changed` que já existe:
+        aquele dispara a cada navegação de lance, e escrever a posição do tabuleiro de
+        volta na entrada selecionada a cada passo faria qualquer carga avulsa —
+        `Carregar FEN do editor`, por exemplo — gravar por cima de uma posição salva
+        que o usuário não estava editando. Aqui só chega o gesto que de fato mudou a
+        posição inicial.
+        """
+        idx = self._selected_study_position_index()
+        if idx is None:
+            return
+        self._sync_study_position_start(self.study_positions[idx])
+        self._refresh_study_positions_list()
+        self._touch_study_positions()
+
     def _sync_study_position_line(self, pos: StudyPosition) -> None:
-        self._sync_study_position_start(pos)
         max_ply = len(self.study_panel.study_board.san_line())
         kept_comments: dict[str, dict[str, str]] = {}
         for key, values in pos.move_comments.items():

@@ -12,6 +12,7 @@ from urllib.parse import quote
 import fitz  # type: ignore
 from PIL import Image
 
+from .fen import to_full_fen
 from .logging_config import get_logger
 from .renderer import render_board_pdf, render_board_png
 from .types import EraseOperation, OverlayOperation, Rect
@@ -426,14 +427,11 @@ def operation_full_fen(op: OverlayOperation) -> str:
     lá dentro seria o par mantido à mão da §45, e ele divergiria no dia em que o
     campo `halfmove` deixasse de ser fixo.
     """
-    side = str(getattr(op, "side_to_move", "w"))
-    if side not in {"w", "b"}:
-        side = "w"
-    try:
-        fullmove = max(1, int(getattr(op, "fullmove_number", 1)))
-    except Exception:
-        fullmove = 1
-    return f"{op.fen} {side} - - 0 {fullmove}"
+    return to_full_fen(
+        op.fen,
+        str(getattr(op, "side_to_move", "w")),
+        getattr(op, "fullmove_number", 1),
+    )
 
 
 def wants_lichess_link(op: OverlayOperation, global_default: bool) -> bool:
@@ -450,17 +448,28 @@ def wants_lichess_link(op: OverlayOperation, global_default: bool) -> bool:
     return bool(escolha)
 
 
-def operation_lichess_url(op: OverlayOperation) -> str:
-    """URL de análise que o link do PDF aponta. Pública pelo mesmo motivo acima."""
-    full_fen = " ".join(operation_full_fen(op).split())
-    parts = full_fen.split(" ")
-    if not parts:
+def lichess_analysis_url(full_fen: str) -> str:
+    """URL de análise do Lichess para uma FEN completa.
+
+    Ponto único (§59.11). Havia uma segunda implementação em `app.py`, com outro
+    codificador (`QUrl.toPercentEncoding` contra este `quote`). As duas concordavam —
+    conferido —, e concordar não era o ponto: o link que a interface mostra e o link
+    que vai **para dentro do PDF** têm de ser o mesmo, e nada garantia isso além de
+    terem sido escritas parecidas.
+    """
+    parts = " ".join(str(full_fen).split()).split(" ")
+    if not parts or not parts[0]:
         return "https://lichess.org/analysis"
     piece_placement = parts[0]
     if len(parts) == 1:
         return f"https://lichess.org/analysis/{piece_placement}"
     fen_tail = " ".join(parts[1:])
     return f"https://lichess.org/analysis/{piece_placement}{quote(' ' + fen_tail, safe='')}"
+
+
+def operation_lichess_url(op: OverlayOperation) -> str:
+    """URL de análise que o link do PDF aponta. Pública pelo mesmo motivo acima."""
+    return lichess_analysis_url(operation_full_fen(op))
 
 
 LINK_TEXT = "Lichess"

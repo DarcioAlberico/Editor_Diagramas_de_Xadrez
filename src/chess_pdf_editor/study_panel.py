@@ -23,6 +23,9 @@ from .widgets import StudyBoardWidget
 class StudyPanel(QtWidgets.QWidget):
     about_to_change_line = QtCore.Signal()
     pgn_imported = QtCore.Signal(object)
+    #: A posição **inicial** da linha mudou por ação do usuário (§59.9). Separado do
+    #: `line_changed` do tabuleiro, que dispara a cada navegação de lance.
+    start_position_changed = QtCore.Signal()
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
@@ -205,6 +208,7 @@ class StudyPanel(QtWidgets.QWidget):
         parts[1] = side
         self.about_to_change_line.emit()
         self.study_board.set_start_fen(" ".join(parts))
+        self.start_position_changed.emit()
         self.status_label.setText(
             f"Vez de jogar: {'pretas' if side == 'b' else 'brancas'}."
         )

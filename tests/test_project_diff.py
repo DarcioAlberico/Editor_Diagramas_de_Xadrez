@@ -361,3 +361,46 @@ def test_the_command_exists_and_explains_itself(main_window) -> None:
     action = main_window.act_compare_projects
     assert action.toolTip().strip()
     assert action.isEnabled() is True, "comparar arquivos não depende de PDF aberto"
+
+
+# ---------------------------------------------------------------------------
+# O link Lichess por diagrama (§59.12)
+# ---------------------------------------------------------------------------
+
+
+def test_the_diff_sees_the_per_diagram_lichess_choice() -> None:
+    """O campo entrou no schema 10 e o diff nao foi junto.
+
+    Trocar o link de 300 diagramas na galeria e comparar os dois projetos respondia
+    "nada mudou entre os dois projetos".
+    """
+    from chess_pdf_editor.project_diff import REASON_LINK
+
+    diff = diff_states(
+        _state([_op(include_lichess_link=None)]),
+        _state([_op(include_lichess_link=False)]),
+    )
+
+    assert diff.has_changes
+    assert diff.changed[0].reasons == (REASON_LINK,)
+
+
+def test_default_and_explicit_no_are_different_states() -> None:
+    """`None` segue a global; `False` recusa o link **neste** diagrama (§52.1).
+
+    Comparar os dois como booleanos convertidos apagaria a distincao — e ela e a
+    razao de o campo ter tres estados em vez de dois.
+    """
+    from chess_pdf_editor.project_diff import REASON_LINK
+
+    diff = diff_states(
+        _state([_op(include_lichess_link=None)]),
+        _state([_op(include_lichess_link=True)]),
+    )
+    assert diff.changed[0].reasons == (REASON_LINK,)
+
+    igual = diff_states(
+        _state([_op(include_lichess_link=False)]),
+        _state([_op(include_lichess_link=False)]),
+    )
+    assert not igual.changed, "a mesma escolha virou mudanca"

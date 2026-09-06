@@ -24,7 +24,12 @@ from .diagram_export import (
 )
 from .feedback import export_training_samples
 from .gallery import KIND_CANDIDATE, KIND_OPERATION, GalleryDialog
-from .fen import extract_piece_placement, normalize_piece_placement, validate_piece_placement
+from .fen import (
+    extract_piece_placement,
+    normalize_piece_placement,
+    to_full_fen,
+    validate_piece_placement,
+)
 from .history import ChangeHistory
 from .logging_config import get_logger, log_file_path, setup_logging
 from .navigator import DiagramNavigatorDialog
@@ -35,6 +40,8 @@ from .pdf_service import (
     PdfService,
     RenderedPage,
     clear_board_render_cache,
+    lichess_analysis_url,
+    operation_full_fen,
 )
 from .project_diff import diff_files, format_diff
 from .project_state import (
@@ -818,6 +825,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         self.study_panel.set_pgn_provider(self._study_export_pgn)
         self.study_panel.study_board.line_changed.connect(lambda san_line, cursor: self._on_study_ply_changed())
         self.study_panel.about_to_change_line.connect(self._flush_current_study_comment)
+        self.study_panel.start_position_changed.connect(self._on_study_start_position_changed)
         self.study_panel.pgn_imported.connect(self._on_study_pgn_imported)
         study_positions_panel = QtWidgets.QWidget()
         study_positions_layout = QtWidgets.QVBoxLayout(study_positions_panel)
@@ -1925,9 +1933,14 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         elif mode == ENGINE_REMOTE:
             text = f"Todas as páginas são enviadas para {self._ocr_endpoint() or default_endpoint()}."
         else:
+            # O limiar sai da constante, e não escrito à mão (§59.11): a frase promete
+            # um número ao usuário, e um `0,80` digitado aqui deixaria a interface
+            # mentindo no dia em que `REINFORCE_BELOW_CONFIDENCE` mudasse — sem que
+            # teste nenhum reclamasse.
+            limiar = f"{REINFORCE_BELOW_CONFIDENCE:.2f}".replace(".", ",")
             text = (
                 "Reconhece localmente; envia ao serviço externo só as páginas em que a "
-                "confiança ficar abaixo de 0,80."
+                f"confiança ficar abaixo de {limiar}."
             )
         self.engine_status_label.setText(text)
         self.engine_status_label.setStyleSheet(self._CONTEXT_STYLE)
@@ -2580,24 +2593,10 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         fullmove_number = max(1, int(self.fen_move_spin.value()))
         return (side_to_move, fullmove_number)
 
-    @staticmethod
-    def _operation_full_fen(op: OverlayOperation) -> str:
-        side = op.side_to_move if op.side_to_move in {"w", "b"} else "w"
-        fullmove = max(1, int(op.fullmove_number))
-        return f"{op.fen} {side} - - 0 {fullmove}"
-
-    @staticmethod
-    def _build_lichess_analysis_url(full_fen: str) -> str:
-        normalized = " ".join(full_fen.split())
-        parts = normalized.split(" ")
-        if not parts:
-            return "https://lichess.org/analysis"
-        piece_placement = parts[0]
-        if len(parts) == 1:
-            return f"https://lichess.org/analysis/{piece_placement}"
-        fen_tail = " ".join(parts[1:])
-        encoded_tail = bytes(QtCore.QUrl.toPercentEncoding(" " + fen_tail)).decode("ascii")
-        return f"https://lichess.org/analysis/{piece_placement}{encoded_tail}"
+    # `_operation_full_fen` e `_build_lichess_analysis_url` saíram daqui (§59.11).
+    # Eram cópias do que `pdf_service` já fazia — a segunda com outro codificador de
+    # URL — e o link que esta janela mostra tem de ser, byte a byte, o que vai para
+    # dentro do PDF exportado. Duas funções escritas parecidas não garantem isso.
 
     def _current_full_fen_for_lichess(self) -> Optional[str]:
         # O desvio que existia aqui — "se nada está selecionado, olhe a seleção da
@@ -2605,7 +2604,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         # lista só, `_selected_operation_index` é a resposta inteira (§51.4).
         idx = self._selected_operation_index()
         if idx is not None and 0 <= idx < len(self.operations):
-            return self._operation_full_fen(self.operations[idx])
+            return operation_full_fen(self.operations[idx])
 
         text = self.fen_edit.text().strip()
         if not text:
@@ -2615,7 +2614,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         except Exception:
             return None
         side_to_move, fullmove_number = self._current_fen_defaults()
-        return f"{piece_placement} {side_to_move} - - 0 {fullmove_number}"
+        return to_full_fen(piece_placement, side_to_move, fullmove_number)
 
     def _update_lichess_link(self) -> None:
         full_fen = self._current_full_fen_for_lichess()
@@ -2623,7 +2622,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             self.lichess_link_label.setText("Lichess (FEN inválida)")
             self.lichess_link_label.setToolTip("Informe uma FEN válida para abrir no Lichess.")
             return
-        url = self._build_lichess_analysis_url(full_fen)
+        url = lichess_analysis_url(full_fen)
         self.lichess_link_label.setText(f'<a href="{url}">Lichess</a>')
         self.lichess_link_label.setToolTip(full_fen)
 
@@ -3833,21 +3832,6 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
                 self._select_change("eraser", min(idx, len(self.erase_operations) - 1))
             self._commit_history("remover apagamento")
             self.statusBar().showMessage(f"Apagamento removido. Total: {len(self.erase_operations)}")
-
-    def _clear_operations(self) -> None:
-        if not self.operations:
-            return
-        answer = QtWidgets.QMessageBox.question(
-            self,
-            "Limpar substituições",
-            "Remover todas as substituições pendentes?",
-        )
-        if answer == QtWidgets.QMessageBox.Yes:
-            self.operations.clear()
-            self._refresh_operations_list()
-            self._refresh_page_overlays()
-            self._update_edit_context_state()
-            self._commit_history("limpar substituições")
 
     def _clear_changes(self) -> None:
         if not self.operations and not self.erase_operations:

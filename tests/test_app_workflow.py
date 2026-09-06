@@ -481,6 +481,29 @@ def test_the_side_to_move_chosen_in_the_study_panel_sticks(main_window, tmp_path
     assert main_window.study_panel.study_board.start_turn() == "b"
 
 
+def test_loading_a_loose_fen_does_not_overwrite_a_saved_study_position(
+    main_window, tmp_path, no_modals
+) -> None:
+    """A escrita de volta segue o gesto, e nao toda navegacao de lance (§59.9).
+
+    Pendurada no `line_changed` — que dispara a cada passo — qualquer carga avulsa no
+    tabuleiro gravaria por cima da entrada selecionada. `Carregar FEN do editor` e
+    exatamente essa carga: ela poe no tabuleiro uma posicao que **nao** e a salva.
+    """
+    _open(main_window, tmp_path)
+    _select_diagram(main_window)
+    main_window._study_selection()
+    guardada = main_window.study_positions[0].fen
+
+    main_window.fen_edit.setText("8/8/8/8/4k3/8/4K3/8")
+    main_window._on_fen_edited()
+    main_window._load_editor_position_into_study()
+
+    assert main_window.study_positions[0].fen == guardada, (
+        "carregar uma FEN avulsa gravou por cima da posicao salva"
+    )
+
+
 def test_the_export_action_does_not_pass_its_checked_flag_as_a_path(
     main_window, tmp_path, no_modals
 ) -> None:
