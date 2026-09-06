@@ -682,6 +682,9 @@ No toolbar, use `Estudo` para abrir um painel lateral com:
 - `Partida inicial` para estudar uma linha de abertura sem OCR/FEN do PDF;
 - suporte a variantes e subvariantes: volte a um lance e jogue outra continuacao para criar uma variante;
 - `Var. anterior` / `Var. proxima` para alternar entre variantes irmas no mesmo ponto da arvore;
+- `Vez de jogar` troca o lado da **posicao inicial** da linha. Com lances ja
+  jogados ele recusa e diz por que: os lances pertencem ao lado atual, e troca-lo
+  invalidaria a linha inteira. Reinicie a linha antes;
 - `Importar PGN`, `Copiar FEN`, `Copiar PGN` e `Salvar PGN`.
   Ao importar PGN, os comentarios da linha principal sao preservados nos lances correspondentes.
 
@@ -715,7 +718,9 @@ No modo `Estudo`, `Ctrl+Z` continua pertencendo a linha de lances.
 - `Salvar Projeto`: salva operacoes pendentes em JSON.
 - `Carregar Projeto`: restaura operacoes e pagina atual.
 
-O trabalho tambem e salvo sozinho, a cada 2 minutos e ao fechar a janela:
+O trabalho tambem e salvo sozinho, a cada 2 minutos e ao fechar a janela. Conta
+como trabalho pendente tudo o que o projeto guarda — substituicoes, apagamentos,
+candidatos **e** as posicoes de estudo com os seus comentarios por lance:
 
 - se voce ja escolheu um arquivo de projeto, o autosave grava nele;
 - se ainda nao escolheu, grava em

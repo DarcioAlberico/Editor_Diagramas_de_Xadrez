@@ -5504,3 +5504,47 @@ tabuleiros e o teto, que é o que permite reconhecer o caso num log de suporte.
 Quinze achados, quinze provas. Doze consertados neste sprint, um dimensionado e
 recusado com motivo (§59.14), e dois que a terceira passagem trouxe para o topo da
 fila porque travam ou corrompem, e não só incomodam.
+
+### 59.19 O que de fato entrou
+
+Nove commits, e a suíte saiu de **705** para **741** testes verdes. A tabela é o
+fecho da §59.2: cada linha tem o commit que a resolveu e o teste que impede a
+volta.
+
+| # | Achado | Onde ficou | O teste que segura |
+|---|---|---|---|
+| 1 | prévia não vê o link por diagrama | `pdf_service.operation_signature` | `test_preview_cache_notices_the_per_diagram_lichess_link` |
+| 2 | estudo não marca o projeto como pendente | `study_workflow._touch_study_positions` | `test_study_work_marks_the_project_as_dirty`, `test_closing_the_window_saves_study_work_too` |
+| 3 | abrir um arquivo quebrado deixa o app inutilizável | `app._open_pdf`, `PdfService.close` | `tests/test_open_pdf.py` (5 testes) |
+| 4 | galeria sobrevive à troca de livro | `app._open_pdf` | `test_changing_the_book_closes_the_gallery` |
+| 5 | galeria edita lista órfã depois do `Ctrl+Z` | `gallery.rebind` | 5 testes de `rebind` em `test_gallery_footer` |
+| 6 | moldura da posição de estudo removida | `study_workflow` | `test_removing_a_study_position_clears_its_frame` |
+| 7 | `Vez de jogar` do estudo é inerte | `study_panel._on_side_to_move_changed` | 3 testes em `test_study_move_list` + persistência |
+| 8 | `Exportar PDF` recebe o `checked` | `app._build_toolbar` | `test_the_export_action_does_not_pass_its_checked_flag_as_a_path` |
+| 9 | diff cego para o link por diagrama | `project_diff.REASON_LINK` | 2 testes em `test_project_diff` |
+| 10 | URL e FEN completa em quatro cópias | `fen.to_full_fen`, `pdf_service.lichess_analysis_url` | `test_the_link_in_the_panel_is_the_link_in_the_pdf` |
+| 11 | limiar `0,80` escrito à mão | `app._update_engine_status_label` | `test_the_status_label_follows_the_threshold_constant` |
+| 12 | SHA-256 do livro a cada autosave | `project_state.fingerprint_file` | 2 testes de cache em `test_project_state` |
+| 13 | lote trava se o motor não constrói | `workers.BatchOcrWorker.run` | `test_a_batch_whose_engine_refuses_to_build_still_finishes` |
+| 14 | origem `ocr` grudando no diagrama seguinte | `app._add_operation` e as duas edições manuais | 3 testes em `test_app_engine` |
+| 15 | corte de diagramas por página em silêncio | `local_ocr.engine` | — (linha de log; sem contrato a cobrar) |
+
+Fora da tabela, e de propósito: a `QThread` da exportação no fechamento (§59.14),
+que pede um `save` interrompível e não uma correção de limpeza.
+
+### 59.20 A regra que sai daqui
+
+Um campo novo num `OverlayOperation` toca **cinco** lugares, e só dois deles são
+óbvios a partir da declaração:
+
+1. `types.py` — declarar (óbvio);
+2. `project_state._load_operation` — ler do disco (óbvio);
+3. `pdf_service.operation_signature` — senão o cache de prévia mente;
+4. `project_diff._reasons` — senão o diff diz que nada mudou;
+5. as janelas que guardam referência para as listas (`gallery`, `navigator`) —
+   senão elas editam objetos órfãos.
+
+Os três de baixo foram exatamente os que faltaram quando `include_lichess_link`
+entrou na §52. Não é descuido de quem escreveu aquele sprint: é que nada, do lugar
+onde o campo é declarado, aponta para eles. Agora aponta — está escrito aqui, e
+está escrito no docstring de cada um dos três.
