@@ -3547,6 +3547,11 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
     def _on_board_changed(self, piece_placement: str) -> None:
         if self._loading_ui:
             return
+        # Daqui para baixo é edição **da pessoa**: o reconhecimento preenche o
+        # tabuleiro sob `_loading_ui`, que é a guarda que já distinguia os dois. Uma
+        # posição mexida à mão deixa de ser a leitura do motor, e continuar carregando
+        # a procedência dele mentiria no relatório e na fila de revisão (§59.17.2).
+        self._last_ocr_result = None
         # Edicao manual: a posicao passa a pertencer a selecao ativa.
         self._anchor_from_selection()
         self._loading_ui = True
@@ -3560,6 +3565,8 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
     def _on_fen_edited(self) -> None:
         if self._loading_ui:
             return
+        # Mesma razão do `_on_board_changed`: FEN digitada é posição de humano.
+        self._last_ocr_result = None
         text = self.fen_edit.text().strip()
         try:
             piece_placement = normalize_piece_placement(extract_piece_placement(text))
@@ -3621,8 +3628,22 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             self.current_render.matrix,
         )
 
-        source = "ocr" if self._last_ocr_result is not None else "manual"
-        confidence = self._last_ocr_result.confidence if self._last_ocr_result else None
+        # A procedência do OCR só vale enquanto a posição ainda pertence à **área** de
+        # onde ela foi lida (§59.17.2). `_last_ocr_result` nunca era zerado, então
+        # depois do primeiro reconhecimento da sessão toda substituição montada à mão
+        # nascia com `source="ocr"` e a confiança de outro diagrama — corrompendo as
+        # duas coisas que dependem disso: a coluna `origem` do relatório (§26), que
+        # existe para dizer se um humano olhou aquilo, e a fila de revisão (§29), que
+        # ordena por confiança e acabava julgando um diagrama pelo número de outro.
+        #
+        # É o mesmo teste que `_draft_operation` já faz para a prévia; a outra metade
+        # da rede está em `_on_board_changed`/`_on_fen_edited`, que zeram o resultado
+        # quando a pessoa mexe no tabuleiro. Uma só das duas deixaria buraco: esta não
+        # pega quem corrige a posição sem sair da área, e aquela não pega quem muda de
+        # página sem tocar no tabuleiro.
+        from_ocr = self._last_ocr_result is not None and self._position_matches_selection(rect_pdf)
+        source = "ocr" if from_ocr else "manual"
+        confidence = self._last_ocr_result.confidence if from_ocr else None
         pad_left, pad_top, pad_right, pad_bottom = self._current_whiteout_padding()
         side_to_move, fullmove_number = self._current_fen_defaults()
         op = OverlayOperation(

@@ -272,6 +272,105 @@ def test_a_batch_whose_engine_refuses_to_build_still_finishes(
 
 
 # ---------------------------------------------------------------------------
+# Procedencia da leitura (§59.17.2)
+# ---------------------------------------------------------------------------
+
+
+def _fake_selection_ocr(monkeypatch, fen: str, confidence: float) -> None:
+    """Motor que devolve um tabuleiro ocupando a selecao inteira."""
+    from chess_pdf_editor import app as app_module
+    from chess_pdf_editor.types import OcrBoardResult
+
+    class _Engine:
+        def uses_network(self):
+            return False
+
+        def predict(self, image_png, filename="board.png", assume_whole_image=False):
+            return OcrPrediction(
+                request_id="x",
+                status=200,
+                message=None,
+                results=[
+                    OcrBoardResult(
+                        fen=fen, xc=0.5, yc=0.5, width=1.0, height=1.0, confidence=confidence
+                    )
+                ],
+            )
+
+    monkeypatch.setattr(app_module, "make_engine", lambda *a, **k: _Engine())
+
+
+def _select(window, rect_pdf) -> None:
+    rect_img = window.pdf_service.pdf_rect_to_image_rect(
+        window.current_page, rect_pdf, window.current_render.matrix
+    )
+    window.page_widget.set_selection_rect(rect_img)
+
+
+def test_a_recognized_diagram_keeps_its_ocr_provenance(
+    main_window, tmp_path, monkeypatch, no_modals
+) -> None:
+    """A rede da §59.17.2 nao pode custar o caso que ela existe para preservar."""
+    _open(main_window, tmp_path, pages=2)
+    _fake_selection_ocr(monkeypatch, FEN, 0.91)
+    _select(main_window, DIAGRAM_RECT)
+
+    main_window._recognize_selection()
+    main_window._add_operation()
+
+    op = main_window.operations[-1]
+    assert op.source == "ocr"
+    assert op.confidence == pytest.approx(0.91)
+
+
+def test_a_hand_made_diagram_is_not_credited_to_the_ocr(
+    main_window, tmp_path, monkeypatch, no_modals
+) -> None:
+    """Depois do primeiro reconhecimento, tudo virava 'ocr' com a confianca alheia.
+
+    `_last_ocr_result` nunca era zerado. O estrago cai nas duas coisas que dependem
+    da procedencia: a coluna `origem` do relatorio (§26), que existe para dizer se um
+    humano olhou aquilo, e a fila de revisao (§29), que passava a julgar um diagrama
+    pela confianca de outro — de outra pagina, inclusive.
+    """
+    from conftest import SECOND_DIAGRAM_RECT
+
+    _open(main_window, tmp_path, pages=2)
+    _fake_selection_ocr(monkeypatch, FEN, 0.42)
+    _select(main_window, DIAGRAM_RECT)
+    main_window._recognize_selection()
+
+    # Outra pagina, outra area, posicao digitada a mao.
+    main_window.current_page = 1
+    main_window._render_current_page()
+    _select(main_window, SECOND_DIAGRAM_RECT)
+    main_window.fen_edit.setText("8/8/8/8/4k3/8/4K3/8")
+    main_window._on_fen_edited()
+    main_window._add_operation()
+
+    op = main_window.operations[-1]
+    assert op.source == "manual", "a substituicao feita a mao foi creditada ao OCR"
+    assert op.confidence is None, "herdou a confianca de um diagrama de outra pagina"
+
+
+def test_editing_the_board_drops_the_ocr_credit(
+    main_window, tmp_path, monkeypatch, no_modals
+) -> None:
+    """A outra metade da rede: corrigir a posicao sem sair da area."""
+    _open(main_window, tmp_path, pages=1)
+    _fake_selection_ocr(monkeypatch, FEN, 0.55)
+    _select(main_window, DIAGRAM_RECT)
+    main_window._recognize_selection()
+
+    main_window.board_editor.set_piece_placement("8/8/8/8/4k3/8/4K3/8")
+    main_window._add_operation()
+
+    op = main_window.operations[-1]
+    assert op.source == "manual"
+    assert op.confidence is None
+
+
+# ---------------------------------------------------------------------------
 # Auto-orientar (§6.3)
 # ---------------------------------------------------------------------------
 
