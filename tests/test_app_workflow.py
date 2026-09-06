@@ -399,6 +399,53 @@ def test_a_failing_autosave_does_not_break_the_app(main_window, tmp_path, monkey
     assert main_window._autosave_dirty is True
 
 
+def test_study_work_marks_the_project_as_dirty(main_window, tmp_path, no_modals) -> None:
+    """O autosave so grava com a bandeira de pe, e o estudo nunca a levantava (§59.4).
+
+    Sem isto, uma sessao inteira de estudo — criar a posicao, escrever o comentario,
+    remover o que sobrou — fechava sem gravar nada: o `closeEvent` tambem so salva
+    quando `_autosave_dirty` esta verdadeiro. Nada de erro, nada de aviso, e a
+    promessa do Sprint 5.3 valendo para metade do produto.
+    """
+    _open(main_window, tmp_path)
+    _select_diagram(main_window)
+
+    acoes = {
+        "estudar seleção": lambda: main_window._study_selection(),
+        "partida inicial": lambda: main_window._study_starting_position(),
+        "comentário do lance": lambda: (
+            main_window.study_comment_before_edit.setPlainText("as brancas jogam e ganham")
+        ),
+        "remover posição": lambda: main_window._remove_selected_study_position(),
+    }
+    for rotulo, acao in acoes.items():
+        main_window._autosave_dirty = False
+        acao()
+        assert main_window._autosave_dirty is True, (
+            f"'{rotulo}' nao marcou o projeto como pendente: o autosave vai pular"
+        )
+
+
+def test_closing_the_window_saves_study_work_too(main_window, tmp_path, no_modals) -> None:
+    """A prova de ponta a ponta do §59.4: o comentario tem de chegar ao disco."""
+    from chess_pdf_editor.project_state import load_project_state
+
+    _open(main_window, tmp_path)
+    _select_diagram(main_window)
+    main_window._study_selection()
+    main_window.study_comment_before_edit.setPlainText("as brancas jogam e ganham")
+
+    target = Path(main_window._autosave_target())
+    if target.exists():
+        target.unlink()
+    main_window.close()
+
+    assert target.exists(), "fechar a janela perdeu a sessao de estudo"
+    salvo = load_project_state(str(target))
+    assert len(salvo.study_positions) == 1
+    assert "brancas jogam" in salvo.study_positions[0].comment_before
+
+
 def test_restored_autosave_reopens_the_work(main_window, qapp, tmp_path, no_modals) -> None:
     """O ponto do autosave: a próxima sessão continua de onde parou."""
     _open(main_window, tmp_path)
