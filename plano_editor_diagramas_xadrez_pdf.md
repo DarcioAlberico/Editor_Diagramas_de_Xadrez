@@ -5507,7 +5507,7 @@ fila porque travam ou corrompem, e não só incomodam.
 
 ### 59.19 O que de fato entrou
 
-Nove commits, e a suíte saiu de **705** para **741** testes verdes. A tabela é o
+Dez commits de código, e a suíte saiu de **705** para **737** testes verdes. A tabela é o
 fecho da §59.2: cada linha tem o commit que a resolveu e o teste que impede a
 volta.
 
