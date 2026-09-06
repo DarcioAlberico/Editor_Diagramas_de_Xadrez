@@ -5501,9 +5501,12 @@ tabuleiros e o teto, que é o que permite reconhecer o caso num log de suporte.
 
 ### 59.18 O placar final
 
-Quinze achados, quinze provas. Doze consertados neste sprint, um dimensionado e
-recusado com motivo (§59.14), e dois que a terceira passagem trouxe para o topo da
-fila porque travam ou corrompem, e não só incomodam.
+**Dezesseis achados, dezesseis provas.** Quinze da varredura em três passagens,
+mais um que só apareceu **implementando** — a §59.21. Quinze consertados; um
+dimensionado e recusado com motivo (§59.14).
+
+Dois dos quinze vieram da terceira passagem e foram direto para o topo da fila,
+porque travam ou corrompem em vez de só incomodar.
 
 ### 59.19 O que de fato entrou
 
@@ -5529,8 +5532,25 @@ volta.
 | 14 | origem `ocr` grudando no diagrama seguinte | `app._add_operation` e as duas edições manuais | 3 testes em `test_app_engine` |
 | 15 | corte de diagramas por página em silêncio | `local_ocr.engine` | — (linha de log; sem contrato a cobrar) |
 
+| 16 | projeto que não carrega vira o destino do autosave | `app._try_restore_last_project` | `test_a_failed_restore_does_not_claim_the_project_file` |
+
 Fora da tabela, e de propósito: a `QThread` da exportação no fechamento (§59.14),
 que pede um `save` interrompível e não uma correção de limpeza.
+
+### 59.21 O achado que só apareceu implementando
+
+`_try_restore_last_project` atribuía `self.project_path` **antes** de tentar
+carregar. No caminho feliz era redundante — `_load_project_from_path` já o define
+quando dá certo. No outro, era veneno: a restauração falha, o app cai para o
+último PDF (`_try_restore_last_pdf`), e o autosave seguinte grava o estado desse
+**outro livro** por cima do arquivo de projeto que o usuário mantém.
+
+Ele existia antes desta varredura e as três passagens não o viram. O que o trouxe
+à tona foi a §59.5: a abertura transacional criou um caminho **novo** para a
+falha — antes um projeto só era recusado quando o PDF tinha sumido; agora também
+quando ele existe e não abre. Perguntar "o que mais chega aqui agora?" depois de
+alargar uma porta de erro é a mesma disciplina da §59.15, aplicada ao próprio
+sprint em vez de ao código antigo.
 
 ### 59.20 A regra que sai daqui
 
