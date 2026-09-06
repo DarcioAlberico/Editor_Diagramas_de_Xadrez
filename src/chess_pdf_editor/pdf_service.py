@@ -162,7 +162,19 @@ def _render_page_region(page: fitz.Page, zoom: float, rect_pdf: Rect) -> bytes:
 
 
 def operation_signature(op: OverlayOperation) -> tuple:
-    """Identidade visual de uma substituicao (usada para cache de previa)."""
+    """Identidade visual de uma substituicao (usada para cache de previa).
+
+    **Todo campo que muda um pixel da página tem de estar aqui.** Um que falte não
+    produz erro: produz uma prévia que não se atualiza, o que é pior — a §21 promete
+    que o que está na tela é o que o PDF vai conter, e um cache incompleto quebra a
+    promessa sem quebrar o teste que a cobre.
+
+    Foi o que aconteceu com `include_lichess_link` por diagrama (§52): ele entrou no
+    modelo e não entrou aqui, e trocar a escolha na galeria deixava a prévia da
+    janela principal mostrando o resultado anterior — ao lado da miniatura da
+    galeria, que mostra o certo porque o worker dela abre o seu próprio documento.
+    Duas respostas para a mesma pergunta, na mesma tela (§59.3).
+    """
     x0, y0, x1, y1 = op.rect_pdf
     return (
         int(op.page_num),
@@ -178,6 +190,7 @@ def operation_signature(op: OverlayOperation) -> tuple:
         round(float(getattr(op, "border_width_pt", 0.0)), 3),
         str(getattr(op, "side_to_move", "w")),
         int(getattr(op, "fullmove_number", 1)),
+        getattr(op, "include_lichess_link", None),
     )
 
 

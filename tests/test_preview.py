@@ -170,6 +170,36 @@ def test_preview_cache_is_reused_and_invalidated(tmp_path: Path) -> None:
         service.close()
 
 
+def test_preview_cache_notices_the_per_diagram_lichess_link(tmp_path: Path) -> None:
+    """A escolha por diagrama (§52) tem de invalidar o cache da prévia (§59.3).
+
+    Enquanto ela ficou de fora de `operation_signature`, trocar o link de um diagrama
+    devolvia a imagem anterior byte a byte — e a galeria, que abre o seu próprio
+    documento, mostrava o resultado certo ao lado. Duas respostas para a mesma
+    pergunta na mesma tela.
+    """
+    pdf_path = _make_pdf(tmp_path / "book.pdf", pages=1)
+    service = PdfService(str(pdf_path))
+    try:
+        operation = _make_operation()
+        # A opção global desligada: o que muda daqui para a frente é só a escolha
+        # deste diagrama, que é exatamente o campo que faltava.
+        sem_link = service.render_page_with_operations(
+            0, 2.0, [operation], include_lichess_link=False
+        )
+
+        operation.include_lichess_link = True
+        com_link = service.render_page_with_operations(
+            0, 2.0, [operation], include_lichess_link=False
+        )
+
+        assert com_link.image_png != sem_link.image_png, (
+            "a prévia devolveu a imagem em cache: a assinatura não viu o link"
+        )
+    finally:
+        service.close()
+
+
 def test_preview_keeps_page_geometry_on_rotated_pages(tmp_path: Path) -> None:
     pdf_path = _make_pdf(tmp_path / "rotated.pdf", pages=1, rotation=90)
     service = PdfService(str(pdf_path))
