@@ -5005,3 +5005,366 @@ As três têm a mesma forma: o número existia, mas ninguém tinha perguntado *q
 ele foi tirado. Vale para qualquer teste que produza um número em vez de um
 booleano — e a defesa é barata, que é publicar o número junto com a condição em que
 ele foi medido.
+
+## 59) Sprint 9.31 — varredura completa: o que a suíte verde não estava vendo (2026-09-06)
+
+A suíte tem **705 testes e todos passam**. Esta seção é o resultado de ler as
+~15.000 linhas de `src/` procurando o que passa por baixo dela — e de **provar**
+cada achado rodando o código, não de deduzi-lo lendo. Nenhum item abaixo é
+suspeita: cada um tem uma saída de terminal atrás.
+
+O padrão que os achados repetem é sempre o mesmo, e é o que a §45 já batizou:
+**um valor que existe em dois lugares e só um foi atualizado**. Ele aparece aqui
+em cinco formas diferentes — uma assinatura de cache que não conhece um campo
+novo, uma janela que guarda referência para uma lista substituída, um limiar
+escrito à mão, uma URL construída duas vezes, um diff que não olha um campo que o
+schema passou a ter.
+
+### 59.1 Roadmap
+
+Em ondas, e a ordem não é por esforço: é por **o que o defeito custa a quem usa**.
+Perder trabalho vem antes de mentir na tela, que vem antes de um controle inerte,
+que vem antes de custo de CPU.
+
+| Onda | O que resolve | Itens | Por que nesta ordem |
+|---|---|---|---|
+| 1 | trabalho que some | §59.4, §59.5 | perda de dado é irreversível; o resto se corrige olhando |
+| 2 | a tela mentindo | §59.3, §59.6, §59.7, §59.8 | a §21 promete que prévia == PDF exportado, e ela deixou de valer |
+| 3 | controles inertes | §59.9, §59.10 | o usuário mexe e nada acontece, sem erro nenhum |
+| 4 | pares mantidos à mão | §59.11, §59.12 | ainda não divergiram; a correção é barata **agora** |
+| 5 | custo | §59.13 | SHA-256 do livro inteiro na thread da UI, a cada 2 min |
+| 6 | limpeza e o que fica de fora | §59.14 | código morto sai; a dívida que não vale correr risco fica escrita |
+
+### 59.2 A tabela dos achados
+
+| # | Sintoma | Onde | Prova |
+|---|---|---|---|
+| 1 | Trocar o link Lichess de um diagrama não muda a prévia | `pdf_service.operation_signature` | prévia idêntica byte a byte; serviço novo dá outra |
+| 2 | Uma hora de comentários de estudo some ao fechar | `study_workflow` | `_autosave_dirty` continua `False` |
+| 3 | Abrir um arquivo que não é PDF deixa o app com um documento fechado | `app._open_pdf` | `closeEvent` estoura com `document closed` |
+| 4 | A galeria sobrevive à troca de livro, apontando para o anterior | `app._open_pdf` | segue com `b.pdf` depois de abrir `b2.pdf` |
+| 5 | Depois de `Ctrl+Z` a galeria edita uma lista órfã | `app._apply_history_snapshot` | `galeria._operations is janela.operations` → `False` |
+| 6 | Remover posição de estudo deixa a moldura verde na página | `study_workflow._remove_selected_study_position` | 1 retângulo → 1 retângulo |
+| 7 | `Vez de jogar` no painel de estudo não faz nada | `study_panel.StudyPanel` | FEN idêntica antes e depois |
+| 8 | `Exportar PDF` recebe o `checked` do QAction como caminho | `app._build_toolbar` | latente: hoje `False`, que é falsy |
+| 9 | O diff de projetos não vê a troca de link por diagrama | `project_diff._reasons` | `has_changes` → `False` |
+| 10 | A URL do Lichess e a FEN completa existem em dois módulos | `app` × `pdf_service` | duas implementações, hoje concordando |
+| 11 | O limiar `0,80` está escrito à mão no texto do motor | `app._update_engine_status_label` | constante e texto separados |
+| 12 | SHA-256 do livro inteiro a cada autosave | `project_state.fingerprint_file` | sem cache, na thread da UI |
+
+---
+
+### 59.3 A prévia não sabe que o link mudou (assinatura de cache incompleta)
+
+`PdfService` guarda **um** documento de prévia com cache por assinatura: mesma
+página e mesmo conjunto de alterações reaproveita o documento já montado. A
+assinatura de cada substituição é `operation_signature(op)`, e ela lista, um a um,
+os campos que mudam o desenho: retângulo, FEN, os quatro paddings, a borda, o lado
+a jogar e o número do lance.
+
+Falta um. A §52 acrescentou `include_lichess_link` **por diagrama**, e a
+assinatura não foi junto. O global está lá — `bool(include_lichess_link)` —, mas a
+escolha individual, que é justamente a novidade daquele sprint, não.
+
+Medido:
+
+```
+assinatura muda com include_lichess_link? False
+previa (mesmo servico) muda?              False
+previa (servico novo) difere da 1a?       True
+```
+
+A última linha é o que fecha o caso: o render **está** diferente; o que devolve a
+imagem velha é o cache. E o sintoma que isso produz na tela é o pior de todos os
+possíveis: a miniatura da galeria mostra o link (o worker dela abre o seu próprio
+documento, sem cache compartilhado) e a prévia da janela principal, ao lado, não
+mostra. Duas respostas para a mesma pergunta, na mesma tela.
+
+A §21 garante por teste que a prévia e a exportação são iguais byte a byte. Este
+defeito não quebra aquele teste — ele mora **antes**, no cache que decide se vale
+a pena renderizar de novo.
+
+**Mudança.** `include_lichess_link` entra em `operation_signature`. Uma linha.
+
+**Teste.** Um render, uma troca de `include_lichess_link`, outro render pelo mesmo
+`PdfService`: os bytes têm de diferir.
+
+### 59.4 O modo Estudo não marca o projeto como sujo
+
+O autosave só grava quando `_autosave_dirty` é `True`. Quem levanta essa bandeira
+é `_mark_project_dirty()`, e ele tem exatamente **três** chamadores: dois no
+histórico de desfazer e um no fim do OCR em lote.
+
+Nenhum caminho do modo Estudo passa por lá. Criar posição, importar PGN, escrever
+comentário antes/depois de um lance, remover posição — nada disso marca nada.
+
+Consequência, medida:
+
+```
+estudo marca dirty? False (esperado True)
+```
+
+E não é só o tique de 2 minutos: o `closeEvent` também grava **só se**
+`_autosave_dirty`. Ou seja, uma sessão inteira de estudo — que é a atividade mais
+demorada que o app tem, porque envolve ler a página e digitar — fecha sem gravar
+nada, sem erro e sem aviso. É a promessa do Sprint 5.3 ("nunca perder trabalho")
+valendo para metade do produto.
+
+**Por que passou despercebido.** As posições de estudo **estão** no
+`ProjectState`, e o `Salvar projeto` manual sempre as gravou. O que falta é só o
+gatilho automático. Um teste de "salvar e recarregar" passa; o defeito só aparece
+em quem confia no autosave, que é o que o app manda confiar.
+
+**Mudança.** Um único método no mixin, `_touch_study_positions()`, chamado dos
+pontos que de fato mutam `self.study_positions` ou o conteúdo delas. Um só, e não
+`_mark_project_dirty()` espalhado, porque assim existe um lugar para pôr uma
+futura entrada de histórico do estudo, quando ela vier.
+
+**Teste.** Cada ação, isolada, tem de deixar `_autosave_dirty` verdadeiro.
+
+### 59.5 Abrir um PDF que falha deixa o app com um documento fechado
+
+`_open_pdf` fecha o serviço anterior **antes** de construir o novo:
+
+```python
+if self.pdf_service:
+    self.pdf_service.close()
+self.pdf_service = PdfService(file_path)   # e se isto levantar?
+```
+
+Se o arquivo não for um PDF — renomeado, truncado, baixado pela metade — o
+construtor levanta e a atribuição não acontece. O que sobra é `self.pdf_service`
+apontando para o documento **fechado** do livro anterior. A janela não sabe disso:
+`current_pdf_path` continua o antigo, a página desenhada continua na tela, e o
+próximo render estoura.
+
+Pior: o próprio fechamento da janela passa a estourar, porque `closeEvent` chama
+`self.pdf_service.close()` num documento já fechado:
+
+```
+ValueError: Error calling Python override of QMainWindow::closeEvent(): document closed
+```
+
+Ou seja, um clique em `Abrir PDF` no arquivo errado deixa o aplicativo num estado
+de que ele não sai nem fechando.
+
+E `_open_pdf_dialog` não tem `try` nenhum: o rastro vai para o console, e o usuário
+vê uma janela que parou de responder ao que ele pede.
+
+**Mudança, em três partes.**
+
+1. **`_open_pdf` vira transacional**: abre o novo documento primeiro, e só troca o
+   estado depois que ele existe. Falhando, nada mudou — o livro que estava aberto
+   continua aberto e utilizável.
+2. **`PdfService.close()` vira idempotente.** Fechar duas vezes é uma condição
+   normal num caminho de erro, não um defeito de quem chama.
+3. **Os dois chamadores externos passam a tratar**: `_open_pdf_dialog` mostra o
+   erro, `_load_project_from_path` recusa o projeto com a mensagem em vez de
+   deixar a exceção subir.
+
+Um PDF de **zero páginas** entra na mesma peneira: `page_count == 0` faz
+`_render_current_page` pedir `doc[0]`. O PyMuPDF se recusa a *gravar* um assim
+(medido), mas nada impede outro produtor de fazê-lo — e a recusa custa duas linhas
+dentro da abertura transacional que já vai existir.
+
+**Teste.** Abrir um arquivo inválido: a janela mantém o livro anterior, avisa, e
+continua fechando sem erro.
+
+### 59.6 A galeria e o livro que trocou
+
+`_open_pdf` fecha o navegador de diagramas, com um comentário que explica
+exatamente por quê:
+
+> Outro livro, outras páginas: o navegador ficaria renderizando o caminho antigo e
+> editando diagramas que não são mais do projeto.
+
+Cada palavra disso vale para a galeria, e a galeria não é fechada. Medido:
+
+```
+galeria sobrevive ao PDF novo? True (esperado False)
+   e continua no livro: b.pdf
+   ops que ela edita sao as da janela? False
+```
+
+As duas linhas finais são o estrago: as miniaturas continuam sendo do livro
+anterior, e o rodapé de edição (§52.3) escreve numa lista que `_open_pdf`
+substituiu por `[]`. A edição não dá erro. Ela simplesmente não existe.
+
+**Mudança.** A galeria fecha junto com o navegador, pelo mesmo motivo e no mesmo
+lugar.
+
+### 59.7 Depois de `Ctrl+Z`, a galeria edita uma lista órfã
+
+Mesmo defeito, outra porta. `_apply_history_snapshot` **substitui** as três listas
+por cópias restauradas do histórico — não as muta. A §54 documenta isso e resolve
+para o navegador:
+
+> As três listas acima foram **substituídas**, não mutadas: as referências que o
+> navegador guarda apontam agora para listas órfãs, e editar por elas gravaria num
+> objeto que ninguém lê. Reapontar é mais barato que fechar a janela na cara de
+> quem só apertou Ctrl+Z.
+
+A galeria guarda as mesmas referências, pelo mesmo motivo (§52.3), e não tem
+`rebind`. Medido:
+
+```
+galeria religada apos undo? False (esperado True)
+```
+
+**Mudança.** `GalleryDialog.rebind(operations, candidates, erase_operations)`,
+modelado no do navegador, com o que a grade exige a mais: as chaves da galeria são
+**posições dentro das listas**, então um desfazer que removeu o diagrama 4 muda o
+significado de todas as chaves acima dele. Reapontar as referências sem
+reconstruir a grade trocaria um defeito silencioso por outro. Então `rebind`
+reconstrói `_items`, refaz as células, corrige a faixa de páginas do filtro (ela
+nasce dos itens iniciais) e reinicia o render.
+
+### 59.8 Remover uma posição de estudo deixa a moldura na página
+
+`_remove_selected_study_position` apaga da lista e reconstrói a lista da esquerda.
+O que ele não faz é `_refresh_page_overlays()`, que é quem desenha os retângulos
+verdes sobre a página. Medido: `1 -> 1`.
+
+O retângulo fantasma some sozinho na próxima troca de página — o que é pior que
+não sumir, porque ensina o usuário a não confiar no que está vendo.
+
+**Mudança.** Uma linha. (Adicionar já refresca: o caminho passa por
+`_render_current_page`. Só a remoção estava de fora.)
+
+### 59.9 `Vez de jogar` no painel de estudo é um controle inerte
+
+`StudyPanel` tem um `QComboBox` rotulado `Vez de jogar:`. Ele é **lido** por
+`load_piece_placement` quando ninguém passa o lado explicitamente, e é **escrito**
+toda vez que uma posição é carregada. O que ele não tem é um `connect`: mexer nele
+não muda nada.
+
+```
+trocar 'Vez de jogar' muda a FEN? False (esperado True)
+```
+
+**Mudança, e o cuidado que ela pede.** Trocar o lado a jogar da posição **inicial**
+com lances na linha invalidaria a linha inteira. Descartá-la em silêncio seria
+trocar um controle inerte por um destrutivo, que é pior. Então:
+
+* linha vazia → aplica, trocando a FEN inicial;
+* linha com lances → devolve o combo ao valor anterior e diz por quê, na barra de
+  estado que existe ali para isso.
+
+Conservador de propósito: a única coisa que este sprint não pode fazer é apagar
+trabalho de alguém.
+
+### 59.10 `Exportar PDF` recebe o `checked` do QAction como caminho de arquivo
+
+```python
+self.act_save_pdf.triggered.connect(self._save_output_pdf)
+```
+
+`QAction.triggered` carrega um `bool`. A assinatura do outro lado é
+`_save_output_pdf(self, auto_save_path=None)`. O PySide entrega o `checked`
+posicionalmente, então **toda** exportação pelo botão chama
+`_save_output_pdf(False)`.
+
+Funciona por acaso: `False` é falsy, e o `if auto_save_path:` cai no ramo do
+diálogo. Deixa de funcionar no dia em que a ação virar checável — aí `out_path`
+seria `True` e o `QFileDialog` receberia um booleano.
+
+**Mudança.** `connect(lambda: self._save_output_pdf())`. Uma linha, e o acidente
+deixa de estar armado.
+
+### 59.11 Uma URL do Lichess, e um limiar só
+
+Dois pares mantidos à mão, na forma exata que a §45 documenta.
+
+**O primeiro**: `app._build_lichess_analysis_url` e
+`pdf_service.operation_lichess_url` constroem a mesma URL, com codificadores
+diferentes (`QUrl.toPercentEncoding` × `urllib.parse.quote`). Hoje concordam —
+conferido. Concordar hoje não é o ponto: o link que a interface mostra e o link
+que vai **para dentro do PDF** têm de ser o mesmo, e não há nada garantindo isso
+além de duas funções terem sido escritas parecidas. O mesmo vale para
+`app._operation_full_fen` × `pdf_service.operation_full_fen`.
+
+**O segundo**: `_update_engine_status_label` promete ao usuário que o híbrido
+chama o servidor "abaixo de 0,80" — com o número **escrito no texto**, ao lado de
+um `REINFORCE_BELOW_CONFIDENCE = 0.80` importado no mesmo arquivo. Mudar a
+constante deixaria a interface mentindo, sem que teste nenhum reclamasse.
+
+**Mudança.** `pdf_service` ganha `lichess_analysis_url(full_fen)` — o corpo que
+`operation_lichess_url` já tinha — e o `app` passa a chamar as duas funções de lá
+em vez das suas. O limiar sai da constante, formatado com vírgula.
+
+### 59.12 O diff de projetos não vê a troca de link por diagrama
+
+A §40 existe para responder "o que mudou entre o processamento de ontem e o de
+hoje". `_reasons` compara FEN, retângulo, confiança, estilo e as etiquetas de lado
+e lance. O schema 10 acrescentou `include_lichess_link` por diagrama e o diff não
+foi junto:
+
+```
+diff ve a troca de link? False (esperado True)
+```
+
+Trocar o link de 300 diagramas na galeria e comparar os dois projetos responde
+"nada mudou entre os dois projetos". É a mesma família do §59.3 — um campo novo
+que só metade do código conhece.
+
+**Mudança.** `REASON_LINK` entra na lista, junto dos outros cinco.
+
+### 59.13 SHA-256 do livro inteiro, a cada dois minutos
+
+`_current_project_state()` chama `fingerprint_file(self.current_pdf_path)`, que lê
+o PDF **inteiro** e calcula o SHA-256. Ele é chamado:
+
+* pelo autosave, a cada `autosave_interval_sec` (padrão: 120 s);
+* pelo `Salvar projeto`;
+* pelo instantâneo em JSON de cada reconhecimento (§55).
+
+Tudo na thread da UI. Num livro de 898 páginas isso é dezenas de MB relidos e
+rehasheados por tique — para produzir, quase sempre, exatamente o mesmo digest,
+porque o PDF de origem é aberto **somente para leitura** e não muda durante a
+sessão.
+
+**Mudança.** Cache por `(caminho resolvido, tamanho, mtime_ns)`. Não é
+"provavelmente o mesmo arquivo": é a mesma tripla que qualquer ferramenta de build
+usa para decidir se precisa reler, e qualquer alteração no PDF muda pelo menos uma
+das três. Uma função de limpeza acompanha, para os testes não herdarem cache um do
+outro.
+
+### 59.14 O que fica de fora, e por quê
+
+**A `QThread` da exportação no fechamento.** `closeEvent` cancela o
+`ExportWorker`, espera 15 s e — se ele não terminar — registra no log e segue,
+zerando a referência. Zerá-la não adianta nada (o worker tem a janela como
+`parent` e é destruído com ela), e uma `QThread` destruída rodando derruba o
+processo.
+
+O consertado óbvio seria `terminate()`, como o worker de OCR faz. Aqui não dá: os
+15 s só estouram se o worker estiver preso no `doc.save()` de um livro grande, e
+matar a thread ali deixa um **PDF truncado** no lugar do arquivo do usuário —
+exatamente o que a §33 decidiu nunca fazer ("meio PDF é pior que nenhum"). As duas
+saídas são ruins e a escolha entre elas não é deste sprint: ela pede um `save`
+interrompível, que é trabalho de verdade e não de limpeza.
+
+Fica escrito, dimensionado e não feito — pelo mesmo critério da §58.3.
+
+**`_clear_operations` é código morto.** `Limpar` está ligado em `_clear_changes`
+desde a unificação da lista (§20.4); `_clear_operations` ficou para trás, sem
+chamador e sem teste. Sai.
+
+### 59.15 O que esta varredura ensina
+
+Doze achados, e onze deles são a mesma coisa: **um campo, uma referência ou uma
+constante que passou a existir em dois lugares, e só um foi atualizado**. Os
+sprints que os introduziram estão todos documentados aqui e todos têm teste — o
+que faltava não era cuidado no sprint, era a pergunta seguinte: *quem mais olha
+para este dado?*
+
+Três lugares concentram quase tudo, e valem uma checagem fixa quando um campo novo
+entrar num `OverlayOperation`:
+
+1. `pdf_service.operation_signature` — senão o cache de prévia mente;
+2. `project_diff._reasons` — senão o diff diz que nada mudou;
+3. as janelas que guardam referência para as listas (`gallery`, `navigator`) —
+   senão elas editam objetos órfãos.
+
+Nenhum dos três é óbvio a partir do lugar onde o campo é declarado, e é por isso
+que eles estão escritos aqui.
