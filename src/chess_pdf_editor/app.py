@@ -383,6 +383,25 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         )
         self.auto_apply_check.toggled.connect(self._on_auto_apply_toggled)
 
+        # Cópia em JSON de cada reconhecimento, ao lado do PDF (§55). Ligada por
+        # padrão: o custo é um arquivo por reconhecimento, e o que ela evita é
+        # perder de vez um lote de oito minutos. Desligável para quem trabalha
+        # sobre pasta de rede ou só de leitura.
+        self.save_recognition_json_check = QtWidgets.QCheckBox(
+            "Salvar JSON de cada reconhecimento"
+        )
+        self.save_recognition_json_check.setChecked(
+            bool(self.settings.value("save_recognition_snapshot", True, bool))
+        )
+        self.save_recognition_json_check.setToolTip(
+            "Grava, na pasta do PDF, um arquivo por reconhecimento — com data e hora "
+            "no nome, sem sobrescrever o anterior.\n"
+            "É um projeto: para recuperar, use Arquivo > Carregar projeto."
+        )
+        self.save_recognition_json_check.toggled.connect(
+            self._on_save_recognition_json_toggled
+        )
+
         self.candidates_list = QtWidgets.QListWidget()
         self.candidates_list.currentItemChanged.connect(self._on_candidate_selected)
         self.candidates_list.itemDoubleClicked.connect(self._on_candidate_double_clicked)
@@ -741,6 +760,7 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         engine_layout = QtWidgets.QVBoxLayout()
         engine_layout.addWidget(self.engine_status_label)
         engine_layout.addWidget(self.auto_apply_check)
+        engine_layout.addWidget(self.save_recognition_json_check)
         engine_layout.addWidget(self.click_detects_check)
         engine_layout.addWidget(QtWidgets.QLabel("Motor de reconhecimento"))
         engine_layout.addWidget(self.engine_combo)
@@ -2832,6 +2852,14 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
             return
         self._set_current_operation(idx)
         self._focus_operation(idx)
+
+    def _on_save_recognition_json_toggled(self, checked: bool) -> None:
+        self.settings.setValue("save_recognition_snapshot", bool(checked))
+        self.statusBar().showMessage(
+            "Cada reconhecimento passa a gravar um JSON na pasta do PDF."
+            if checked
+            else "Os reconhecimentos deixam de gravar JSON próprio."
+        )
 
     def _on_click_detects_toggled(self, checked: bool) -> None:
         self.click_detects_diagram = bool(checked)

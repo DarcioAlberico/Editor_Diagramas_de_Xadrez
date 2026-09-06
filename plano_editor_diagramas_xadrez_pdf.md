@@ -4616,3 +4616,119 @@ imagem cresceria atrás — um laço.
 | Render | o par chega e os dois lados diferem; um item por vez; resultado de outro diagrama é ignorado; fechar não deixa `QThread` viva; parar duas vezes é inócuo |
 | Listas trocadas | `rebind` reaponta a edição para a lista nova; preserva o diagrama e não o número; descarta a edição pendente; lista vazia se explica |
 | Integração | recusa sem PDF e sem diagramas; abre no que está selecionado; a edição vira um passo de histórico com rótulo próprio; desfazer reaponta a janela aberta; `Ir para este diagrama` leva a janela principal à página; abrir outro PDF e fechar o app fecham o navegador |
+
+---
+
+## 55) Sprint 9.27 — um JSON por reconhecimento, ao lado do livro (2026-09-06)
+
+O pedido: *"quando eu clicar em Reconhecer página ou Detectar no PDF, gostaria que
+fosse salvo automaticamente um arquivo JSON do reconhecimento para eu não perder a
+detecção feita"*.
+
+A primeira reação certa é desconfiar do pedido: o autosave (Sprint 5.3) existe há
+muito tempo, grava o projeto inteiro a cada dois minutos e ao fechar, e o
+cabeçalho dele começa com "o objetivo do sprint é nunca perder trabalho". Se ele
+cumprisse isso aqui, o pedido seria redundante.
+
+### 55.1 As três brechas do autosave, que não são defeitos dele
+
+| O que o autosave faz | Por que não cobre este medo |
+|---|---|
+| grava **um** arquivo por livro e sobrescreve | o reconhecimento de ontem deixa de existir depois do de hoje |
+| grava no diretório do app, com nome derivado de hash | achar o arquivo à mão é possível; ninguém faz isso no susto |
+| grava **o estado atual** | descartar a fila de candidatos por engano e esperar dois minutos apaga a detecção do disco — pelo próprio mecanismo que existe para não perder nada |
+
+A terceira é a que fecha a questão. O autosave é um espelho do presente; o que o
+usuário pediu é um **registro do passado**, que sobreviva ao próximo erro dele. Um
+mecanismo não pode ser os dois.
+
+### 55.2 O arquivo é um projeto, e não uma lista de detecções
+
+A leitura literal do pedido — "um JSON do reconhecimento" — daria um arquivo com
+as detecções daquela execução e nada mais. Seria um registro para **ler**, não para
+usar: recuperar exigiria digitar de volta, ou um importador novo com o seu próprio
+conjunto de decisões (o que fazer com o que já está aberto? mesclar? substituir?
+e se o PDF for outro?).
+
+O que se grava é o **projeto inteiro** no instante seguinte ao reconhecimento, no
+mesmo formato de `Salvar projeto`. Recuperar é `Arquivo` > `Carregar projeto`.
+Zero código novo de leitura, zero formato novo, e o usuário recupera também os
+apagamentos e as posições de estudo que já tinha — que um arquivo "só das
+detecções" teria jogado fora no caminho de volta.
+
+O que o formato de projeto não guarda entra como **uma** chave a mais no topo:
+
+```json
+"reconhecimento": {
+  "quando": "...", "origem": "livro", "destino": "candidatos",
+  "paginas": "1-898", "encontrados": 312, "ignorados": 7,
+  "grandes_descartadas": 3, "falhas": 1, "cancelado": false, "motor": "hybrid"
+}
+```
+
+Uma chave só, e não dez espalhadas: o leitor de projeto ignora o que não conhece,
+e um bloco único não tem como colidir com campo nenhum do `ProjectState`. Ainda
+assim `save_project_state` **recusa** um `extra` que colida com um campo do
+projeto, em vez de deixar vencer — quem chamasse assim estaria gravando um projeto
+diferente do `state` que passou, e o erro só apareceria ao recarregar o arquivo.
+
+### 55.3 As três decisões que foram do usuário, não minhas
+
+Onde o arquivo cai e quantos arquivos existem mudam o que aparece no disco dele,
+então foram perguntadas antes de escrever código. As respostas:
+
+* **ao lado do PDF** — o mesmo hábito que a exportação automática já tem com o
+  `_hq.pdf`. O módulo do autosave diz, com todas as letras, que evita "espalhar
+  `.json` pelas pastas de livros do usuário"; aqui a conta é outra, porque o ponto
+  do arquivo é ser **achado**;
+* **um arquivo por reconhecimento**, com data e hora no nome. Sobrescrever é
+  exatamente o defeito que o pedido aponta no autosave;
+* o formato (projeto + bloco) foi decisão minha, pelo motivo da §55.2.
+
+### 55.4 O que grava, e o que não grava
+
+Grava quando `encontrados > 0`. Um clique que não achou nada não tem o que perder,
+e gravar assim mesmo encheria a pasta do livro de arquivos que só dizem "nada
+aqui" — o custo de um arquivo por clique cai sobre quem varre página por página,
+que é justamente quem mais clica.
+
+Um lote **cancelado grava igual**, e é o caso que mais importa: quem para na
+página 400 tem 400 páginas de trabalho para não perder. O bloco registra
+`cancelado: true` e a faixa que de fato foi varrida, não a que se pediu.
+
+`Reconhecer seleção` ficou de fora: é uma detecção por vez, feita com a mão na
+seleção, e o usuário nomeou os outros dois. Acrescentá-lo é uma linha, no dia em
+que ele pedir.
+
+### 55.5 Falhar ao gravar não pode custar a detecção
+
+A pasta do livro pode ser de rede, só de leitura, ou estar cheia — e nenhuma
+dessas é razão para perder o que já está na tela. A gravação é embrulhada, o erro
+vira uma linha de log e um pedaço da mensagem de status
+(`| JSON do reconhecimento NÃO gravado: ...`), e o reconhecimento segue.
+
+`_save_recognition_snapshot` devolve **texto**, e não o caminho, por causa disso:
+quem chama já monta uma frase de status e (no lote) um modal. Uma segunda mensagem
+escrita de dentro do método apagaria a primeira, e qual das duas ficaria na tela
+dependeria da ordem das chamadas — que é o tipo de acoplamento que ninguém lembra
+ao mexer no código meses depois.
+
+A gravação em si é a atômica do §43 (temporário, `fsync`, `os.replace`), pela
+razão daquele sprint e com mais força: o arquivo é escrito logo depois de um lote
+de oito minutos, e um JSON truncado no lugar dele seria perder duas vezes.
+
+### 55.6 Cobertura de teste
+
+`tests/test_recognition_snapshot.py`, 18 testes; a suíte vai de 687 para 705.
+
+| Grupo | O que fica provado |
+|---|---|
+| Nome e lugar | cai na pasta do livro, com o nome do livro, o botão de origem e a data/hora; o segundo do mesmo segundo ganha `-2`, e o terceiro `-3` |
+| Conteúdo | o arquivo **carrega de volta** como projeto, com operações, candidatos e apagamentos; o bloco de metadados traz origem, faixa de páginas, contagens e `cancelado`; a chave a mais não atrapalha o leitor; `extra` colidindo com campo do projeto é recusado; não sobra `.tmp` |
+| Reconhecer página | grava um arquivo, com `origem=pagina` e a página certa; a barra de status diz onde salvou; sem detecção não grava nada; a caixa desligada não grava e o reconhecimento continua valendo; o segundo reconhecimento não apaga o primeiro; falha de gravação não custa a detecção e aparece na status |
+| Detectar no PDF | grava com `origem=livro` e a faixa varrida; um lote sem detecção não grava nada |
+
+Três dublês de `tests/test_autosave.py` precisaram do parâmetro novo
+(`save_project_state(path, state, extra=None)`). Trocar a assinatura e deixar o
+dublê para trás é o que faz um teste passar a exercitar uma função que não existe
+mais — foram corrigidos no mesmo commit.

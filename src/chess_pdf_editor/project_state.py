@@ -72,8 +72,28 @@ class ProjectState:
     app_version: str = APP_VERSION
 
 
-def save_project_state(path: str, state: ProjectState) -> None:
+def save_project_state(
+    path: str, state: ProjectState, extra: Optional[dict[str, object]] = None
+) -> None:
+    """Grava o projeto. `extra` acrescenta chaves de topo que não são do projeto.
+
+    Existe para o instantâneo de reconhecimento (§55) gravar, no mesmo arquivo,
+    um bloco dizendo de onde aquelas detecções vieram. Ele é um projeto de
+    verdade — carregável por `Carregar projeto` — com uma chave a mais que o
+    leitor ignora.
+
+    Uma chave de `extra` com o nome de um campo do projeto é recusada em vez de
+    vencer: quem chama estaria gravando um projeto que não é o `state` que passou,
+    e o erro só apareceria ao recarregar o arquivo.
+    """
     payload = asdict(state)
+    if extra:
+        conflitos = sorted(set(extra) & set(payload))
+        if conflitos:
+            raise ValueError(
+                "extra não pode sobrescrever campos do projeto: " + ", ".join(conflitos)
+            )
+        payload.update(extra)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
 

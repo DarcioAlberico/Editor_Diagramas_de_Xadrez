@@ -73,6 +73,8 @@ python -m chess_pdf_editor
 4. Desenhe a selecao do diagrama no preview.
 5. Clique em `Reconhecer seleção` (usa endpoint configurado).
 6. Opcional: clique em `Reconhecer página` ou `Detectar no PDF` para varrer automaticamente.
+   Cada reconhecimento com resultado grava um JSON na pasta do PDF, para nada se perder
+   (veja [Copia em JSON de cada reconhecimento](#copia-em-json-de-cada-reconhecimento)).
    Por padrao as deteccoes entram na fila `Candidatos` para voce conferir antes de aplicar
    (veja `Conferir antes de aplicar` abaixo).
    O modo em lote descarta deteccoes que ocupam mais de 50% da pagina (heuristica anti-falso-positivo).
@@ -179,6 +181,65 @@ pela metade — e um arquivo exportado antes fica intacto.
 O estilo (`Padding`, `Borda`) usado pelo lote e o que estava configurado quando
 voce clicou: mudar no meio da execucao nao faz metade dos diagramas sair
 diferente da outra metade.
+
+## Copia em JSON de cada reconhecimento
+
+Todo `Reconhecer página` e todo `Detectar no PDF` que **encontra alguma coisa**
+grava, na mesma pasta do PDF, um arquivo assim:
+
+```text
+Taticas Basicas-reconhecimento-pagina-20260906-053622.json
+Taticas Basicas-reconhecimento-livro-20260906-061140.json
+```
+
+Nada e sobrescrito: o nome leva data e hora, e dois reconhecimentos no mesmo
+segundo ganham um sufixo (`-2`, `-3`). Reconhecer de novo, descartar a fila de
+candidatos por engano ou fechar o app sem salvar **nao apaga** o que ja foi
+gravado.
+
+O arquivo e um **projeto**, no mesmo formato de `Salvar projeto`. Para recuperar:
+`Arquivo` > `Carregar projeto` e aponte para ele. Nao ha importador novo nem
+formato novo para aprender.
+
+Alem do projeto, ele carrega um bloco `reconhecimento` dizendo de onde aquilo
+veio — o que o formato de projeto sozinho nao guarda:
+
+```json
+"reconhecimento": {
+  "quando": "2026-09-06T06:11:40",
+  "origem": "livro",
+  "destino": "candidatos",
+  "paginas": "1-898",
+  "encontrados": 312,
+  "ignorados": 7,
+  "grandes_descartadas": 3,
+  "falhas": 1,
+  "cancelado": false,
+  "motor": "hybrid"
+}
+```
+
+`origem` diz qual botao gerou o arquivo (`pagina` ou `livro`) e `destino` diz se
+as deteccoes foram aplicadas direto (`substituicoes`) ou para a fila
+(`candidatos`). Um lote **cancelado no meio grava igual** — e o caso que mais
+importa, porque quem para na pagina 400 tem 400 paginas de trabalho para nao
+perder.
+
+Para desligar: aba `Ajustes` > `Reconhecimento` > `Salvar JSON de cada
+reconhecimento`. Se a gravacao falhar (pasta so de leitura, disco cheio), o
+reconhecimento **nao e perdido**: a barra de status avisa que o JSON nao foi
+gravado e as deteccoes continuam na tela.
+
+### Por que isso nao e o autosave
+
+O autosave existe e continua valendo, mas nao cobre este medo:
+
+| | Autosave | JSON do reconhecimento |
+|---|---|---|
+| Quantos arquivos | um por livro, sobrescrito | um por reconhecimento |
+| Onde | pasta do app, nome com hash | pasta do PDF, nome do livro |
+| Quando | a cada 2 min e ao fechar | logo apos cada reconhecimento |
+| Descartar a fila por engano | o proximo autosave apaga do disco | o arquivo continua la |
 
 ## Motor de reconhecimento
 
@@ -750,6 +811,7 @@ src/chess_pdf_editor/
   feedback.py         # correcoes exportadas para o dataset de treino
   history.py          # pilha de desfazer/refazer do modo Edicao
   autosave.py         # caminho e gravacao atomica do autosave
+  recognition_snapshot.py # um JSON por reconhecimento, ao lado do PDF
   logging_config.py   # log em arquivo com rotacao
   fen.py              # utilitarios e validacoes FEN
   legality.py         # auditoria de legalidade da posicao (impossivel/suspeita)

@@ -65,7 +65,7 @@ def test_failed_write_does_not_destroy_the_previous_file(tmp_path: Path, monkeyp
 
     import chess_pdf_editor.autosave as autosave_module
 
-    def _boom(path, state):
+    def _boom(path, state, extra=None):
         Path(path).write_text('{"truncado', encoding="utf-8")
         raise OSError("disco cheio")
 
@@ -90,7 +90,7 @@ def test_a_failed_write_leaves_no_temporary_behind(tmp_path: Path, monkeypatch) 
     write_project_atomically(str(target), _state("livro.pdf"))
     good = target.read_bytes()
 
-    def explode(path, state):
+    def explode(path, state, extra=None):
         # Escreve pela metade e falha, como um disco que enche no meio.
         Path(path).write_text('{"parcial": ', encoding="utf-8")
         raise OSError("disco cheio")
@@ -110,7 +110,7 @@ def test_an_interrupt_also_cleans_up(tmp_path: Path, monkeypatch) -> None:
 
     target = tmp_path / "projeto.json"
 
-    def interrupt(path, state):
+    def interrupt(path, state, extra=None):
         Path(path).write_text("{", encoding="utf-8")
         raise KeyboardInterrupt
 
