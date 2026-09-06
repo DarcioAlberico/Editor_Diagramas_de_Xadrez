@@ -66,8 +66,11 @@ jobs:
           python -m pip install -e .
           python -m pip install pytest
 
+      # `-rs` porque um skip aqui carrega dado: os testes de altura do painel
+      # medem a janela e publicam os números na razão do skip fora do Windows
+      # (§57.5). Sem ele o relatório diz "36 skipped" e joga a medição fora.
       - name: Rodar a suíte
-        run: python -m pytest -q --junitxml=pytest-report.xml
+        run: python -m pytest -q -rs --junitxml=pytest-report.xml
 
       - name: Publicar o relatório
         if: always()
@@ -124,8 +127,11 @@ jobs:
           print("motor local pronto:", local_ocr.default_model_path())
           PY
 
+      # `-rs` porque um skip aqui carrega dado: os testes de altura do painel
+      # medem a janela e publicam os números na razão do skip fora do Windows
+      # (§57.5). Sem ele o relatório diz "36 skipped" e joga a medição fora.
       - name: Rodar a suíte
-        run: python -m pytest -q --junitxml=pytest-report.xml
+        run: python -m pytest -q -rs --junitxml=pytest-report.xml
 
       - name: Publicar o relatório
         if: always()
