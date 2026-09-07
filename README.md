@@ -175,8 +175,13 @@ Onde os avisos aparecem:
 
 A exportacao tambem tem `Cancelar`, e a barra conta **paginas alteradas** (num
 livro de 898 paginas com 60 diagramas, o total e 60). Cancelar significa
-**nenhum arquivo**: a gravacao e o ultimo passo, entao interromper nao deixa PDF
-pela metade — e um arquivo exportado antes fica intacto.
+**nenhum arquivo**, e isso vale ate dentro da gravacao: o PDF e escrito num
+parcial (`<destino>.parte`) ao lado do arquivo final e so toma o lugar dele
+quando esta inteiro. Um arquivo exportado antes fica intacto — e nem uma queda de
+energia no meio o substitui por um PDF truncado.
+
+Se o app for encerrado no meio de uma gravacao, pode sobrar um `.parte` ao lado
+do destino. Ele e removido pela proxima exportacao para o mesmo arquivo.
 
 O estilo (`Padding`, `Borda`) usado pelo lote e o que estava configurado quando
 voce clicou: mudar no meio da execucao nao faz metade dos diagramas sair

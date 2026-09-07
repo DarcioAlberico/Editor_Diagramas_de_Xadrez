@@ -877,6 +877,131 @@ class ExportCanceled(RuntimeError):
     """A exportação foi interrompida a pedido. Nenhum arquivo foi gravado."""
 
 
+#: Sufixo do arquivo parcial. Ele fica **ao lado** do destino, e não num diretório
+#: temporário do sistema: `os.replace` só é atômico dentro do mesmo sistema de
+#: arquivos, e exportar para um pendrive ou uma pasta de rede é caso comum aqui.
+EXPORT_PART_SUFFIX = ".parte"
+
+
+class _CancelableWriter(io.RawIOBase):
+    """Destino do `Document.save` que atende a um pedido de parada (§60).
+
+    O `save` do PyMuPDF não tem gancho de cancelamento — mas aceita um objeto de
+    arquivo, e chama `write()` nele muitas vezes. Medido num livro escaneado de 900
+    páginas (17,8 MB): **121.495 chamadas**, de ~5 bytes cada. Isso transforma o
+    `save`, que era um bloco atômico de fora, em algo que se pode abandonar no meio.
+
+    Duas medições explicam as decisões abaixo:
+
+    * o cancelamento é conferido a cada `CHECK_EVERY` chamadas, e não em todas.
+      Perguntar 121 mil vezes para atender uma vez é pagar o preço em todas elas;
+    * a primeira chamada a `write` só acontece a **57% do tempo do save** — o MuPDF
+      passa a maior parte dele reconstruindo o xref (`garbage=3`) antes de emitir
+      byte nenhum. Ou seja, o que dá para abandonar é a fase de *escrita*, não a de
+      preparação. Num disco local isso é pouco (o save inteiro do livro acima leva
+      0,22 s); numa pasta de rede, que é onde a espera de fato dói, a fase de
+      escrita é justamente a que domina.
+
+    **Sem atributo `name`.** Um `open(..., "wb")` cru tem `.name`, e o PyMuPDF trata
+    isso como se lhe tivessem passado um caminho — ele tenta remover o arquivo que o
+    nosso próprio handle mantém aberto e falha com `Permission denied` no Windows.
+    """
+
+    #: A cada quantas chamadas o cancelamento é conferido.
+    CHECK_EVERY = 256
+
+    def __init__(self, handle, should_cancel: Optional[Callable[[], bool]] = None) -> None:
+        self._handle = handle
+        self._should_cancel = should_cancel
+        self._writes = 0
+        #: A parada partiu daqui? O `save` embrulha a nossa exceção num
+        #: `FzErrorGeneric`, então o tipo não sobrevive à volta — a bandeira sim.
+        self.canceled = False
+
+    def writable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        return self._handle.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._handle.tell()
+
+    def write(self, data) -> int:
+        self._writes += 1
+        if (
+            self._should_cancel is not None
+            and self._writes % self.CHECK_EVERY == 0
+            and self._should_cancel()
+        ):
+            self.canceled = True
+            raise ExportCanceled("Exportação cancelada durante a gravação.")
+        return self._handle.write(data)
+
+
+def _discard_part(part: Path) -> None:
+    """Remove o parcial. Falhar aqui não pode mascarar o erro que trouxe até aqui."""
+    try:
+        part.unlink(missing_ok=True)
+    except OSError:  # pragma: no cover - só se o próprio unlink falhar
+        logger.warning("Parcial da exportação não pôde ser removido: %s", part, exc_info=True)
+
+
+def save_document_atomically(
+    doc: fitz.Document,
+    output_pdf: str,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> None:
+    """Grava o documento sem nunca deixar um PDF pela metade no destino (§60).
+
+    O `doc.save(destino)` escrevia **direto no arquivo do usuário**. Qualquer morte
+    no meio — queda de energia, gerenciador de tarefas, ou o `terminate()` que o
+    fechamento da janela precisa poder dar — deixava um PDF truncado ali. Se a
+    exportação era por cima de uma anterior, o arquivo bom ia junto. Medido: uma
+    gravação abortada na terceira chamada a `write` deixou **2 bytes** no destino.
+
+    É o mesmo buraco que a §43 fechou para o `project_state.json`, com a mesma
+    solução: parcial ao lado, `fsync`, e só então `os.replace`. O que o export tem a
+    mais é o cancelamento — ver `_CancelableWriter`.
+
+    O destino passa a ter um de dois conteúdos, nunca um terceiro: o arquivo
+    anterior (ou nada) ou o novo, inteiro.
+    """
+    target = Path(output_pdf)
+    part = target.with_name(target.name + EXPORT_PART_SUFFIX)
+    # Sobra de uma exportação que foi morta antes desta. No Windows o handle de uma
+    # thread encerrada à força só é liberado quando o processo sai, então limpar aqui
+    # — e não lá — é o que de fato funciona.
+    _discard_part(part)
+
+    writer: Optional[_CancelableWriter] = None
+    try:
+        with open(part, "wb") as handle:
+            writer = _CancelableWriter(handle, should_cancel)
+            doc.save(writer, deflate=True, garbage=3)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        # `BaseException` pelo motivo da §43: um KeyboardInterrupt no meio deixaria o
+        # mesmo lixo que um OSError.
+        _discard_part(part)
+        if writer is not None and writer.canceled:
+            raise ExportCanceled(
+                "Exportação cancelada durante a gravação. Nenhum arquivo foi gravado."
+            ) from None
+        raise
+
+    if should_cancel is not None and should_cancel():
+        # Chegou até aqui, mas o pedido de parada veio antes da troca de nome: o
+        # destino ainda não foi tocado, e é isso que o cancelamento promete.
+        _discard_part(part)
+        raise ExportCanceled("Exportação cancelada antes de publicar o arquivo.")
+    os.replace(part, target)
+
+
 def apply_operations_to_pdf(
     input_pdf: str,
     output_pdf: str,
@@ -938,7 +1063,9 @@ def apply_operations_to_pdf(
         # demora, e chegar até aqui não obriga ninguém a esperar por ele.
         if should_cancel is not None and should_cancel():
             raise ExportCanceled("Exportação cancelada antes de gravar o arquivo.")
-        doc.save(output_pdf, deflate=True, garbage=3)
+        # E, desde a §60, o `save` em si também para no meio — e nunca escreve
+        # direto no arquivo do usuário.
+        save_document_atomically(doc, output_pdf, should_cancel)
     finally:
         doc.close()
 

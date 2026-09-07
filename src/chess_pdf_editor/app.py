@@ -1478,10 +1478,27 @@ class MainWindow(RecognitionMixin, StudyWorkflowMixin, QtWidgets.QMainWindow):
         if self._export_worker is not None:
             # Desde que a exportação é interrompível, fechar a janela não precisa
             # mais esperar um livro inteiro terminar de gravar: pede parada e
-            # espera só o resto da página corrente.
+            # espera só o resto da página corrente — ou, desde a §60, o resto de um
+            # punhado de blocos da gravação.
             self._export_worker.cancel()
             if not self._export_worker.wait(15000):
-                logger.warning("Exportação ainda em andamento no fechamento")
+                # Aqui a §59.14 desistia: registrava o aviso, zerava a referência e
+                # seguia — o que não impedia nada, porque o worker tem a janela como
+                # `parent` e é destruído com ela de qualquer jeito. Uma `QThread`
+                # destruída rodando derruba o processo.
+                #
+                # O `terminate()` era a saída óbvia e estava barrada: o `save`
+                # escrevia direto no arquivo do usuário, e matá-lo ali deixaria um
+                # PDF truncado no lugar do bom — o que a §33 decidiu nunca fazer.
+                # Com a gravação em arquivo parcial, esse impedimento caiu: o pior
+                # que sobra é um `.parte`, que a próxima exportação para o mesmo
+                # destino remove.
+                logger.warning(
+                    "Exportação não parou em 15s; encerrando a thread (o destino "
+                    "não foi tocado)"
+                )
+                self._export_worker.terminate()
+                self._export_worker.wait(1000)
         self._export_worker = None
 
         if self._diagram_export_worker is not None:

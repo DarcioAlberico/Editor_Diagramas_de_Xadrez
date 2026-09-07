@@ -5346,6 +5346,12 @@ interrompível, que é trabalho de verdade e não de limpeza.
 
 Fica escrito, dimensionado e não feito — pelo mesmo critério da §58.3.
 
+> **Feito na §60, e o parágrafo acima estava meio errado.** O `save` de um livro
+> escaneado de 900 páginas leva **0,22 s** — o timeout de 15 s tem 68× de folga, e
+> o travamento aqui descrito quase não acontece. A frase que valia era a outra: a
+> gravação escrevia direto no arquivo do usuário, e isso é perda de dado, não
+> incômodo de fechamento. Chamado pelo nome certo, o item era da Onda 1.
+
 **`_clear_operations` é código morto.** `Limpar` está ligado em `_clear_changes`
 desde a unificação da lista (§20.4); `_clear_operations` ficou para trás, sem
 chamador e sem teste. Sai.
@@ -5568,3 +5574,148 @@ Os três de baixo foram exatamente os que faltaram quando `include_lichess_link`
 entrou na §52. Não é descuido de quem escreveu aquele sprint: é que nada, do lugar
 onde o campo é declarado, aponta para eles. Agora aponta — está escrito aqui, e
 está escrito no docstring de cada um dos três.
+
+## 60) Sprint 9.32 — o save interrompível, e a premissa errada que o adiava (2026-09-06)
+
+A §59.14 recusou este trabalho com um argumento que **medição nenhuma sustentava**:
+
+> os 15 s só estouram se o worker estiver preso no `doc.save()` de um livro grande,
+> e matar a thread ali deixa um **PDF truncado** no lugar do arquivo do usuário
+
+A segunda metade estava certa e é grave. A primeira estava errada, e é por isso
+que esta seção começa por ela.
+
+### 60.1 O `save` não é a parte lenta
+
+Livro escaneado de **900 páginas, 17,8 MB** — o caso pesado de verdade, não um
+fixture de teste:
+
+| | tempo |
+|---|---|
+| `doc.save(caminho, deflate=True, garbage=3)` | **0,22 s** |
+
+Duzentos e vinte milissegundos. O timeout de 15 s tem **68× de folga**. O que
+leva "dezenas de segundos" numa exportação é o laço por página —
+`apply_page_operations`, com redações, `show_pdf_page` e inserção de link — e
+esse laço **já** consultava `should_cancel` entre páginas desde a §33.
+
+Ou seja: o cenário de travamento que a §59.14 descreveu quase não acontece. O que
+a manteve na fila não foi o risco que ela nomeou.
+
+### 60.2 O buraco de verdade estava na outra metade
+
+`doc.save(output_pdf)` escrevia **direto no arquivo do usuário**. Qualquer morte
+no meio — queda de energia, gerenciador de tarefas, ou o `terminate()` que o
+fechamento precisa poder dar — deixava um PDF truncado ali. E se a exportação era
+por cima de uma anterior, o arquivo bom ia junto.
+
+Medido, abortando a gravação na terceira chamada de escrita:
+
+```
+3) a excecao saiu: FzErrorGeneric: Director error: RuntimeError: cancelado
+   parcial em disco: 2 bytes
+```
+
+Dois bytes no lugar do PDF do usuário.
+
+Este é exatamente o buraco que a **§43** fechou para o `project_state.json` — com
+a frase que já estava escrita lá: *"um autosave interrompido no meio não pode
+deixar um JSON truncado no lugar do projeto bom"*. A exportação do PDF nunca
+recebeu o mesmo tratamento, e ninguém tinha reparado porque a §33 falava de
+cancelamento (que era seguro, porque parava **antes** do save) e não de morte.
+
+### 60.3 O `save` do PyMuPDF é interrompível — só que ninguém tinha perguntado
+
+`Document.save` não tem gancho de cancelamento. Mas aceita **objeto de arquivo**, e
+chama `write()` nele:
+
+```
+writes: 121.495   save total: 464 ms
+```
+
+Cento e vinte e um mil chamadas, de ~5 bytes cada. Um bloco que de fora parecia
+atômico é, por dentro, uma sequência de cento e vinte mil pontos onde dá para
+desistir.
+
+Três coisas que a medição obrigou a decidir:
+
+**O cancelamento é conferido a cada 256 chamadas, não em todas.** Perguntar 121
+mil vezes para atender uma é pagar o preço em todas elas.
+
+**Só a fase de escrita é cancelável.** A primeira chamada a `write` acontece a
+**57–75% do tempo do save**: o MuPDF passa a maior parte dele reconstruindo o
+xref (`garbage=3`) antes de emitir byte nenhum. Num disco local isso é pouco — o
+save inteiro são 0,22 s. Numa pasta de rede, que é onde a espera de fato dói, a
+fase de escrita é justamente a que domina, e é ela que se pode abandonar.
+
+**O objeto de arquivo não pode ter `.name`.** Um `open(..., "wb")` cru tem, e o
+PyMuPDF trata isso como se lhe tivessem passado um caminho: ele tenta remover o
+arquivo que o nosso próprio handle mantém aberto, e falha com `Permission denied`
+no Windows. Foi o primeiro experimento a quebrar.
+
+### 60.4 O custo, e por que ele é aceitável
+
+| | 1.200 páginas vetoriais | 900 páginas escaneadas (17,8 MB) |
+|---|---|---|
+| `save(caminho)` | 401 ms | 0,22 s |
+| `save(fileobj)` | 453 ms (+13%) | 0,29 s (+31%) |
+
+O `+31%` assusta e não quer dizer nada: são **0,07 s** de acréscimo, numa
+exportação que leva dezenas de segundos no laço por página. É 0,2% do total, e o
+que se compra com ele é o cancelamento chegar até dentro da gravação.
+
+Registrar a porcentagem **e** o valor absoluto é o ponto. Sozinha, a primeira
+teria matado a decisão.
+
+### 60.5 O que mudou
+
+`save_document_atomically` faz o que a §43 já fazia para o projeto:
+
+1. grava num parcial `<destino>.parte`, **ao lado** do destino — `os.replace` só é
+   atômico dentro do mesmo sistema de arquivos, e exportar para pendrive ou pasta
+   de rede é caso comum aqui;
+2. `flush` + `fsync`;
+3. `os.replace` para o destino.
+
+Entre 1 e 3, o arquivo do usuário não é tocado. O destino passa a ter um de dois
+conteúdos, nunca um terceiro: o anterior (ou nada) ou o novo, inteiro.
+
+A exceção do cancelamento volta embrulhada — o `save` a converte em
+`FzErrorGeneric` —, então quem decide se a parada foi nossa é uma **bandeira no
+escritor**, não o tipo da exceção. O tipo não sobrevive à ida e volta pelo C++.
+
+### 60.6 E aí o `terminate()` ficou permitido
+
+Com isso o impedimento da §59.14 caiu. O `closeEvent` agora faz o que já fazia com
+o worker de OCR:
+
+```python
+self._export_worker.cancel()
+if not self._export_worker.wait(15000):
+    logger.warning("Exportação não parou em 15s; encerrando a thread ...")
+    self._export_worker.terminate()
+    self._export_worker.wait(1000)
+```
+
+Antes, o `else` deste `if` era registrar o aviso e **seguir mesmo assim**, zerando
+a referência. Zerá-la não adiantava nada: o worker tem a janela como `parent` e é
+destruído com ela de qualquer jeito — e uma `QThread` destruída rodando derruba o
+processo. Era a pior das três saídas, e era a que estava lá.
+
+O que sobra de um `terminate()` é um `.parte` órfão. Quem o remove é a exportação
+**seguinte** para o mesmo destino, e não o `closeEvent` que matou a anterior: no
+Windows o handle de uma thread encerrada à força só é liberado quando o processo
+sai, então apagar ali não funcionaria.
+
+### 60.7 A lição, que não é sobre PDF
+
+A §59.14 recusou o trabalho por um motivo plausível, escrito com confiança, e
+**não medido**. As duas frases dela tinham valores de verdade opostos, e a errada
+era a que definia a prioridade: enquanto o problema era "trava ao fechar", ele
+concorria com defeitos que travam a sessão inteira e perdia. Chamado pelo nome
+certo — "a exportação pode deixar um PDF truncado no lugar do arquivo bom do
+usuário" — ele teria entrado na Onda 1 da §59.1, junto dos outros de perda de
+dado.
+
+O custo de não medir não foi o trabalho a mais. Foi o item ter ficado na fila
+errada.

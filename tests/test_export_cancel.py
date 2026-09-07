@@ -181,3 +181,141 @@ def test_closing_the_window_cancels_a_running_export(main_window, tmp_path, monk
     main_window.close()
 
     assert worker.isFinished(), "o worker de exportação sobreviveu ao fechamento"
+
+
+# ---------------------------------------------------------------------------
+# A gravação que não toca o destino até estar pronta (§60)
+# ---------------------------------------------------------------------------
+
+
+def _parcial(out: Path) -> Path:
+    from chess_pdf_editor.pdf_service import EXPORT_PART_SUFFIX
+
+    return out.with_name(out.name + EXPORT_PART_SUFFIX)
+
+
+def _doc_com_paginas(tmp_path: Path, pages: int):
+    """Documento grande o bastante para o `save` chamar `write` muitas vezes."""
+    return fitz.open(str(make_pdf(tmp_path / "fonte.pdf", pages=pages)))
+
+
+def test_a_cancel_during_the_write_leaves_the_previous_file_intact(tmp_path: Path) -> None:
+    """O caso que a §59.14 dava como impossível de cobrir.
+
+    Cancelar entre páginas já era seguro — o `save` nem começava. O que ninguém
+    cobria era a parada **dentro** dele, que é onde o arquivo do usuário estava
+    sendo sobrescrito.
+    """
+    from chess_pdf_editor.pdf_service import save_document_atomically
+
+    out = tmp_path / "saida.pdf"
+    out.write_bytes(b"o PDF bom que ja estava aqui")
+    antes = out.read_bytes()
+
+    doc = _doc_com_paginas(tmp_path, pages=60)
+    try:
+        with pytest.raises(ExportCanceled) as excinfo:
+            save_document_atomically(doc, str(out), lambda: True)
+    finally:
+        doc.close()
+
+    assert "gravação" in str(excinfo.value)
+    assert out.read_bytes() == antes, "o arquivo anterior foi destruído por um cancelamento"
+    assert not _parcial(out).exists(), "o parcial ficou para trás"
+
+
+def test_a_crash_during_the_write_never_truncates_the_target(tmp_path: Path, monkeypatch) -> None:
+    """Queda de energia, gerenciador de tarefas, `terminate()`: o mesmo caminho.
+
+    Antes o `save` escrevia direto no destino, e uma morte no meio deixava um PDF
+    truncado ali — medido: 2 bytes. É o buraco que a §43 já tinha fechado para o
+    projeto em JSON, e que a exportação nunca recebeu.
+    """
+    from chess_pdf_editor import pdf_service
+
+    out = tmp_path / "saida.pdf"
+    out.write_bytes(b"o PDF bom que ja estava aqui")
+    antes = out.read_bytes()
+
+    # O documento é montado **antes** do monkeypatch: o `make_pdf` também usa `save`.
+    doc = _doc_com_paginas(tmp_path, pages=6)
+    original = fitz.Document.save
+
+    def _explode(self, destino, *args, **kwargs):
+        original(self, destino, *args, **kwargs)  # escreve um pedaço de verdade
+        raise OSError("disco desconectado no meio da gravacao")
+
+    monkeypatch.setattr(fitz.Document, "save", _explode)
+
+    try:
+        with pytest.raises(OSError):
+            pdf_service.save_document_atomically(doc, str(out), None)
+    finally:
+        doc.close()
+
+    assert out.read_bytes() == antes
+    assert not _parcial(out).exists()
+
+
+def test_a_leftover_part_from_a_killed_export_is_cleaned_up(tmp_path: Path) -> None:
+    """No Windows o handle de uma thread morta à força só sai com o processo.
+
+    Por isso quem limpa é a exportação **seguinte** para o mesmo destino, e não o
+    `closeEvent` que matou a anterior.
+    """
+    from chess_pdf_editor.pdf_service import save_document_atomically
+
+    out = tmp_path / "saida.pdf"
+    sobra = _parcial(out)
+    sobra.write_bytes(b"restos de uma exportacao morta")
+
+    doc = _doc_com_paginas(tmp_path, pages=3)
+    try:
+        save_document_atomically(doc, str(out), None)
+    finally:
+        doc.close()
+
+    assert out.exists()
+    assert not sobra.exists(), "o parcial anterior sobreviveu"
+    lido = fitz.open(str(out))
+    try:
+        assert lido.page_count == 3
+    finally:
+        lido.close()
+
+
+def test_a_completed_export_leaves_no_part_behind(tmp_path: Path) -> None:
+    source = make_pdf(tmp_path / "book.pdf", pages=3)
+    out = tmp_path / "out.pdf"
+
+    apply_operations_to_pdf(str(source), str(out), _ops(3))
+
+    assert out.exists()
+    assert not _parcial(out).exists()
+
+
+def test_the_export_still_produces_a_readable_pdf(tmp_path: Path) -> None:
+    """A gravação por objeto de arquivo não pode mudar o que sai do outro lado."""
+    source = make_pdf(tmp_path / "book.pdf", pages=4)
+    out = tmp_path / "out.pdf"
+
+    apply_operations_to_pdf(str(source), str(out), _ops(4))
+
+    doc = fitz.open(str(out))
+    try:
+        assert doc.page_count == 4
+        assert doc.load_page(0).get_pixmap() is not None
+    finally:
+        doc.close()
+
+
+def test_closing_mid_export_does_not_leave_a_part_next_to_the_output(
+    main_window, tmp_path, monkeypatch, qapp, no_modals
+) -> None:
+    """Ponta a ponta: fechar no meio não pode deixar lixo ao lado do arquivo."""
+    out = _start_export(main_window, tmp_path, monkeypatch, pages=12)
+    assert main_window._export_worker is not None
+
+    main_window.close()
+
+    assert not _parcial(out).exists(), "sobrou um parcial ao lado do destino"
